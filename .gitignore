@@ -1,0 +1,23 @@
+/vendor/
+/var/
+/composer.lock
+/.phpunit.result.cache
+/.phpunit.cache/
+/.php-cs-fixer.cache
+/.phpstan-cache/
+/.phpstan.cache/
+
+# Claude Code local config
+/.claude/
+
+# IDE
+/.idea/
+/.vscode/
+*.iml
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+.env
+.env.local
