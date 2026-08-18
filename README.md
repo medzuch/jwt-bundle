@@ -1,14 +1,21 @@
 # medzuch/jwt-bundle
 
 A Symfony bundle wiring [`medzuch/jwt-php`](https://github.com/medzuch/jwt-php) into Symfony
-applications for JWT issuance (login) and verification (API authentication), via Symfony's
-native `access_token` firewall.
+applications: **issuing** JOSE tokens (RFC 9068 access tokens, OIDC ID tokens, custom JWS/JWE)
+and **verifying** them through Symfony's native Security stack — the `access_token` firewall
+authenticator, DI, configuration, console and profiler.
 
-**Status: design only.** No bundle code yet. First intended consumer is
-[`home-budget`](../home-budget) (see its [ADR-010](../home-budget/docs/adr/010-medzuch-jwt-bundle-over-lexik.md)),
-whose auth requirements shaped the plan below.
+Works for any of these roles, in any combination:
 
-See [`docs/plan.md`](docs/plan.md) for the full design and phased roadmap.
+- **Resource server** — verify bearer tokens on an API firewall.
+- **Authorization server** — mint short-lived access tokens on login.
+- **OIDC relying party** — verify a third-party IdP's tokens via cached, rotation-aware JWKS.
+- **Service-to-service** — machine tokens between your own services.
+
+**Status: design only.** No bundle code yet — see [`docs/plan.md`](docs/plan.md) for the
+full design, the feature catalogue with priority tiers, and the phased roadmap.
+
+Requires PHP 8.3+ and Symfony 6.4 / 7.x (planned).
 
 ## License
 
