@@ -26,9 +26,14 @@ final class TestKernel extends Kernel
 {
     /**
      * @param array<array-key, mixed> $bundleConfig configuration under the `medzuch_jwt` root key
+     * @param array<string, string>   $aliases      service ids an application would provide, for a test
+     *                                              whose subject names one — kept out of the default
+     *                                              container so the other tests' wiring stays honest
      */
-    public function __construct(private readonly array $bundleConfig = [])
-    {
+    public function __construct(
+        private readonly array $bundleConfig = [],
+        private readonly array $aliases = [],
+    ) {
         parent::__construct('test', true);
     }
 
@@ -45,6 +50,10 @@ final class TestKernel extends Kernel
             $container->loadFromExtension('medzuch_jwt', $this->bundleConfig);
 
             $container->register('test.logger', CollectingLogger::class)->setPublic(true);
+
+            foreach ($this->aliases as $id => $target) {
+                $container->setAlias($id, $target);
+            }
 
             $container->register('test.frozen_clock', FrozenClock::class)
                 ->setFactory([FrozenClock::class, 'at'])
@@ -69,7 +78,7 @@ final class TestKernel extends Kernel
             sys_get_temp_dir(),
             \PHP_VERSION_ID,
             Kernel::VERSION_ID,
-            hash('xxh128', serialize($this->bundleConfig)),
+            hash('xxh128', serialize([$this->bundleConfig, $this->aliases])),
         );
     }
 
