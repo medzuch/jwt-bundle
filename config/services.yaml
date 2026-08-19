@@ -1,0 +1,12 @@
+# Bundle-internal service definitions.
+#
+# Application-facing configuration goes under the `medzuch_jwt` key in
+# config/packages/, and everything the bundle registers per key, issuer and
+# consumer is built in MedzuchJwtBundle::loadExtension() — this file holds only
+# what exists regardless of configuration.
+services:
+
+    # The library's PSR-20 clock, UTC wall time. Replaced by an alias when
+    # `medzuch_jwt.clock` names a service.
+    medzuch_jwt.clock:
+        class: Medzuch\Jwt\Primitives\SystemClock

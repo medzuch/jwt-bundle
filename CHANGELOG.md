@@ -47,6 +47,8 @@ Nothing released yet — the package is in Phase 0 (skeleton). See
   back, so the second key verifies nothing and rotation silently invalidates
   every token in flight); an empty `kid`; a YAML map where a sequence is
   expected; leeway above the library's ceiling; and unknown algorithm names.
+- **Bundle-internal service configuration is YAML** (`config/services.yaml`),
+  matching the application-facing side. This adds `symfony/yaml` to `require`.
 - **Bundle skeleton.** `MedzuchJwtBundle` on `AbstractBundle`, which derives
   the `medzuch_jwt` configuration root and the `Medzuch\JwtBundle\` namespace
   from the class name. Both are public API from this point on.

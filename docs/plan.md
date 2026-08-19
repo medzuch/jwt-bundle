@@ -98,9 +98,12 @@ Key mechanics that shape the design:
   reads the validated config and registers/parameterizes services.
 - **Config root key** `medzuch_jwt`; namespace `Medzuch\JwtBundle\`; composer
   name `medzuch/jwt-bundle`.
-- **Bundle-internal service config** in PHP (`config/services.php`) for
-  type-safety; the **app-facing** config is YAML (`config/packages/medzuch_jwt.yaml`),
-  matching how apps configure every other bundle.
+- **Configuration is YAML on both sides** — `config/services.yaml` inside the
+  bundle, `config/packages/medzuch_jwt.yaml` in the application. PHP service
+  config would put class names under static analysis, but the file holds one
+  service and the functional suite asserts its type on every run, so the check
+  is already there. The cost is a `symfony/yaml` requirement, which is present
+  in every Symfony application that configures anything.
 - **Firewall integration** goes through Symfony's native `access_token` block
   and a token-handler service. The bundle deliberately does **not** implement
   `AuthenticatorFactoryInterface` and ships no firewall key of its own (DEC-1 in

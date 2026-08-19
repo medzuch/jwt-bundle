@@ -71,7 +71,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
          * } $config */
-        $container->import('../config/services.php');
+        $container->import('../config/services.yaml');
 
         if (null !== $config['clock']) {
             // setAlias() drops the definition from services.php, so the
