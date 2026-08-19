@@ -9,7 +9,16 @@ parameters:
     tmpDir: var/phpstan
     parallel:
         maximumNumberOfProcesses: 4
-    treatPhpDocTypesAsCertain: true
+    # Off, unlike medzuch/jwt-php, and for a reason that only applies to a
+    # package analysed against several framework majors. Symfony 8 annotates
+    # `DefinitionConfigurator::rootNode()` with a conditional return type that
+    # resolves to ArrayNodeDefinition, while its *native* return type is
+    # NodeDefinition on every version — as it still is on 6.4 and 7.4, where
+    # narrowing is mandatory to reach `children()`. With this on, the same
+    # narrowing is "always true" on one leg and required on the others, and no
+    # ignore entry can be right on all four. The library keeps it on; it has
+    # one dependency set to satisfy.
+    treatPhpDocTypesAsCertain: false
     reportUnmatchedIgnoredErrors: true
 
 includes:

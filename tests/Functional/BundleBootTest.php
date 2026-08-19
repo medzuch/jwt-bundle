@@ -20,6 +20,23 @@ final class BundleBootTest extends KernelTestCase
     /**
      * @param array<array-key, mixed> $options
      */
+    protected function tearDown(): void
+    {
+        $booted = null !== self::$kernel;
+
+        parent::tearDown();
+
+        // FrameworkBundle registers a global exception handler when it boots in
+        // debug mode and never removes it on shutdown, which PHPUnit reports as
+        // a risky test — and `failOnRisky` is on, so it fails the suite. Undo it
+        // here rather than turning the check off: a leaked handler is worth
+        // knowing about when it is *our* leak, and this restores only after a
+        // boot that actually installed one.
+        if ($booted) {
+            restore_exception_handler();
+        }
+    }
+
     protected static function createKernel(array $options = []): KernelInterface
     {
         $config = $options['medzuch_jwt'] ?? [];
