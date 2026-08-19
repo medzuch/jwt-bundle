@@ -11,11 +11,18 @@ a class or method signature would be.
 
 ## [Unreleased]
 
-Nothing released yet — the package is in Phase 0 (skeleton). See
+Nothing released yet — the package is finishing Phase 1 (MVP). See
 [`docs/plan.md`](docs/plan.md) §7 for the roadmap.
 
 ### Added
 
+- **A README that gets you running**, with a quickstart per role — verify on a
+  resource server, issue on login, both at once — plus how keys are configured
+  and what the bundle refuses to boot with. Every `medzuch_jwt` example in it is
+  compiled into a real container by the test suite, so a renamed configuration
+  key cannot leave the quickstart telling newcomers to write something that no
+  longer works. The exhaustive reference is not duplicated by hand:
+  `config:dump-reference medzuch_jwt` generates it from the bundle.
 - **Named `issuers`, a token issuer, and an RFC 6750 login response.**
   `medzuch_jwt.issuer.<name>` mints RFC 9068 access tokens — the profile
   supplies `iss`, `iat`, `jti` and the `at+jwt` header, configuration supplies
