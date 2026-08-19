@@ -12,9 +12,9 @@ Works for any of these roles, in any combination:
 - **OIDC relying party** — verify a third-party IdP's tokens via cached, rotation-aware JWKS.
 - **Service-to-service** — machine tokens between your own services.
 
-> **Status: pre-release.** The MVP works end to end — issue a token on login, verify it on a
-> firewall, be authenticated — but the package is not on Packagist yet and nothing about it is
-> stable. Asymmetric keys, rotation and JWKS arrive in the next phase; see
+> **Status: v0.1.0, pre-1.0.** The MVP works end to end — issue a token on login, verify it on a
+> firewall, be authenticated — but nothing about it is stable yet, and only HMAC keys exist.
+> Asymmetric keys, rotation and JWKS arrive in the next phase; see
 > [`docs/plan.md`](docs/plan.md) for the full design and roadmap.
 
 Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
