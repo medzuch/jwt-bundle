@@ -10,7 +10,6 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
-use Symfony\Component\ErrorHandler\ErrorHandler;
 use Symfony\Component\HttpKernel\KernelInterface;
 
 /**
@@ -21,19 +20,9 @@ use Symfony\Component\HttpKernel\KernelInterface;
 #[CoversClass(MedzuchJwtBundle::class)]
 final class ConfigurationValidationTest extends KernelTestCase
 {
+    use RestoresExceptionHandler;
+
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
-
-    protected function tearDown(): void
-    {
-        parent::tearDown();
-
-        $current = set_exception_handler(null);
-        restore_exception_handler();
-
-        if (is_array($current) && $current[0] instanceof ErrorHandler) {
-            restore_exception_handler();
-        }
-    }
 
     /**
      * @param array<array-key, mixed> $options
@@ -168,6 +157,68 @@ final class ConfigurationValidationTest extends KernelTestCase
             'keys' => ['default' => ['hmac' => self::SECRET]],
             'consumers' => ['api' => self::consumer(['allowed_algorithms' => ['none']])],
         ]]);
+    }
+
+    #[TestDox('an issuer signing with a key that does not exist fails at container build')]
+    public function testIssuerWithUnknownKey(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/signs with key "typo"/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'issuers' => ['default' => self::issuer(['key' => 'typo'])],
+        ]]);
+    }
+
+    #[TestDox('a static claim using a registered claim name fails at container build, not at the first token')]
+    public function testStaticClaimOverRegisteredName(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/registered claims/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'issuers' => ['default' => self::issuer(['claims' => ['sub' => 'service-account']])],
+        ]]);
+    }
+
+    #[TestDox('a static claim the library does not reserve is accepted')]
+    public function testStaticClaimIsAccepted(): void
+    {
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'issuers' => ['default' => self::issuer(['claims' => ['tenant' => 'acme']])],
+        ]]);
+
+        self::assertTrue(self::getContainer()->has('medzuch_jwt.issuer.default'));
+    }
+
+    #[TestDox('an issuer audience written as a map names the configuration key')]
+    public function testIssuerAudienceAsMap(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/must be a sequence, not a map/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'issuers' => ['default' => self::issuer(['audience' => ['primary' => 'https://api.test']])],
+        ]]);
+    }
+
+    /**
+     * @param array<string, mixed> $overrides
+     *
+     * @return array<string, mixed>
+     */
+    private static function issuer(array $overrides = []): array
+    {
+        return $overrides + [
+            'issuer' => 'https://issuer.test',
+            'key' => 'default',
+            'client_id' => 'test-client',
+            'audience' => 'https://api.test',
+        ];
     }
 
     /**

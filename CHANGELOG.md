@@ -16,6 +16,21 @@ Nothing released yet — the package is in Phase 0 (skeleton). See
 
 ### Added
 
+- **Named `issuers`, a token issuer, and an RFC 6750 login response.**
+  `medzuch_jwt.issuer.<name>` mints RFC 9068 access tokens — the profile
+  supplies `iss`, `iat`, `jti` and the `at+jwt` header, configuration supplies
+  the audience, client id, TTL and any static claims, and the caller supplies
+  the subject, scopes and per-token claims. The signing algorithm is **not**
+  configured on the issuer: it comes from the key, which is bound to exactly
+  one, so restating it could only ever disagree. `medzuch_jwt.login.<name>`
+  plugs into any authenticator's `success_handler` (`json_login`, `form_login`)
+  and answers a successful login with `access_token` / `token_type` /
+  `expires_in`, under `Cache-Control: no-store` (RFC 6749 §5.1 — a cached token
+  response is a disclosed token). An issuer named `default` is aliased for
+  autowiring. A static claim naming one of the registered claims (`iss`, `sub`,
+  `aud`, `exp`, `nbf`, `iat`, `jti`) is refused at container build, where every
+  other misconfiguration in this bundle is refused, rather than throwing on the
+  first token minted.
 - **Named `keys` and `consumers`, and a working token handler.** A firewall can
   now point `token_handler` at `medzuch_jwt.handler.<name>` and get RFC 9068
   access-token verification through the library's access-token profile: issuer,
@@ -32,6 +47,8 @@ Nothing released yet — the package is in Phase 0 (skeleton). See
   back, so the second key verifies nothing and rotation silently invalidates
   every token in flight); an empty `kid`; a YAML map where a sequence is
   expected; leeway above the library's ceiling; and unknown algorithm names.
+- **Bundle-internal service configuration is YAML** (`config/services.yaml`),
+  matching the application-facing side. This adds `symfony/yaml` to `require`.
 - **Bundle skeleton.** `MedzuchJwtBundle` on `AbstractBundle`, which derives
   the `medzuch_jwt` configuration root and the `Medzuch\JwtBundle\` namespace
   from the class name. Both are public API from this point on.
