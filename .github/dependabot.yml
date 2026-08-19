@@ -17,3 +17,11 @@ updates:
       prefix: "chore(ci)"
     labels:
       - dependencies
+    # SHA pinning is enforced repository-wide, so every action bump is a
+    # distinct commit. Ungrouped, a weekly run opens one PR (and one CI run)
+    # per action; grouped, it opens one.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3

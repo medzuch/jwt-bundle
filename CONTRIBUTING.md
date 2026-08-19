@@ -34,14 +34,15 @@ path, so the bar is the same as the library's. Read this before opening a PR.
 
 PHP 8.3 and 8.4; Symfony `^6.4 || ^7.4 || ^8.0`. The CI matrix is the promise —
 a constraint may only claim what the matrix tests. Version-conditional code in
-`src/` is a signal to raise the floor, not to add the branch (see D2 in
+`src/` is a signal to raise the floor, not to add the branch (see DEC-2 in
 [`docs/plan.md`](docs/plan.md) §9).
 
 ## Workflow
 
 1. Open an issue first for anything non-trivial.
 2. Branch from `develop`: `feat/…`, `fix/…`, `docs/…`, `chore/…`.
-3. Run `make qa` before pushing.
+3. Run `make qa` before pushing (from Phase 0 on — the toolchain lands with
+   the skeleton).
 4. Open the PR against `develop`. Reference the issue, and the feature-catalogue
    ID (C1, K3, I5 …) the change implements.
 5. Feature PRs are **squash-merged**; release and back-merge PRs use a **merge
@@ -60,7 +61,7 @@ Conventional Commits:
 feat(di): register a key resolver per configured key entry
 fix(security): stop leaking the library exception message to the client
 docs(config): document the audience list normalisation
-test(functional): cover the provider user-resolution mode end to end
+test(security): cover the provider user-resolution mode end to end
 chore(ci): pin actions to commit SHAs
 ```
 

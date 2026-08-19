@@ -17,6 +17,11 @@ reporting:
 (Also reachable from the repo's *Security → Advisories → Report a
 vulnerability* button.)
 
+**No GitHub account, or private reporting unavailable?** Use the contact
+details on [my GitHub profile](https://github.com/medzuch) as the fallback
+channel. Either way, please keep the details out of any public place — issues,
+discussions, social media — until a fix is released.
+
 Include:
 
 - A description of the issue.

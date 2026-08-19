@@ -8,6 +8,7 @@
 /.php-cs-fixer.dist.php export-ignore
 /phpstan.neon.dist  export-ignore
 /phpunit.xml.dist   export-ignore
+/infection.json5    export-ignore
 /docker-compose.yml export-ignore
 /Makefile           export-ignore
 /CHANGELOG.md       export-ignore

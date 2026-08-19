@@ -10,11 +10,13 @@ Closes #
 
 ## Checklist
 
-- [ ] `make qa` passes locally
+- [ ] `make qa` passes locally *(from Phase 0 on — the toolchain lands with the skeleton)*
 - [ ] Functional test on a real kernel covers any new configuration branch
 - [ ] Configuration impact stated below
 - [ ] `CHANGELOG.md` updated under `[Unreleased]`
 - [ ] Actions (if touched) pinned to commit SHAs
+- [ ] If key material is touched: it cannot reach the profiler, logs, exception
+      messages, `debug:container` output or a JWKS response (K9)
 
 ## Configuration impact
 
