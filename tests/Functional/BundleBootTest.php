@@ -17,6 +17,9 @@ use Medzuch\JwtBundle\MedzuchJwtBundle;
 #[CoversClass(MedzuchJwtBundle::class)]
 final class BundleBootTest extends KernelTestCase
 {
+    /**
+     * @param array<array-key, mixed> $options
+     */
     protected static function createKernel(array $options = []): KernelInterface
     {
         $config = $options['medzuch_jwt'] ?? [];

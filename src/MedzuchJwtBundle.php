@@ -36,16 +36,27 @@ final class MedzuchJwtBundle extends AbstractBundle
         // silencing the call site.
         \assert($root instanceof ArrayNodeDefinition);
 
+        // The chain stops at the node's own `end()`: every `end()` is typed
+        // `?NodeParentInterface`, so calling anything on its result is a
+        // level-9 finding. Nothing needs the root back — `children()` attaches
+        // each node as it is built.
         $root
             ->children()
                 ->scalarNode('clock')
                     ->defaultNull()
                     ->info('Service id of a PSR-20 clock. Null uses the library\'s SystemClock.')
                     ->example('app.frozen_clock')
-                ->end()
-            ->end();
+                ->end();
     }
 
+    /**
+     * `array<array-key, mixed>` rather than `array<string, mixed>`: narrowing
+     * the key type of an inherited parameter breaks contravariance, and level 9
+     * insists on *some* value type. This spelling satisfies both — it is what
+     * the bare `array` in the parent signature already means.
+     *
+     * @param array<array-key, mixed> $config
+     */
     public function loadExtension(array $config, ContainerConfigurator $container, ContainerBuilder $builder): void
     {
         $container->import('../config/services.php');
