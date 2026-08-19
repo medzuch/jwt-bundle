@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # GitHub Actions only. Composer is deliberately absent: `composer.lock` is
+  # gitignored (CI resolves dependencies fresh, which is what surfaces tooling
+  # drift), so there is no lock for Dependabot to pin and constraint bumps
+  # would be noise. Freshness of the dependency tree is covered by the weekly
+  # QA run against latest dependencies instead.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # PRs land on the integration branch like every other change; `main` only
+    # ever moves through a release PR.
+    target-branch: develop
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - dependencies
+    # SHA pinning is enforced repository-wide, so every action bump is a
+    # distinct commit. Ungrouped, a weekly run opens one PR (and one CI run)
+    # per action; grouped, it opens one.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3

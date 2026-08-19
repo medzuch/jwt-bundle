@@ -16,12 +16,12 @@
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
 > reopen it. Two change the plan's shape — there will be no `medzuch_jwt:`
-> firewall shorthand (D1), and the supported window is Symfony
-> `^6.4 || ^7.4 || ^8.0` on PHP 8.3/8.4 (D2), v0.4 having predated Symfony 7.4
+> firewall shorthand (DEC-1), and the supported window is Symfony
+> `^6.4 || ^7.4 || ^8.0` on PHP 8.3/8.4 (DEC-2), v0.4 having predated Symfony 7.4
 > LTS and 8.0. The four upstream library gaps are closed: `medzuch/jwt-php`
 > 1.1.0 added profile leeway, multi-audience consumers, passphrase-protected
 > PEMs and PHP 8.4, and the package is on Packagist — nothing outside this
-> repository blocks Phase 1 (D4).
+> repository blocks Phase 1 (DEC-4).
 
 ---
 
@@ -51,7 +51,7 @@
    collections* from day one (§4), even when the first release only exercises
    the `default` entry — retrofitting names later is a BC break.
 6. **Target versions.** PHP 8.3 and 8.4 (the library's window), Symfony 6.4 LTS,
-   7.4 LTS and 8.x — D2 in §9 has the matrix and why 7.0–7.3 are excluded.
+   7.4 LTS and 8.x — DEC-2 in §9 has the matrix and why 7.0–7.3 are excluded.
    `symfony/security-bundle` is a hard requirement; HTTP client, cache,
    Doctrine, Monolog are all optional integrations.
 7. **Public package discipline.** Semantic versioning, a BC policy, `@internal`
@@ -103,7 +103,7 @@ Key mechanics that shape the design:
   matching how apps configure every other bundle.
 - **Firewall integration** goes through Symfony's native `access_token` block
   and a token-handler service. The bundle deliberately does **not** implement
-  `AuthenticatorFactoryInterface` and ships no firewall key of its own (D1 in
+  `AuthenticatorFactoryInterface` and ships no firewall key of its own (DEC-1 in
   §9), so `DependencyInjection/` holds the config tree and compiler passes
   only.
 
@@ -381,7 +381,7 @@ Design notes:
   the tree accepts a scalar or a sequence, and the compiler pass rejects
   anything else — so the error names the offending config key instead of
   surfacing at the first request as a token problem.
-- **`kid` is explicit, never derived** (D5 in §9): optional for a single-key
+- **`kid` is explicit, never derived** (DEC-5 in §9): optional for a single-key
   setup, required as soon as two keys share an algorithm.
 
 ---
@@ -474,7 +474,7 @@ IdP issues an ID token  →  app's consumer "partner_idp"
 - **Phase 0 — Skeleton.** `AbstractBundle`, composer (`type: symfony-bundle`,
   requires `medzuch/jwt-php ^1.2` + `symfony/security-bundle`), config tree
   shell, CI reusing the library's Docker QA gates (cs-fixer, PHPStan L9,
-  PHPUnit) across the D2 version matrix, a functional test kernel.
+  PHPUnit) across the DEC-2 version matrix, a functional test kernel.
   *(Not started; nothing blocks it.)*
 - **Phase 1 — MVP (v0.1).** T1 items: named `keys`/`issuers`/`consumers` with
   one entry each, HMAC key from env, `AccessTokenHandler` + native firewall
@@ -531,8 +531,10 @@ below changes:
 
 The five questions this plan carried through v0.4 are settled. Each entry
 records the decision, why it went that way, and what would reopen it.
+Decisions are referenced as `DEC-n`; the `D`-numbered rows in §3.5 are the
+unrelated developer-experience catalogue.
 
-**D1 — Firewall wiring: the native `access_token` block only. No `medzuch_jwt:`
+**DEC-1 — Firewall wiring: the native `access_token` block only. No `medzuch_jwt:`
 firewall shorthand.** The shorthand would save one line of YAML and cost an
 `AuthenticatorFactoryInterface` implementation — a security-bundle extension
 point to keep working across three Symfony majors — plus a second, divergent
@@ -547,7 +549,7 @@ replay checks, and C15 needs "authenticate if a token is present, don't 401 if
 it isn't". Those get their own, explicitly named authenticator — not a
 shorthand alias for the existing one.
 
-**D2 — Supported versions: PHP `~8.3.0 || ~8.4.0`, Symfony `^6.4 || ^7.4 || ^8.0`.**
+**DEC-2 — Supported versions: PHP `~8.3.0 || ~8.4.0`, Symfony `^6.4 || ^7.4 || ^8.0`.**
 v0.4's "6.4 LTS and 7.x" was written before Symfony 7.4 LTS and 8.0 shipped.
 7.0–7.3 have all reached end of life, so requiring `^7.4` excludes only
 unmaintained minors; 6.4 stays because its security window runs to November
@@ -560,7 +562,7 @@ requires PHP 8.4, and the library's ceiling is 8.4). If a version-conditional
 branch ever becomes necessary in `src/`, that is the signal to raise the floor
 rather than to add the branch.
 
-**D3 — Revocation: `TokenDenylistInterface`, a `NullDenylist` default and a
+**DEC-3 — Revocation: `TokenDenylistInterface`, a `NullDenylist` default and a
 PSR-16 implementation in-tree; no Doctrine entity, now or later.** A denylist
 entry is keyed on `jti` and only has to outlive the token carrying it, so its
 natural lifetime is that token's remaining TTL — which is exactly what
@@ -573,7 +575,7 @@ needs revocation to survive a cache flush — but that is a durability
 requirement, and it belongs in an app-owned implementation of the interface (or
 a separate `medzuch/jwt-bundle-doctrine`), not on the default path.
 
-**D4 — Upstream gaps: closed. The bundle requires `medzuch/jwt-php ^1.2`.** All
+**DEC-4 — Upstream gaps: closed. The bundle requires `medzuch/jwt-php ^1.2`.** All
 four blockers v0.4 recorded were fixed upstream, backward compatibly, in 1.1.0:
 leeway on all three profile consumers, `string|non-empty-list<string>`
 audiences on `AccessTokenProfile::consumer()`, `?string $passphrase` on
@@ -590,7 +592,7 @@ would then have to special-case. Proposed upstream as
 `ValidatorBuilder::withMaxAge()` plus an appended profile parameter; it gates
 nothing before Phase 4.
 
-**D5 — `kid`: explicit, never derived from key material, and mandatory once two
+**DEC-5 — `kid`: explicit, never derived from key material, and mandatory once two
 keys share an algorithm.** Deriving a `kid` by hashing an HMAC secret would
 publish a value computed from that secret in every token header — an offline
 check for guessed secrets, bought for the convenience of not typing a name.
