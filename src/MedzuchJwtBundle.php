@@ -12,6 +12,7 @@ use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
+use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
@@ -55,6 +56,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->configureKeys($children);
         $this->configureIssuers($children);
         $this->configureConsumers($children);
+        $this->configureJwks($children);
     }
 
     /**
@@ -70,6 +72,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     logger: string|null,
          *     keys: array<string, array{hmac?: string, pem_private?: string, pem_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}>,
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
+         *     jwks: array{keys: list<string>, cache_max_age: int},
          *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
          * } $config */
         $container->import('../config/services.yaml');
@@ -86,6 +89,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerKeys($services, $keys);
         $this->registerIssuers($services, $keys, $config['issuers']);
         $this->registerConsumers($services, $keys, $config['consumers'], $config['logger']);
+        $this->registerJwks($services, $keys, $config['jwks']);
     }
 
     private function configureGlobals(NodeBuilder $children): void
@@ -215,6 +219,27 @@ final class MedzuchJwtBundle extends AbstractBundle
                 'Static claims cannot include the registered claims %s — they are set from configuration (`issuer`, `audience`, `ttl`) or by the profile. Got %%s',
                 '"' . implode('", "', self::REGISTERED_CLAIMS) . '"',
             ))
+            ->end();
+    }
+
+    private function configureJwks(NodeBuilder $children): void
+    {
+        $jwks = $children->arrayNode('jwks')
+            ->info('Public keys to publish as a JWK Set. The application routes to medzuch_jwt.jwks_controller itself; where the document lives is its decision.')
+            ->addDefaultsIfNotSet();
+
+        $jwksChildren = $jwks->children();
+
+        $keys = $jwksChildren->arrayNode('keys');
+        $keys->info('Names from the `keys` section. Only verification halves are published, and never a shared secret.');
+        $keys->scalarPrototype()->cannotBeEmpty()->end();
+        $keys->defaultValue([]);
+        self::rejectMaps($keys, 'jwks.keys');
+
+        $jwksChildren->integerNode('cache_max_age')
+            ->defaultValue(300)
+            ->min(0)
+            ->info('Seconds a relying party may cache the document. Zero means revalidate every time, which a rotation does not need: an accepted key is accepted for as long as it is configured.')
             ->end();
     }
 
@@ -521,6 +546,52 @@ final class MedzuchJwtBundle extends AbstractBundle
         if (isset($issuers['default'])) {
             $services->alias(AccessTokenIssuer::class, 'medzuch_jwt.issuer.default');
         }
+    }
+
+    /**
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
+     * @param array{keys: list<string>, cache_max_age: int}                                                                                                              $jwks
+     */
+    private function registerJwks(ServicesConfigurator $services, array $keys, array $jwks): void
+    {
+        if ([] === $jwks['keys']) {
+            return;
+        }
+
+        foreach ($jwks['keys'] as $name) {
+            if (!isset($keys[$name])) {
+                throw new InvalidConfigurationException(sprintf(
+                    'medzuch_jwt.jwks publishes key "%s", which is not defined under medzuch_jwt.keys.',
+                    $name,
+                ));
+            }
+
+            // The one refusal this endpoint exists to make. A symmetric key's
+            // JWK carries `k`, so publishing it hands every reader the key that
+            // signs — and it would be a fully valid JWK Set, served with a 200.
+            if (null !== $keys[$name]['hmac']) {
+                throw new InvalidConfigurationException(sprintf(
+                    'medzuch_jwt.jwks would publish key "%s", which is a shared secret. Its JWK carries the secret itself, so publishing it gives away the key that signs.',
+                    $name,
+                ));
+            }
+
+            if (null === $keys[$name]['pem_public']) {
+                throw new InvalidConfigurationException(sprintf(
+                    'medzuch_jwt.jwks publishes key "%s", which has no public half to publish.',
+                    $name,
+                ));
+            }
+        }
+
+        $services->set('medzuch_jwt.jwks.key_set', JwkSet::class)
+            ->factory([JwkSet::class, 'of'])
+            ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($jwks['keys'])));
+
+        $services->set('medzuch_jwt.jwks_controller', JwksController::class)
+            ->args([service('medzuch_jwt.jwks.key_set'), $jwks['cache_max_age']])
+            ->public()
+            ->tag('controller.service_arguments');
     }
 
     /**

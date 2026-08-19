@@ -297,6 +297,50 @@ final class ConfigurationValidationTest extends KernelTestCase
         ]]);
     }
 
+    #[TestDox('publishing a shared secret as JWKS fails at container build')]
+    public function testJwksRefusesASharedSecret(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/gives away the key that signs/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'jwks' => ['keys' => ['default']],
+        ]]);
+    }
+
+    #[TestDox('publishing a key with no public half fails at container build')]
+    public function testJwksRefusesAPrivateOnlyKey(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/no public half to publish/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_private' => self::PEM, 'algorithm' => 'RS256']],
+            'jwks' => ['keys' => ['default']],
+        ]]);
+    }
+
+    #[TestDox('publishing a key that does not exist fails at container build')]
+    public function testJwksRefusesAnUnknownKey(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/publishes key "typo"/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_public' => self::PEM, 'algorithm' => 'RS256']],
+            'jwks' => ['keys' => ['typo']],
+        ]]);
+    }
+
+    #[TestDox('no jwks section means no publisher, not an empty one')]
+    public function testNoJwksMeansNoController(): void
+    {
+        self::bootKernel(['medzuch_jwt' => ['keys' => ['default' => ['hmac' => self::SECRET]]]]);
+
+        self::assertFalse(self::getContainer()->has('medzuch_jwt.jwks_controller'));
+    }
+
     /**
      * @param array<string, mixed> $overrides
      *

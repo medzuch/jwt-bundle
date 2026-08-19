@@ -490,7 +490,11 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   `max_token_age` are the T2 half and stay in Phase 4.)*
 - **Phase 2 — Keys & rotation (v0.2).** K1–K4, K9: PEM/JWK sources, named keys,
   `kid` selection, active/accepted split, JWKS publisher, `jwt:key:generate`,
-  RS256/ES256/EdDSA support end to end.
+  RS256/ES256/EdDSA support end to end. *(PEM sources, rotation and the JWKS
+  publisher shipped; JWK sources — and with them EdDSA — and the key-generation
+  command remain. The active/accepted split needed no `active` flag: an issuer
+  names one key and a consumer names several, which is the same thing said
+  once instead of twice.)*
 - **Phase 3 — Federation (v0.3).** K5–K6, C6, C14: remote JWKS with cache and
   fallback, ID-token consumer, OIDC-RP quickstart, audience lists.
 - **Phase 4 — DX & hardening (v0.4 → v1.0).** C4, C5, C9, C13, I2–I4,
@@ -615,11 +619,15 @@ that key or not at all"). A `kid`-less rotation is therefore a hard cutover
 that invalidates every token still in flight; refusing that configuration at
 container build beats discovering it mid-rotation.
 
-**Deferred, not decided.** How the JWKS route is published (K4): the bundle can
-import a `config/routes.php` when `jwks.publish.enabled` is true, or the
-application can declare the route itself against a bundle controller. The first
-is better DX, the second keeps route ownership with the app. Decide in Phase 2,
-when there is a controller to hang it on.
+**DEC-6 — the JWKS route belongs to the application.** Deferred through v0.1.0,
+settled with K4: the bundle registers `medzuch_jwt.jwks_controller` and no route
+at all. Where a JWK Set lives — under `/.well-known/`, behind a prefix, on a
+separate host, or nowhere because this deployment publishes nothing — is a
+routing decision, and routing is the application's. Shipping a route file would
+have needed a `path` key and an `enabled` key to answer questions the
+application's own routing already answers, and an imported route file that
+disagrees with `enabled` is a failure mode with no upside. The cost is three
+lines of YAML in the application, which is what any other controller costs.
 
 ---
 

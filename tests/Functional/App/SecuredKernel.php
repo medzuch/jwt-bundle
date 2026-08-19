@@ -128,6 +128,17 @@ final class SecuredKernel extends Kernel
     {
         $routes->add('whoami', '/api/whoami')->controller(WhoAmIController::class);
 
+        // Where a JWK Set lives is the application's decision, and this
+        // application makes it the way any other would: it routes to the
+        // controller when it has configured keys to publish.
+        $jwks = $this->bundleConfig['jwks'] ?? null;
+
+        if (is_array($jwks) && [] !== ($jwks['keys'] ?? [])) {
+            $routes->add('jwks', '/.well-known/jwks.json')
+                ->methods(['GET'])
+                ->controller('medzuch_jwt.jwks_controller');
+        }
+
         // json_login intercepts this path before routing; the route exists so
         // that a request which somehow reaches the router gets a 500 naming the
         // problem rather than a 404 suggesting a typo.

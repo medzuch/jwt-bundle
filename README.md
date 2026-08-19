@@ -13,9 +13,9 @@ Works for any of these roles, in any combination:
 - **Service-to-service** — machine tokens between your own services.
 
 > **Status: pre-1.0.** The MVP works end to end — issue a token on login, verify it on a
-> firewall, be authenticated — with HMAC, RSA and EC keys. Nothing about it is stable yet.
-> Key rotation and JWKS publication are next; see [`docs/plan.md`](docs/plan.md) for the full
-> design and roadmap.
+> firewall, be authenticated — with HMAC, RSA and EC keys, key rotation and a JWKS endpoint.
+> Nothing about it is stable yet; see [`docs/plan.md`](docs/plan.md) for the full design and
+> roadmap.
 
 Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
 
@@ -286,6 +286,77 @@ container parameter and never appears in `debug:container` output. The flip side
 length cannot be checked when the container is built: too short a secret fails when the key is
 first used, not at deploy time.
 
+## Rotating a key
+
+Rotation is a configuration move rather than a feature. An issuer signs with **one** key while a
+consumer accepts **several**, so a new key can start signing while tokens from the old one are
+still in flight:
+
+1. Add the new keypair alongside the old one, each with its own `kid`.
+2. Add the new public half to the consumer's `keys`. Nothing changes yet — the issuer still
+   signs with the old key, and both are now accepted.
+3. Point the issuer at the new private half. New tokens carry the new `kid`; tokens minted a
+   minute ago still verify.
+4. Once the longest `ttl` has passed, remove the old key from `keys` and delete it.
+
+```yaml
+medzuch_jwt:
+    keys:
+        signing_2026:  { pem_private: '…/2026.pem',     algorithm: RS256, kid: '2026-01' }
+        verify_2026:   { pem_public:  '…/2026.pub.pem', algorithm: RS256, kid: '2026-01' }
+        verify_2025:   { pem_public:  '…/2025.pub.pem', algorithm: RS256, kid: '2025-07' }
+
+    issuers:
+        default:
+            issuer: '%env(APP_URL)%'
+            key: signing_2026          # step 3 changes this line
+            client_id: '%env(APP_CLIENT_ID)%'
+            audience: '%env(APP_URL)%'
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [verify_2026, verify_2025]
+            allowed_algorithms: [RS256]
+```
+
+**The `kid`s are what make the overlap work.** Without them the library resolves a token to the
+first key bound to its algorithm and does not try the others, so the second key would verify
+nothing — which is why a consumer configured that way is refused at container build.
+
+## Publishing a JWK Set
+
+Relying parties that verify your tokens need your public keys. List the ones to publish, and
+route to the controller wherever the document belongs:
+
+```yaml
+medzuch_jwt:
+    keys:
+        verify_2026:   { pem_public: '…/2026.pub.pem', algorithm: RS256, kid: '2026-01' }
+        verify_2025:   { pem_public: '…/2025.pub.pem', algorithm: RS256, kid: '2025-07' }
+
+    jwks:
+        keys: [verify_2026, verify_2025]
+        cache_max_age: 300
+```
+
+```yaml
+# config/routes.yaml
+medzuch_jwt_jwks:
+    path: /.well-known/jwks.json
+    methods: [GET]
+    controller: medzuch_jwt.jwks_controller
+```
+
+The bundle registers no route of its own: where a JWKS document lives — under `/.well-known/`,
+behind a prefix, on a separate host — is the application's decision, and a route the bundle
+owned would either take that choice away or duplicate it.
+
+Only verification halves are published, and **a shared secret is refused at container build**: a
+symmetric key's JWK carries the secret itself, so publishing it would hand every reader the key
+that signs, in a document that parses perfectly and returns 200.
+
 ## Configuration reference
 
 The complete tree, with every option, default and explanation, is generated from the bundle
@@ -310,6 +381,7 @@ looking like rejected tokens at runtime:
 - a key given the wrong kind of material for its algorithm — a secret for `RS256`, a PEM for
   `HS256`, both at once, or neither
 - a consumer verifying with a private-only key, or an issuer signing with a public-only one
+- a JWK Set publishing a shared secret, a key with no public half, or a key that does not exist
 - a static claim named `iss`, `sub`, `aud`, `exp`, `nbf`, `iat` or `jti` — those are set from
   configuration or by the profile
 - a YAML map where a sequence is expected, an unknown algorithm name, leeway above the
