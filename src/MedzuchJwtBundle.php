@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle;
 
 use DateInterval;
+use Medzuch\Jwt\Jwt\ValidatorBuilder;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\JwkSet;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
-use Medzuch\Jwt\Jwt\ValidatorBuilder;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
