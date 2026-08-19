@@ -46,6 +46,12 @@ final class TestKernel extends Kernel
 
             $container->register('test.logger', CollectingLogger::class)->setPublic(true);
 
+            // The README wires `logger` to a Monolog channel, which an
+            // application provides and this harness does not. Standing in for
+            // it keeps the documented example verifiable; a missing service id
+            // is otherwise a container-build failure, as it should be.
+            $container->setAlias('monolog.logger.jwt', 'test.logger');
+
             $container->register('test.frozen_clock', FrozenClock::class)
                 ->setFactory([FrozenClock::class, 'at'])
                 ->addArgument('2026-01-01T00:00:00+00:00')
