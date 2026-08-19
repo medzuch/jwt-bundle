@@ -13,11 +13,14 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\HttpKernel\Kernel;
 
 /**
- * Smallest kernel that can boot the bundle for real.
+ * Smallest kernel that can boot the bundle for real, so the tests assert
+ * against a compiled container rather than a parsed configuration tree.
  *
- * The point of a functional test here is that the container is *compiled* —
- * a configuration tree that parses and services that wire are two different
- * claims, and only the second one is what an application depends on.
+ * `framework.http_method_override` is deliberately left unset: 6.4 deprecates
+ * the omission and later majors dropped the option, so no single value works
+ * across the supported window. The resulting 6.4 deprecation notice fails
+ * nothing (see `phpunit.xml.dist`) and keeps the bundle free of
+ * version-conditional code.
  */
 final class TestKernel extends Kernel
 {
@@ -38,19 +41,9 @@ final class TestKernel extends Kernel
     public function registerContainerConfiguration(LoaderInterface $loader): void
     {
         $loader->load(function (ContainerBuilder $container): void {
-            // Symfony 6.4 deprecates leaving `http_method_override` unset,
-            // while later majors dropped the option, so no single value works
-            // across the window. Rather than branch on Kernel::VERSION_ID — a
-            // constant every analyser folds, making the comparison "always
-            // true" on one leg and "always false" on the next — the harness
-            // simply wears the 6.4 deprecation notice. Nothing fails on it
-            // (see phpunit.xml.dist), and the bundle itself stays free of
-            // version-conditional code, which is what DEC-2 actually asks for.
             $container->loadFromExtension('framework', ['secret' => 'test-secret', 'test' => true]);
             $container->loadFromExtension('medzuch_jwt', $this->bundleConfig);
 
-            // Stand-in for an application-provided clock, so the override path
-            // is exercised against a real service rather than a mock id.
             $container->register('test.frozen_clock', FrozenClock::class)
                 ->setFactory([FrozenClock::class, 'at'])
                 ->addArgument('2026-01-01T00:00:00+00:00')
@@ -63,33 +56,23 @@ final class TestKernel extends Kernel
         $container->addCompilerPass(new PublicForTestsPass(), PassConfig::TYPE_BEFORE_REMOVING);
     }
 
+    /**
+     * Keyed by configuration *and* runtime, so two boots never share a
+     * container compiled for a different dependency set.
+     */
     public function getCacheDir(): string
     {
-        // Keyed by the configuration, not just the environment: two tests that
-        // boot different configurations must not share a compiled container,
-        // or the second one silently asserts against the first one's wiring.
-        // Also keyed by the runtime, not just the configuration: `make symfony
-        // V=6.4.*` followed by `make test` in the same container would
-        // otherwise reuse a container compiled against the other Symfony line,
-        // and the assertions would describe a dependency set that is no longer
-        // installed. (A version *constant* in a cache key is not the
-        // version-conditional behaviour DEC-2 rules out.)
         return sprintf(
             '%s/medzuch-jwt-bundle-tests/php%d-sf%d-%s',
             sys_get_temp_dir(),
             \PHP_VERSION_ID,
             Kernel::VERSION_ID,
-            $this->configurationKey(),
+            hash('xxh128', serialize($this->bundleConfig)),
         );
     }
 
     public function getLogDir(): string
     {
         return $this->getCacheDir() . '/log';
-    }
-
-    private function configurationKey(): string
-    {
-        return hash('xxh128', serialize($this->bundleConfig));
     }
 }

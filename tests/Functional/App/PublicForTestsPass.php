@@ -10,14 +10,10 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 /**
  * Makes the bundle's own services public for the duration of a test.
  *
- * Every service this bundle registers is private, as it should be: an
- * application reaches them through autowiring or by naming them in its own
- * configuration, never through `$container->get()`. Private services that
- * nothing references are removed during compilation, so without this pass a
- * test asking for `medzuch_jwt.clock` would fail with "service not found" —
- * describing the removal, not the wiring the test means to assert.
- *
- * Runs before removal so the definitions still exist.
+ * They are private in an application, as they should be, and private services
+ * nothing references are removed during compilation — so a test asking for one
+ * would fail with "service not found" rather than with whatever it meant to
+ * assert. Registered before the removal pass.
  */
 final class PublicForTestsPass implements CompilerPassInterface
 {

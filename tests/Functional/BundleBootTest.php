@@ -18,22 +18,16 @@ use Symfony\Component\HttpKernel\KernelInterface;
 #[CoversClass(MedzuchJwtBundle::class)]
 final class BundleBootTest extends KernelTestCase
 {
+    /**
+     * FrameworkBundle installs a global exception handler when it boots in
+     * debug mode and never removes it, which PHPUnit reports as a risky test.
+     * Restoring unconditionally would pop PHPUnit's own handler whenever a boot
+     * failed before installing one, so check what is actually on top first.
+     */
     protected function tearDown(): void
     {
         parent::tearDown();
 
-        // FrameworkBundle registers a global exception handler when it boots in
-        // debug mode and never removes it on shutdown, which PHPUnit reports as
-        // a risky test — and `failOnRisky` is on, so it fails the suite. Undo it
-        // here rather than turning the check off: a leaked handler is worth
-        // knowing about when it is *our* leak.
-        //
-        // "A kernel was booted" is not the right condition: the configuration
-        // test throws during compilation, possibly before the handler is
-        // installed, and popping the stack then would remove PHPUnit's own
-        // handler instead. So inspect what is actually on top — probe by
-        // setting null (which returns the current handler) and immediately
-        // undoing that probe.
         $current = set_exception_handler(null);
         restore_exception_handler();
 
@@ -57,9 +51,7 @@ final class BundleBootTest extends KernelTestCase
     {
         self::bootKernel();
 
-        $clock = self::getContainer()->get('medzuch_jwt.clock');
-
-        self::assertInstanceOf(SystemClock::class, $clock);
+        self::assertInstanceOf(SystemClock::class, self::getContainer()->get('medzuch_jwt.clock'));
     }
 
     #[TestDox('a configured clock replaces the default rather than sitting beside it')]
@@ -70,11 +62,7 @@ final class BundleBootTest extends KernelTestCase
         $clock = self::getContainer()->get('medzuch_jwt.clock');
 
         self::assertInstanceOf(FrozenClock::class, $clock);
-        self::assertSame(
-            '2026-01-01T00:00:00+00:00',
-            $clock->now()->format('c'),
-            'the alias must resolve to the application service, not to a second SystemClock',
-        );
+        self::assertSame('2026-01-01T00:00:00+00:00', $clock->now()->format('c'));
     }
 
     #[TestDox('an unknown configuration key fails at container build, not at the first request')]
@@ -83,5 +71,13 @@ final class BundleBootTest extends KernelTestCase
         $this->expectException(InvalidConfigurationException::class);
 
         self::bootKernel(['medzuch_jwt' => ['no_such_key' => true]]);
+    }
+
+    #[TestDox('a clock that is present but not a service id is refused')]
+    public function testEmptyClockIsRejected(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+
+        self::bootKernel(['medzuch_jwt' => ['clock' => '']]);
     }
 }
