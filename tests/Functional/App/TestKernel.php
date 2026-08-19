@@ -44,6 +44,8 @@ final class TestKernel extends Kernel
             $container->loadFromExtension('framework', ['secret' => 'test-secret', 'test' => true]);
             $container->loadFromExtension('medzuch_jwt', $this->bundleConfig);
 
+            $container->register('test.logger', CollectingLogger::class)->setPublic(true);
+
             $container->register('test.frozen_clock', FrozenClock::class)
                 ->setFactory([FrozenClock::class, 'at'])
                 ->addArgument('2026-01-01T00:00:00+00:00')
@@ -69,6 +71,17 @@ final class TestKernel extends Kernel
             Kernel::VERSION_ID,
             hash('xxh128', serialize($this->bundleConfig)),
         );
+    }
+
+    /**
+     * Points away from the repository: with the project dir defaulting to the
+     * package root, booting a kernel writes generated artefacts (a 68 KB
+     * `config/reference.php`, among others) straight into the bundle's own
+     * `config/` — a source directory here, not an application's.
+     */
+    public function getProjectDir(): string
+    {
+        return $this->getCacheDir();
     }
 
     public function getLogDir(): string

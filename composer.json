@@ -3,7 +3,16 @@
     "description": "Symfony bundle wiring medzuch/jwt-php into Symfony Security: issue and verify RFC 9068 access tokens, OIDC ID tokens and custom JWS/JWE. PHP 8.3 and 8.4, Symfony 6.4, 7.4 and 8.x.",
     "type": "symfony-bundle",
     "license": "MIT",
-    "keywords": ["symfony", "symfony-bundle", "jwt", "jose", "security", "auth", "rfc9068", "oidc"],
+    "keywords": [
+        "symfony",
+        "symfony-bundle",
+        "jwt",
+        "jose",
+        "security",
+        "auth",
+        "rfc9068",
+        "oidc"
+    ],
     "authors": [
         {
             "name": "Marcin Mech",
@@ -26,9 +35,12 @@
         "phpstan/phpstan-phpunit": "^2.0",
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpunit/phpunit": "^12.0",
+        "psr/log": "^3.0",
         "roave/security-advisories": "dev-latest",
+        "symfony/browser-kit": "^6.4 || ^7.4 || ^8.0",
         "symfony/error-handler": "^6.4 || ^7.4 || ^8.0",
-        "symfony/framework-bundle": "^6.4 || ^7.4 || ^8.0"
+        "symfony/framework-bundle": "^6.4 || ^7.4 || ^8.0",
+        "symfony/routing": "^6.4 || ^7.4 || ^8.0"
     },
     "autoload": {
         "psr-4": {

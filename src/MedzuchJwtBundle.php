@@ -11,7 +11,9 @@ use Medzuch\Jwt\Key\JwkSet;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
+use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
+use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
@@ -44,6 +46,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $this->configureGlobals($children);
         $this->configureKeys($children);
+        $this->configureIssuers($children);
         $this->configureConsumers($children);
     }
 
@@ -59,6 +62,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     clock: string|null,
          *     logger: string|null,
          *     keys: array<string, array{hmac: string, algorithm: string, kid: string|null}>,
+         *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
          * } $config */
         $container->import('../config/services.php');
@@ -73,6 +77,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $services = $container->services();
         $this->registerKeys($services, $config['keys']);
+        $this->registerIssuers($services, $config['keys'], $config['issuers']);
         $this->registerConsumers($services, $config['keys'], $config['consumers'], $config['logger']);
     }
 
@@ -126,6 +131,53 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ->thenInvalid('A key\'s "kid" cannot be the empty string; omit it instead.')
             ->end()
             ->end();
+    }
+
+    private function configureIssuers(NodeBuilder $children): void
+    {
+        $issuer = $children->arrayNode('issuers')
+            ->info('Named issuers. Each mints tokens with exactly one key.')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $issuer->scalarNode('issuer')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('Value of the `iss` claim, and what a consumer must expect.')
+            ->end();
+
+        $issuer->scalarNode('key')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('Name from the `keys` section. Its algorithm is the signing algorithm — a key is bound to one, so restating it here could only disagree.')
+            ->end();
+
+        $issuer->scalarNode('client_id')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('Value of the `client_id` claim, required by RFC 9068 §2.2.')
+            ->end();
+
+        $issuer->integerNode('ttl')
+            ->defaultValue(900)
+            ->min(1)
+            ->info('Token lifetime in seconds. Short is the point: a bearer token cannot be recalled.')
+            ->end();
+
+        $audience = $issuer->arrayNode('audience');
+        $audience->info('Value of the `aud` claim.');
+        $audience->beforeNormalization()->castToArray()->end();
+        $audience->scalarPrototype()->cannotBeEmpty()->end();
+        $audience->isRequired();
+        $audience->requiresAtLeastOneElement();
+        self::rejectMaps($audience, 'audience');
+
+        $claims = $issuer->arrayNode('claims');
+        $claims->info('Static claims added to every token. A caller can override one; the profile\'s own claims cannot be overridden by either.');
+        $claims->normalizeKeys(false);
+        $claims->useAttributeAsKey('name');
+        $claims->variablePrototype()->end();
     }
 
     private function configureConsumers(NodeBuilder $children): void
@@ -260,6 +312,52 @@ final class MedzuchJwtBundle extends AbstractBundle
             $services->set('medzuch_jwt.key.' . $name, HmacKey::class)
                 ->factory([HmacKey::class, 'fromBinary'])
                 ->args([$key['hmac'], $key['algorithm'], $key['kid']]);
+        }
+    }
+
+    /**
+     * @param array<string, array{hmac: string, algorithm: string, kid: string|null}>                                                                    $keys
+     * @param array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}> $issuers
+     */
+    private function registerIssuers(ServicesConfigurator $services, array $keys, array $issuers): void
+    {
+        foreach ($issuers as $name => $issuer) {
+            if (!isset($keys[$issuer['key']])) {
+                throw new InvalidConfigurationException(sprintf(
+                    'Issuer "%s" signs with key "%s", which is not defined under medzuch_jwt.keys. Defined: %s.',
+                    $name,
+                    $issuer['key'],
+                    [] === $keys ? 'none' : '"' . implode('", "', array_keys($keys)) . '"',
+                ));
+            }
+
+            $services->set('medzuch_jwt.profile.' . $name, AccessTokenProfile::class)
+                ->factory([AccessTokenProfile::class, 'issuer'])
+                ->args([
+                    $issuer['issuer'],
+                    inline_service(SigningAlgorithms::CLASSES[$keys[$issuer['key']]['algorithm']]),
+                    service('medzuch_jwt.key.' . $issuer['key']),
+                    service('medzuch_jwt.clock'),
+                ]);
+
+            $services->set('medzuch_jwt.issuer.' . $name, AccessTokenIssuer::class)
+                ->args([
+                    service('medzuch_jwt.profile.' . $name),
+                    array_values($issuer['audience']),
+                    $issuer['client_id'],
+                    $issuer['ttl'],
+                    $issuer['claims'],
+                ]);
+
+            $services->set('medzuch_jwt.login.' . $name, AccessTokenSuccessHandler::class)
+                ->args([service('medzuch_jwt.issuer.' . $name)]);
+        }
+
+        // Autowiring reaches the `default` issuer by type. Applications with
+        // several issuers name the service they want; one issuer is the common
+        // case and should not have to.
+        if (isset($issuers['default'])) {
+            $services->alias(AccessTokenIssuer::class, 'medzuch_jwt.issuer.default');
         }
     }
 

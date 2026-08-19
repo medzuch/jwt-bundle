@@ -10,6 +10,7 @@ use Medzuch\Jwt\Algorithm\Signing\Hs256;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
+use Medzuch\JwtBundle\Tests\Functional\App\CollectingLogger;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
@@ -117,6 +118,25 @@ final class AccessTokenHandlerTest extends KernelTestCase
         $this->expectException(BadCredentialsException::class);
 
         self::handler()->getUserBadgeFrom(self::token());
+    }
+
+    #[TestDox('a configured logger receives the library\'s account of a refusal')]
+    public function testRefusalIsLogged(): void
+    {
+        $configuration = self::configuration();
+        $configuration['logger'] = 'test.logger';
+
+        self::bootKernel(['medzuch_jwt' => $configuration]);
+
+        try {
+            self::handler()->getUserBadgeFrom(self::token(secret: 'a-different-secret-of-32-bytes-min!!!'));
+        } catch (BadCredentialsException) {
+            // The refusal is the point; what it left in the log is the assertion.
+        }
+
+        $logger = self::getContainer()->get('test.logger');
+        self::assertInstanceOf(CollectingLogger::class, $logger);
+        self::assertNotSame([], $logger->records, 'configuring `logger` must reach the library\'s security log');
     }
 
     private static function handler(): AccessTokenHandler
