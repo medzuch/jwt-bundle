@@ -12,10 +12,10 @@ Works for any of these roles, in any combination:
 - **OIDC relying party** — verify a third-party IdP's tokens via cached, rotation-aware JWKS.
 - **Service-to-service** — machine tokens between your own services.
 
-> **Status: v0.1.0, pre-1.0.** The MVP works end to end — issue a token on login, verify it on a
-> firewall, be authenticated — but nothing about it is stable yet, and only HMAC keys exist.
-> Asymmetric keys, rotation and JWKS arrive in the next phase; see
-> [`docs/plan.md`](docs/plan.md) for the full design and roadmap.
+> **Status: pre-1.0.** The MVP works end to end — issue a token on login, verify it on a
+> firewall, be authenticated — with HMAC, RSA and EC keys. Nothing about it is stable yet.
+> Key rotation and JWKS publication are next; see [`docs/plan.md`](docs/plan.md) for the full
+> design and roadmap.
 
 Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
 
@@ -197,7 +197,10 @@ medzuch_jwt:
 
 ## Keys
 
-The MVP takes HMAC secrets from the environment:
+A key is bound to exactly one algorithm, and the algorithm decides what material it must be
+given: a shared secret for `HS*`, a PEM for `RS*` and `ES*`.
+
+### Shared secrets
 
 ```yaml
 medzuch_jwt:
@@ -205,10 +208,60 @@ medzuch_jwt:
         default:
             hmac: '%env(JWT_SECRET)%'       # or %env(base64:JWT_SECRET)% for a base64 secret
             algorithm: HS256                # HS256 | HS384 | HS512
-            kid: ~                          # required once two keys share an algorithm
+            kid: ~                          # required once a consumer verifies with two keys it cannot tell apart
 ```
 
-Generate one with at least 32 bytes of entropy (48 for HS384, 64 for HS512 — RFC 8725 §3.5):
+### RSA and EC keys
+
+The two halves are separate entries, because they are separate things: only the private one can
+sign, and only the public one can verify. Each `pem_*` value is either a path to a PEM file or
+the PEM itself — told apart by the armour, since no path begins with `-----BEGIN`.
+
+```yaml
+medzuch_jwt:
+    keys:
+        signing:
+            pem_private: '%kernel.project_dir%/config/jwt/private.pem'
+            pem_passphrase: '%env(JWT_KEY_PASSPHRASE)%'    # omit for an unencrypted key
+            algorithm: RS256                               # RS256/384/512 | ES256/384/512
+            kid: '2026-01'
+        verifying:
+            pem_public: '%kernel.project_dir%/config/jwt/public.pem'
+            algorithm: RS256
+            kid: '2026-01'
+
+    issuers:
+        default:
+            issuer: '%env(APP_URL)%'
+            key: signing
+            client_id: '%env(APP_CLIENT_ID)%'
+            audience: '%env(APP_URL)%'
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [verifying]
+            allowed_algorithms: [RS256]
+```
+
+Generate a keypair with:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out config/jwt/private.pem
+openssl pkey -in config/jwt/private.pem -pubout -out config/jwt/public.pem
+```
+
+A resource server verifying someone else's tokens configures only the public half. An
+authorization server that does not verify its own tokens configures only the private one.
+
+`EdDSA` is listed as an algorithm but has no key source yet: Ed25519 has no PEM representation
+in the library, and a JWK source is planned. Configuring it says so rather than failing
+obscurely.
+
+### HMAC secret length
+
+An HMAC secret needs at least 32 bytes of entropy (48 for HS384, 64 for HS512 — RFC 8725 §3.5):
 
 ```bash
 php -r 'echo base64_encode(random_bytes(32)), PHP_EOL;'
@@ -252,7 +305,11 @@ looking like rejected tokens at runtime:
 
 - a consumer or issuer naming a key that does not exist
 - an allowed algorithm with no key behind it — a token using it could never be verified
-- two keys a token cannot tell apart: sharing a `kid`, or sharing an algorithm with no `kid`
+- two keys in one consumer's set that a token cannot tell apart: sharing a `kid`, or sharing an
+  algorithm with no `kid`
+- a key given the wrong kind of material for its algorithm — a secret for `RS256`, a PEM for
+  `HS256`, both at once, or neither
+- a consumer verifying with a private-only key, or an issuer signing with a public-only one
 - a static claim named `iss`, `sub`, `aud`, `exp`, `nbf`, `iat` or `jti` — those are set from
   configuration or by the profile
 - a YAML map where a sequence is expected, an unknown algorithm name, leeway above the

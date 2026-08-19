@@ -8,10 +8,13 @@ use DateInterval;
 use Medzuch\Jwt\Jwt\ValidatorBuilder;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\JwkSet;
+use Medzuch\Jwt\Key\PrivateKey;
+use Medzuch\Jwt\Key\PublicKey;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
+use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
@@ -67,7 +70,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         /** @var array{
          *     clock: string|null,
          *     logger: string|null,
-         *     keys: array<string, array{hmac: string, algorithm: string, kid: string|null}>,
+         *     keys: array<string, array{hmac?: string, pem_private?: string, pem_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}>,
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
          * } $config */
@@ -79,12 +82,12 @@ final class MedzuchJwtBundle extends AbstractBundle
             $builder->setAlias('medzuch_jwt.clock', $config['clock']);
         }
 
-        $this->assertKeysAreDistinguishable($config['keys']);
+        $keys = $this->keyEntries($config['keys']);
 
         $services = $container->services();
-        $this->registerKeys($services, $config['keys']);
-        $this->registerIssuers($services, $config['keys'], $config['issuers']);
-        $this->registerConsumers($services, $config['keys'], $config['consumers'], $config['logger']);
+        $this->registerKeys($services, $keys);
+        $this->registerIssuers($services, $keys, $config['issuers']);
+        $this->registerConsumers($services, $keys, $config['consumers'], $config['logger']);
     }
 
     private function configureGlobals(NodeBuilder $children): void
@@ -116,17 +119,38 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->arrayPrototype()
             ->children();
 
-        $key->scalarNode('hmac')
-            ->isRequired()
-            ->cannotBeEmpty()
-            ->info('Shared secret, at least 32/48/64 bytes for HS256/384/512 (RFC 8725 §3.5). Use an env reference; %env(base64:NAME)% decodes a base64 secret. The length cannot be checked at build: the secret stays an env reference so it never reaches a container parameter, so a short one fails when the key is first used.')
-            ->example('%env(JWT_SECRET)%')
-            ->end();
+        self::declareKeySource(
+            $key,
+            'hmac',
+            'Shared secret, at least 32/48/64 bytes for HS256/384/512 (RFC 8725 §3.5). Use an env reference; %env(base64:NAME)% decodes a base64 secret. The length cannot be checked at build: the secret stays an env reference so it never reaches a container parameter, so a short one fails when the key is first used.',
+            '%env(JWT_SECRET)%',
+        );
+
+        self::declareKeySource(
+            $key,
+            'pem_private',
+            'Signing key: a path to a PEM file, or the PEM itself. Told apart by the armour, so a value beginning with -----BEGIN is read as the key rather than as a filename.',
+            '%kernel.project_dir%/config/jwt/private.pem',
+        );
+
+        self::declareKeySource(
+            $key,
+            'pem_public',
+            'Verification key, same two spellings. A consumer needs this half; the private one cannot stand in for it.',
+            '%kernel.project_dir%/config/jwt/public.pem',
+        );
+
+        self::declareKeySource(
+            $key,
+            'pem_passphrase',
+            'Passphrase for an encrypted private PEM. Use an env reference.',
+            '%env(JWT_KEY_PASSPHRASE)%',
+        );
 
         $key->enumNode('algorithm')
-            ->values(SigningAlgorithms::HMAC)
+            ->values(SigningAlgorithms::names())
             ->defaultValue('HS256')
-            ->info('The algorithm this key is bound to. A key verifies nothing else.')
+            ->info('The algorithm this key is bound to. A key verifies nothing else, and the algorithm decides what material the key must be.')
             ->end();
 
         $key->scalarNode('kid')
@@ -260,6 +284,47 @@ final class MedzuchJwtBundle extends AbstractBundle
      * configuration mistake arrive as a 500 on the first request, phrased as a
      * problem with the token.
      */
+    /**
+     * Key sources carry no default: an optional scalar without one is simply
+     * absent from the normalised configuration, which {@see self::keyEntries()}
+     * fills in. A null default plus a hand-written emptiness check would read
+     * more directly, but a `validate()` closure also runs against the sample
+     * values Symfony substitutes for an `%env()%` reference — so it would
+     * reject every environment-backed secret. `cannotBeEmpty()` knows about
+     * placeholders and does not.
+     */
+    private static function declareKeySource(NodeBuilder $key, string $name, string $info, string $example): void
+    {
+        $key->scalarNode($name)
+            ->cannotBeEmpty()
+            ->info($info)
+            ->example($example)
+            ->end();
+    }
+
+    /**
+     * @param array<string, array{hmac?: string, pem_private?: string, pem_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}> $keys
+     *
+     * @return array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>
+     */
+    private function keyEntries(array $keys): array
+    {
+        $entries = [];
+
+        foreach ($keys as $name => $key) {
+            $entries[$name] = [
+                'hmac' => $key['hmac'] ?? null,
+                'pem_private' => $key['pem_private'] ?? null,
+                'pem_public' => $key['pem_public'] ?? null,
+                'pem_passphrase' => $key['pem_passphrase'] ?? null,
+                'algorithm' => $key['algorithm'],
+                'kid' => $key['kid'],
+            ];
+        }
+
+        return $entries;
+    }
+
     private static function rejectMaps(ArrayNodeDefinition $node, string $name): void
     {
         $node->validate()
@@ -275,12 +340,18 @@ final class MedzuchJwtBundle extends AbstractBundle
      * key bound to the token's algorithm. So two keys a token cannot tell apart
      * — sharing a `kid`, or sharing an algorithm with no `kid` at all — mean the
      * second one verifies nothing, and rotation silently invalidates every
-     * token still in flight (DEC-5). Both are refused here rather than
-     * discovered mid-rotation.
+     * token still in flight (DEC-5).
      *
-     * @param array<string, array{hmac: string, algorithm: string, kid: string|null}> $keys
+     * The ambiguity is a property of one verification set, not of the
+     * configuration as a whole: the resolver only ever sees the keys of the
+     * consumer doing the verifying. Checking globally would reject the most
+     * ordinary asymmetric setup there is — a private entry and a public entry
+     * that are two halves of one keypair, bound to the same algorithm and
+     * carrying the same `kid` precisely because they are the same key.
+     *
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
      */
-    private function assertKeysAreDistinguishable(array $keys): void
+    private function assertKeysAreDistinguishable(string $consumer, array $keys): void
     {
         $anonymousByAlgorithm = [];
         $namesByKid = [];
@@ -298,7 +369,8 @@ final class MedzuchJwtBundle extends AbstractBundle
         foreach ($anonymousByAlgorithm as $algorithm => $names) {
             if (count($names) > 1) {
                 throw new InvalidConfigurationException(sprintf(
-                    'Keys "%s" are all bound to %s with no "kid", so a token cannot say which one signed it. Give each of them a kid.',
+                    'Consumer "%s" verifies with keys "%s", all bound to %s with no "kid", so a token cannot say which one signed it. Give each of them a kid.',
+                    $consumer,
                     implode('", "', $names),
                     $algorithm,
                 ));
@@ -308,7 +380,8 @@ final class MedzuchJwtBundle extends AbstractBundle
         foreach ($namesByKid as $kid => $names) {
             if (count($names) > 1) {
                 throw new InvalidConfigurationException(sprintf(
-                    'Keys "%s" share the kid "%s". A token naming it is verified against the first of them and never the others.',
+                    'Consumer "%s" verifies with keys "%s", which share the kid "%s". A token naming it is verified against the first of them and never the others.',
+                    $consumer,
                     implode('", "', $names),
                     $kid,
                 ));
@@ -317,22 +390,84 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
-     * @param array<string, array{hmac: string, algorithm: string, kid: string|null}> $keys
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
      */
     private function registerKeys(ServicesConfigurator $services, array $keys): void
     {
         foreach ($keys as $name => $key) {
-            // The secret stays an env reference all the way into the factory
-            // argument: resolved as a container parameter it would show up in
-            // `debug:container` output (K9).
-            $services->set('medzuch_jwt.key.' . $name, HmacKey::class)
-                ->factory([HmacKey::class, 'fromBinary'])
-                ->args([$key['hmac'], $key['algorithm'], $key['kid']]);
+            $this->assertKeyMaterialMatchesAlgorithm($name, $key);
+
+            // Key material stays an env reference or a path all the way into
+            // the factory argument, and the factory runs when the service is
+            // built: resolved at compile time it would sit in the compiled
+            // container and in `debug:container` output (K9).
+            if (null !== $key['hmac']) {
+                // A symmetric key is both halves at once, so signing and
+                // verification resolve to the same object.
+                $services->set('medzuch_jwt.key.' . $name, HmacKey::class)
+                    ->factory([HmacKey::class, 'fromBinary'])
+                    ->args([$key['hmac'], $key['algorithm'], $key['kid']]);
+
+                $services->alias('medzuch_jwt.key.' . $name . '.verification', 'medzuch_jwt.key.' . $name);
+
+                continue;
+            }
+
+            if (null !== $key['pem_private']) {
+                $services->set('medzuch_jwt.key.' . $name, PrivateKey::class)
+                    ->factory([KeyLoader::class, 'signingKey'])
+                    ->args([$key['pem_private'], $key['algorithm'], $key['kid'], $key['pem_passphrase']]);
+            }
+
+            if (null !== $key['pem_public']) {
+                $services->set('medzuch_jwt.key.' . $name . '.verification', PublicKey::class)
+                    ->factory([KeyLoader::class, 'verificationKey'])
+                    ->args([$key['pem_public'], $key['algorithm'], $key['kid']]);
+            }
         }
     }
 
     /**
-     * @param array<string, array{hmac: string, algorithm: string, kid: string|null}>                                                                    $keys
+     * A key entry names exactly one kind of material, and the algorithm decides
+     * which kind it must be — an RSA algorithm cannot be given a shared secret,
+     * and HS256 cannot be given a PEM. Both would fail when the key is first
+     * built, deep in the library, describing the material rather than the
+     * configuration that chose it.
+     *
+     * @param array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null} $key
+     */
+    private function assertKeyMaterialMatchesAlgorithm(string $name, array $key): void
+    {
+        $family = SigningAlgorithms::familyOf($key['algorithm']);
+        $hasPem = null !== $key['pem_private'] || null !== $key['pem_public'];
+
+        if (null !== $key['hmac'] && $hasPem) {
+            throw new InvalidConfigurationException(sprintf('Key "%s" gives both a shared secret and a PEM. A key is one thing.', $name));
+        }
+
+        if (null === $key['hmac'] && !$hasPem) {
+            throw new InvalidConfigurationException(sprintf('Key "%s" has no material: give it "hmac", or "pem_private" and/or "pem_public".', $name));
+        }
+
+        if (SigningAlgorithms::FAMILY_HMAC === $family && $hasPem) {
+            throw new InvalidConfigurationException(sprintf('Key "%s" is bound to %s, which takes a shared secret, not a PEM. Set "algorithm" to an RSA or EC one.', $name, $key['algorithm']));
+        }
+
+        if (SigningAlgorithms::FAMILY_HMAC !== $family && null !== $key['hmac']) {
+            throw new InvalidConfigurationException(sprintf('Key "%s" is bound to %s, which needs a PEM, not a shared secret. The shared-secret algorithms are %s.', $name, $key['algorithm'], implode('/', SigningAlgorithms::HMAC)));
+        }
+
+        if (SigningAlgorithms::FAMILY_OKP === $family) {
+            throw new InvalidConfigurationException(sprintf('Key "%s" is bound to EdDSA, which has no PEM representation in this release; a JWK key source is planned.', $name));
+        }
+
+        if (null !== $key['pem_passphrase'] && null === $key['pem_private']) {
+            throw new InvalidConfigurationException(sprintf('Key "%s" has a passphrase but no "pem_private" to unlock.', $name));
+        }
+    }
+
+    /**
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                    $keys
      * @param array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}> $issuers
      */
     private function registerIssuers(ServicesConfigurator $services, array $keys, array $issuers): void
@@ -344,6 +479,14 @@ final class MedzuchJwtBundle extends AbstractBundle
                     $name,
                     $issuer['key'],
                     [] === $keys ? 'none' : '"' . implode('", "', array_keys($keys)) . '"',
+                ));
+            }
+
+            if (null === $keys[$issuer['key']]['hmac'] && null === $keys[$issuer['key']]['pem_private']) {
+                throw new InvalidConfigurationException(sprintf(
+                    'Issuer "%s" signs with key "%s", which has only a public PEM. Signing needs the private half.',
+                    $name,
+                    $issuer['key'],
                 ));
             }
 
@@ -378,7 +521,7 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
-     * @param array<string, array{hmac: string, algorithm: string, kid: string|null}>                                                                                              $keys
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
      * @param array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}> $consumers
      */
     private function registerConsumers(ServicesConfigurator $services, array $keys, array $consumers, ?string $logger): void
@@ -388,7 +531,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
             $services->set('medzuch_jwt.jwk_set.' . $name, JwkSet::class)
                 ->factory([JwkSet::class, 'of'])
-                ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key), array_values($consumer['keys'])));
+                ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($consumer['keys'])));
 
             $services->set('medzuch_jwt.consumer.' . $name, AccessTokenConsumer::class)
                 ->factory([AccessTokenProfile::class, 'consumer'])
@@ -410,7 +553,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
     /**
      * @param array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}} $consumer
-     * @param array<string, array{hmac: string, algorithm: string, kid: string|null}>                                                                              $keys
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
      */
     private function assertConsumerCanVerify(string $name, array $consumer, array $keys): void
     {
@@ -426,6 +569,14 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ));
             }
 
+            if (null === $keys[$key]['hmac'] && null === $keys[$key]['pem_public']) {
+                throw new InvalidConfigurationException(sprintf(
+                    'Consumer "%s" verifies with key "%s", which has only a private PEM. Verification needs the public half — a private key cannot stand in for it.',
+                    $name,
+                    $key,
+                ));
+            }
+
             $bound[] = $keys[$key]['algorithm'];
         }
 
@@ -436,6 +587,8 @@ final class MedzuchJwtBundle extends AbstractBundle
         // while every key source is static; remote JWKS (K5) publishes its
         // algorithms at runtime and will need its own reading of "satisfied".
         $unsatisfied = array_values(array_diff($consumer['allowed_algorithms'], $bound));
+
+        $this->assertKeysAreDistinguishable($name, array_intersect_key($keys, array_flip($consumer['keys'])));
 
         if ([] !== $unsatisfied) {
             throw new InvalidConfigurationException(sprintf(

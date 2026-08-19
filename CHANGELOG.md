@@ -11,6 +11,35 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+### Added
+
+- **RSA and EC keys.** A key entry takes `pem_private` and/or `pem_public`
+  instead of `hmac`, each of them either a path to a PEM file or the PEM
+  itself — told apart by the armour, since no path begins with `-----BEGIN`.
+  `pem_passphrase` opens an encrypted private key. The two halves are separate
+  entries because they are separate things: only the private one signs, only
+  the public one verifies, and a private key cannot stand in for its public
+  half. RS256/384/512 and ES256/384/512 work end to end; `EdDSA` has no key
+  source yet and says so.
+- **A key's algorithm decides what material it must be given.** A shared secret
+  for an RSA algorithm, a PEM for an HMAC one, both at once, or neither are all
+  refused at container build, as are a passphrase with no private key to
+  unlock, a consumer verifying with a private-only key, and an issuer signing
+  with a public-only one.
+
+### Changed
+
+- **A consumer's keys are reached through `medzuch_jwt.key.<name>.verification`**,
+  which for a shared secret is an alias to the key itself. Signing keeps
+  `medzuch_jwt.key.<name>`. Symmetric keys are both halves at once; asymmetric
+  ones are not, and the container should not pretend otherwise.
+- **The `kid` ambiguity check moved from the whole configuration to each
+  consumer's key set**, which is where the ambiguity actually lives — the
+  resolver only ever sees the keys of the consumer doing the verifying. The
+  global check rejected the most ordinary asymmetric setup there is: a private
+  entry and a public entry that are two halves of one keypair, sharing an
+  algorithm and a `kid` precisely because they are the same key.
+
 ## [0.1.0] — 2026-08-19
 
 First release: the MVP of the design in [`docs/plan.md`](docs/plan.md), which is
