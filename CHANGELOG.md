@@ -11,8 +11,17 @@ a class or method signature would be.
 
 ## [Unreleased]
 
-Nothing released yet — the package is finishing Phase 1 (MVP). See
-[`docs/plan.md`](docs/plan.md) §7 for the roadmap.
+## [0.1.0] — 2026-08-19
+
+First release: the MVP of the design in [`docs/plan.md`](docs/plan.md), which is
+Phases 0 and 1 of its roadmap. An application can mint an access token on login
+and authenticate the next request with it, through Symfony's own `access_token`
+authenticator, without writing any JOSE code.
+
+**Pre-1.0, so nothing here is stable yet.** Configuration keys are public API
+and changes to them will be recorded with a deprecation path, but the surface is
+still small enough that it should be expected to move. Asymmetric keys,
+rotation and JWKS are the next phase, and only HMAC keys exist today.
 
 ### Added
 
@@ -82,3 +91,6 @@ Nothing released yet — the package is finishing Phase 1 (MVP). See
   Dependabot configuration for GitHub Actions, and branch/tag protection
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
+
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.1.0

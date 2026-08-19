@@ -11,7 +11,8 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** Design only — no bundle code exists yet (Phase 0 in §7).
+> **Status.** v0.1.0 released — Phases 0 and 1 of §7 are shipped. Phase 2
+> (asymmetric keys, rotation, JWKS) is next.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -478,15 +479,15 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   requires `medzuch/jwt-php ^1.2` + `symfony/security-bundle`), config tree
   shell, CI reusing the library's Docker QA gates (cs-fixer, PHPStan L9,
   PHPUnit) across the DEC-2 version matrix, a functional test kernel.
-  *(Not started; nothing blocks it.)*
+  *(Shipped in v0.1.0.)*
 - **Phase 1 — MVP (v0.1).** T1 items: named `keys`/`issuers`/`consumers` with
   one entry each, HMAC key from env, `AccessTokenHandler` + native firewall
   wiring, `AccessTokenIssuer`, login success handler (I5 — listed under Phase 4
   in earlier drafts, but it is what makes the MVP usable without hand-writing a
   controller), `provider` user mode, PSR-3 logging, compile-time config
   validation. Functional test proving issue → request → authenticated
-  controller. *(Shipped; C3's `claims`/`custom` modes and C10's `max_token_age`
-  are the T2 half and stay in Phase 4.)*
+  controller. *(Shipped in v0.1.0; C3's `claims`/`custom` modes and C10's
+  `max_token_age` are the T2 half and stay in Phase 4.)*
 - **Phase 2 — Keys & rotation (v0.2).** K1–K4, K9: PEM/JWK sources, named keys,
   `kid` selection, active/accepted split, JWKS publisher, `jwt:key:generate`,
   RS256/ES256/EdDSA support end to end.
