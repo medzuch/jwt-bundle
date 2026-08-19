@@ -24,6 +24,9 @@ final class ConfigurationValidationTest extends KernelTestCase
 
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
 
+    /** Never parsed: every case below is refused before any key is built. */
+    private const PEM = "-----BEGIN PUBLIC KEY-----\nnot-a-real-key\n-----END PUBLIC KEY-----";
+
     /**
      * @param array<array-key, mixed> $options
      */
@@ -203,6 +206,94 @@ final class ConfigurationValidationTest extends KernelTestCase
         self::bootKernel(['medzuch_jwt' => [
             'keys' => ['default' => ['hmac' => self::SECRET]],
             'issuers' => ['default' => self::issuer(['audience' => ['primary' => 'https://api.test']])],
+        ]]);
+    }
+
+    #[TestDox('a key giving both a secret and a PEM fails at container build')]
+    public function testKeyWithTwoKindsOfMaterial(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/A key is one thing/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET, 'pem_public' => self::PEM]],
+        ]]);
+    }
+
+    #[TestDox('a key with no material at all fails at container build')]
+    public function testKeyWithoutMaterial(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/has no material/');
+
+        self::bootKernel(['medzuch_jwt' => ['keys' => ['default' => ['algorithm' => 'HS256']]]]);
+    }
+
+    #[TestDox('an HMAC algorithm given a PEM fails at container build')]
+    public function testHmacAlgorithmWithPem(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/takes a shared secret, not a PEM/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_public' => self::PEM, 'algorithm' => 'HS256']],
+        ]]);
+    }
+
+    #[TestDox('an RSA algorithm given a shared secret fails at container build')]
+    public function testRsaAlgorithmWithSecret(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/needs a PEM, not a shared secret/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET, 'algorithm' => 'RS256']],
+        ]]);
+    }
+
+    #[TestDox('EdDSA says which key source it is waiting for rather than failing obscurely')]
+    public function testEdDsaHasNoPemSource(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/JWK key source is planned/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_public' => self::PEM, 'algorithm' => 'EdDSA']],
+        ]]);
+    }
+
+    #[TestDox('a passphrase with nothing to unlock fails at container build')]
+    public function testPassphraseWithoutPrivateKey(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/no "pem_private" to unlock/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_public' => self::PEM, 'pem_passphrase' => 'x', 'algorithm' => 'RS256']],
+        ]]);
+    }
+
+    #[TestDox('a consumer verifying with a private-only key fails at container build')]
+    public function testConsumerWithPrivateOnlyKey(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/cannot stand in for it/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_private' => self::PEM, 'algorithm' => 'RS256']],
+            'consumers' => ['api' => self::consumer(['allowed_algorithms' => ['RS256']])],
+        ]]);
+    }
+
+    #[TestDox('an issuer signing with a public-only key fails at container build')]
+    public function testIssuerWithPublicOnlyKey(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/Signing needs the private half/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_public' => self::PEM, 'algorithm' => 'RS256']],
+            'issuers' => ['default' => self::issuer()],
         ]]);
     }
 
