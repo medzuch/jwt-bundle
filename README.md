@@ -15,7 +15,7 @@ Works for any of these roles, in any combination:
 **Status: design only.** No bundle code yet — see [`docs/plan.md`](docs/plan.md) for the
 full design, the feature catalogue with priority tiers, and the phased roadmap.
 
-Requires PHP 8.3+ and Symfony 6.4 / 7.x (planned).
+Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x (planned).
 
 ## License
 

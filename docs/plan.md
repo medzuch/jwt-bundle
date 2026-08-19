@@ -1,4 +1,4 @@
-# medzuch/jwt-bundle — Design Plan (v0.4)
+# medzuch/jwt-bundle — Design Plan (v0.5)
 
 > **Goal.** A Symfony bundle that wires the standalone `medzuch/jwt-php` library
 > into a Symfony application, so an app can **issue** and **verify** JOSE tokens
@@ -13,12 +13,15 @@
 >
 > **Status.** Design only — no bundle code exists yet (Phase 0 in §7).
 >
-> **v0.4 change.** The plan is now written for the package itself rather than
-> for one consuming application. Everything previously scoped, trimmed or
-> dropped "because the first consumer doesn't need it" has been reinstated as a
-> planned, *opt-in* capability with an explicit tier (§3, §8). The MVP is still
-> small — what changed is that the small MVP is now a deliberate first slice of
-> a general design, not the whole design.
+> **v0.5 change.** The design decisions are made: v0.4's five open questions are
+> now §9's five recorded decisions, each with its reasoning and what would
+> reopen it. Two change the plan's shape — there will be no `medzuch_jwt:`
+> firewall shorthand (D1), and the supported window is Symfony
+> `^6.4 || ^7.4 || ^8.0` on PHP 8.3/8.4 (D2), v0.4 having predated Symfony 7.4
+> LTS and 8.0. The four upstream library gaps are closed: `medzuch/jwt-php`
+> 1.1.0 added profile leeway, multi-audience consumers, passphrase-protected
+> PEMs and PHP 8.4, and the package is on Packagist — nothing outside this
+> repository blocks Phase 1 (D4).
 
 ---
 
@@ -47,8 +50,9 @@
    kinds, multiple issuers, multiple keys. The config tree is *named
    collections* from day one (§4), even when the first release only exercises
    the `default` entry — retrofitting names later is a BC break.
-6. **Target versions.** PHP 8.3+ (matches the library), Symfony 6.4 LTS and
-   7.x. `symfony/security-bundle` is a hard requirement; HTTP client, cache,
+6. **Target versions.** PHP 8.3 and 8.4 (the library's window), Symfony 6.4 LTS,
+   7.4 LTS and 8.x — D2 in §9 has the matrix and why 7.0–7.3 are excluded.
+   `symfony/security-bundle` is a hard requirement; HTTP client, cache,
    Doctrine, Monolog are all optional integrations.
 7. **Public package discipline.** Semantic versioning, a BC policy, `@internal`
    markers on everything not meant to be extended, upgrade notes, and the same
@@ -71,7 +75,7 @@ jwt-bundle/
 ├── composer.json                  # type: symfony-bundle, requires medzuch/jwt-php
 ├── src/
 │   ├── MedzuchJwtBundle.php       # AbstractBundle: configure() + loadExtension()
-│   ├── DependencyInjection/       # config tree, compiler passes, per-firewall factories
+│   ├── DependencyInjection/       # config tree, compiler passes
 │   ├── Security/                  # token handlers, user resolution, voters, denylist
 │   ├── Issuer/                    # token-minting services, claim providers
 │   ├── Key/                       # key source loaders, key registry, rotation
@@ -97,10 +101,11 @@ Key mechanics that shape the design:
 - **Bundle-internal service config** in PHP (`config/services.php`) for
   type-safety; the **app-facing** config is YAML (`config/packages/medzuch_jwt.yaml`),
   matching how apps configure every other bundle.
-- **Firewall integration** may additionally need a `AuthenticatorFactoryInterface`
-  (security bundle extension point) if we ship our own firewall key
-  (`medzuch_jwt: ~` under a firewall) as a shorthand over the native
-  `access_token` block — see §3.1.
+- **Firewall integration** goes through Symfony's native `access_token` block
+  and a token-handler service. The bundle deliberately does **not** implement
+  `AuthenticatorFactoryInterface` and ships no firewall key of its own (D1 in
+  §9), so `DependencyInjection/` holds the config tree and compiler passes
+  only.
 
 ---
 
@@ -306,8 +311,9 @@ medzuch_jwt:
   keys:
     hmac_default:  { hmac: '%env(JWT_SECRET)%' }
     rsa_2026:      { pem_private: '%kernel.project_dir%/config/jwt/private.pem',
+                     pem_passphrase: '%env(JWT_KEY_PASSPHRASE)%',   # optional (library 1.1+)
                      pem_public:  '%kernel.project_dir%/config/jwt/public.pem',
-                     kid: '2026-01', active: true }     # unencrypted PEM only — see §9.4
+                     kid: '2026-01', active: true }
     rsa_2025:      { pem_public: '...', kid: '2025-01' }     # still accepted, no longer signing
     idp_remote:    { jwks_uri: 'https://idp.example.com/.well-known/jwks.json',
                      http_client: 'http_client', cache: 'cache.app',
@@ -369,6 +375,14 @@ Design notes:
   convenience over the same service.
 - **No secret ever lands in a container parameter** that `debug:container`
   would print (K9): keys are built inside factory services from env references.
+- **`audience` is normalised to a list before it reaches the library.** jwt-php
+  1.2.0 refuses a malformed array shape with a `LogicException`, and a YAML
+  `audience:` written as a map is exactly what a config tree exists to catch:
+  the tree accepts a scalar or a sequence, and the compiler pass rejects
+  anything else — so the error names the offending config key instead of
+  surfacing at the first request as a token problem.
+- **`kid` is explicit, never derived** (D5 in §9): optional for a single-key
+  setup, required as soon as two keys share an algorithm.
 
 ---
 
@@ -458,9 +472,10 @@ IdP issues an ID token  →  app's consumer "partner_idp"
 ## 7. Phased roadmap
 
 - **Phase 0 — Skeleton.** `AbstractBundle`, composer (`type: symfony-bundle`,
-  requires `medzuch/jwt-php` + `symfony/security-bundle`), config tree shell,
-  CI reusing the library's Docker QA gates (cs-fixer, PHPStan L9, PHPUnit), a
-  functional test kernel. *(Not started.)*
+  requires `medzuch/jwt-php ^1.2` + `symfony/security-bundle`), config tree
+  shell, CI reusing the library's Docker QA gates (cs-fixer, PHPStan L9,
+  PHPUnit) across the D2 version matrix, a functional test kernel.
+  *(Not started; nothing blocks it.)*
 - **Phase 1 — MVP (v0.1).** T1 items: named `keys`/`issuers`/`consumers` with
   one entry each, HMAC key from env, `AccessTokenHandler` + native firewall
   wiring, `AccessTokenIssuer`, login success handler, `provider` user mode,
@@ -512,47 +527,101 @@ below changes:
 
 ---
 
-## 9. Open questions
+## 9. Decisions
 
-1. **Own firewall key or native `access_token` only?** A `medzuch_jwt:` firewall
-   shorthand is nicer DX but adds a security-bundle extension point to maintain
-   across Symfony versions. Leaning: native only for 0.1, shorthand in Phase 4
-   as an additive convenience.
-2. **Symfony 6.4 support from day one, or 7.x first?** 6.4 is LTS and widely
-   deployed; the cost is CI matrix breadth and avoiding 7.x-only APIs. Leaning:
-   both from Phase 1, since the divergence in the APIs used here is small.
-3. **Doctrine denylist in-tree or as a separate package?** Shipping a Doctrine
-   entity in a security bundle drags a heavy optional dependency and migration
-   concerns. Leaning: interface + PSR-16 implementation in-tree, Doctrine in a
-   separate `medzuch/jwt-bundle-doctrine` if demand appears.
-4. **Upstream (library) gaps that limit what the bundle can offer.** Four,
-   all recorded library-side in `medzuch/jwt-php` `docs/09-symfony-bundle-plan.md`:
-   (a) none of the profile `consumer()` factories accepts a leeway argument, so
-   the `leeway` config key (§4) cannot be honoured without abandoning the
-   profile and hand-building a `ValidatorBuilder` — which would lose `typ`
-   pinning and the required-claim set; (b) `AccessTokenProfile::consumer()`
-   takes a single `string $expectedAudience`, blocking multi-audience consumers
-   (C14), even though `ValidatorBuilder::expectAudience()` already accepts an
-   array; (c) `RsaPrivateKey::fromPem()` and `EcPrivateKey::fromPem()` cannot open a
-   passphrase-protected PEM, so the bundle's PEM key source can only accept
-   unencrypted private keys — a real operational limit when keys are shipped as
-   encrypted files; (d) the library pins `"php": "~8.3.0"`, which caps *below*
-   8.4 — the bundle cannot support PHP 8.4 until that is loosened upstream. All
-   four are BC-safe to fix in a library 1.1; (a) and (b) should land before the
-   bundle's Phase 1 freezes its config semantics.
-5. **Package naming for `kid`-less symmetric setups** — whether `keys.default.hmac`
-   should auto-derive a `kid` (helps future rotation, changes token headers) or
-   stay `kid`-less (simplest, matches most HS256 deployments today).
+The five questions this plan carried through v0.4 are settled. Each entry
+records the decision, why it went that way, and what would reopen it.
+
+**D1 — Firewall wiring: the native `access_token` block only. No `medzuch_jwt:`
+firewall shorthand.** The shorthand would save one line of YAML and cost an
+`AuthenticatorFactoryInterface` implementation — a security-bundle extension
+point to keep working across three Symfony majors — plus a second, divergent
+way to configure the same handler. Everything the native block already offers
+(token extractors, `realm`, success/failure handlers, and whatever Symfony adds
+next) comes free precisely by not owning that layer; a shorthand would have to
+be re-taught each addition or quietly fall behind it. The DX gap is closed with
+documentation (D7) and a Flex recipe (D6) instead, neither of which forks the
+security configuration surface. *Reopens if* a feature cannot be expressed
+through a token handler at all: DPoP (§3.6) needs a second header plus proof
+replay checks, and C15 needs "authenticate if a token is present, don't 401 if
+it isn't". Those get their own, explicitly named authenticator — not a
+shorthand alias for the existing one.
+
+**D2 — Supported versions: PHP `~8.3.0 || ~8.4.0`, Symfony `^6.4 || ^7.4 || ^8.0`.**
+v0.4's "6.4 LTS and 7.x" was written before Symfony 7.4 LTS and 8.0 shipped.
+7.0–7.3 have all reached end of life, so requiring `^7.4` excludes only
+unmaintained minors; 6.4 stays because its security window runs to November
+2027 and it is where most deployed applications sit. The APIs this bundle
+touches — `AbstractBundle` (6.1+), the `access_token` authenticator (6.2+),
+`AccessTokenHandlerInterface`, `UserBadge` — are unchanged across all three
+majors, so the cost is CI matrix breadth, not conditional code. Matrix: 6.4 on
+PHP 8.3 with lowest dependencies, 7.4 on 8.3 and 8.4, 8.x on 8.4 (Symfony 8
+requires PHP 8.4, and the library's ceiling is 8.4). If a version-conditional
+branch ever becomes necessary in `src/`, that is the signal to raise the floor
+rather than to add the branch.
+
+**D3 — Revocation: `TokenDenylistInterface`, a `NullDenylist` default and a
+PSR-16 implementation in-tree; no Doctrine entity, now or later.** A denylist
+entry is keyed on `jti` and only has to outlive the token carrying it, so its
+natural lifetime is that token's remaining TTL — which is exactly what
+`set($jti, true, $ttl)` expresses and what a relational table does not. A SQL
+store would add a schema, a migration and a garbage-collection command to a
+security bundle in exchange for durability a short-lived denylist does not
+need. `psr/simple-cache` stays an optional dependency: the implementation is
+registered only when a `denylist` is configured. *Reopens if* an application
+needs revocation to survive a cache flush — but that is a durability
+requirement, and it belongs in an app-owned implementation of the interface (or
+a separate `medzuch/jwt-bundle-doctrine`), not on the default path.
+
+**D4 — Upstream gaps: closed. The bundle requires `medzuch/jwt-php ^1.2`.** All
+four blockers v0.4 recorded were fixed upstream, backward compatibly, in 1.1.0:
+leeway on all three profile consumers, `string|non-empty-list<string>`
+audiences on `AccessTokenProfile::consumer()`, `?string $passphrase` on
+`RsaPrivateKey::fromPem()` and `EcPrivateKey::fromPem()`, and
+`"php": "~8.3.0 || ~8.4.0"`. 1.2.0 added the `expectAudience()`/`expectIssuer()`
+shape backstop that §4 now normalises for. The library is on Packagist, so it
+is an ordinary dependency rather than a VCS repository. One item is
+deliberately *asked upstream rather than built here*: `max_token_age` (C10)
+compares `iat` against the clock, which is temporal claim validation of the
+same family as `exp`/`nbf`. Implementing it in the handler would duplicate the
+clock and leeway wiring and would report failure with a different exception
+type than every other temporal check — which O4's `WWW-Authenticate` mapping
+would then have to special-case. Proposed upstream as
+`ValidatorBuilder::withMaxAge()` plus an appended profile parameter; it gates
+nothing before Phase 4.
+
+**D5 — `kid`: explicit, never derived from key material, and mandatory once two
+keys share an algorithm.** Deriving a `kid` by hashing an HMAC secret would
+publish a value computed from that secret in every token header — an offline
+check for guessed secrets, bought for the convenience of not typing a name.
+Deriving it from the config entry's name instead is safe, but writes a
+bundle-internal identifier into the wire format. So `kid` is configuration: it
+stays optional for the single-key case (most HS256 deployments, with no
+rotation story to support), and the compiler pass (D8) **requires** it as soon
+as a key set holds two keys bound to the same algorithm. Without it the
+library's `StaticJwkSetResolver` resolves a `kid`-less header to *the first* key
+bound to that `alg` and throws if that one does not verify — it does not try
+the rest, by design ("a token that claims a specific key must be verified with
+that key or not at all"). A `kid`-less rotation is therefore a hard cutover
+that invalidates every token still in flight; refusing that configuration at
+container build beats discovering it mid-rotation.
+
+**Deferred, not decided.** How the JWKS route is published (K4): the bundle can
+import a `config/routes.php` when `jwks.publish.enabled` is true, or the
+application can declare the route itself against a bundle controller. The first
+is better DX, the second keeps route ownership with the app. Decide in Phase 2,
+when there is a controller to hang it on.
 
 ---
 
-*Library API touchpoints (verified against `medzuch/jwt-php` `src/`):*
-*`AccessTokenProfile::issuer()/consumer()`, `IdTokenProfile`, `SetProfile`,*
+*Library API touchpoints (verified against `medzuch/jwt-php` v1.2.0 `src/`):*
+*`AccessTokenProfile::issuer()/consumer()` (audience list, leeway), `IdTokenProfile`,*
+*`SetProfile`,*
 *`ProfileConsumer::parse(string): ClaimsSet` (throws `JwtException`),*
 *`AccessTokenBuilder` (`subject/audience/scope/clientId/expiresIn/withClaim/build`),*
 *`ClaimsSet` accessors, `JwkSet`/`JwkParser`, `KeyResolver` with*
 *`StaticJwkSetResolver` / `RemoteJwksResolver` / `CompositeResolver`,*
-*`HmacKey`/`RsaPrivateKey::fromPem()`/`EcPrivateKey`/`OkpPrivateKey`,*
+*`HmacKey`/`RsaPrivateKey::fromPem($pem, $passphrase)`/`EcPrivateKey`/`OkpPrivateKey`,*
 *`SigningAlgorithm` implementations (`Hs256`…`Es512`, `EdDsa`),*
 *`MediaType`, `NestedJwtBuilder`/`NestedJwtParser`, PSR-20 `SystemClock`/`FrozenClock`,*
 *PSR-3 logging via `SecurityLog`/`LogLevels`.*
