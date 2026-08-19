@@ -13,9 +13,12 @@ ARG PHP_VERSION=8.3
 
 FROM php:${PHP_VERSION}-cli-alpine
 
+# Xdebug is pinned so two builds a month apart produce the same image.
+ARG XDEBUG_VERSION=3.5.3
+
 RUN apk add --no-cache git unzip \
  && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS linux-headers \
- && pecl install xdebug \
+ && pecl install xdebug-${XDEBUG_VERSION} \
  && docker-php-ext-enable xdebug \
  && apk del --no-network .build-deps
 
@@ -35,5 +38,10 @@ COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 ENV COMPOSER_ALLOW_SUPERUSER=1
 RUN composer global config --no-plugins allow-plugins.symfony/flex true \
  && composer global require --no-progress --no-scripts --no-plugins symfony/flex
+
+# The bind mount belongs to the host user while the container runs as root,
+# which trips git's dubious-ownership check — and composer shells out to git to
+# work out the root package version, so the warning surfaces on every command.
+RUN git config --global --add safe.directory /app
 
 WORKDIR /app
