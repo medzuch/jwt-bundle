@@ -68,7 +68,19 @@ final class TestKernel extends Kernel
         // Keyed by the configuration, not just the environment: two tests that
         // boot different configurations must not share a compiled container,
         // or the second one silently asserts against the first one's wiring.
-        return sys_get_temp_dir() . '/medzuch-jwt-bundle-tests/' . $this->configurationKey();
+        // Also keyed by the runtime, not just the configuration: `make symfony
+        // V=6.4.*` followed by `make test` in the same container would
+        // otherwise reuse a container compiled against the other Symfony line,
+        // and the assertions would describe a dependency set that is no longer
+        // installed. (A version *constant* in a cache key is not the
+        // version-conditional behaviour DEC-2 rules out.)
+        return sprintf(
+            '%s/medzuch-jwt-bundle-tests/php%d-sf%d-%s',
+            sys_get_temp_dir(),
+            \PHP_VERSION_ID,
+            Kernel::VERSION_ID,
+            $this->configurationKey(),
+        );
     }
 
     public function getLogDir(): string

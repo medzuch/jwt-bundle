@@ -27,9 +27,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Style is a property of the source: one fixer version, one config, one
+  # verdict. It gets its own job rather than riding on a matrix leg — pinned to
+  # a leg, the gate would disappear silently the day that corner is dropped
+  # from the matrix, with CI still green.
+  style:
+    name: Code style
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The floor, because `cs:fix` rewrites code and must not emit syntax the
+      # floor cannot parse. `cs:check` is --dry-run, but running the check
+      # anywhere else would invite fixing anywhere else.
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-style-${{ hashFiles('composer.json') }}
+          restore-keys: composer-${{ runner.os }}-style-
+
+      - name: Resolve dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: php-cs-fixer
+        run: composer cs:check
+
   qa:
     name: QA (PHP ${{ matrix.php }}, Symfony ${{ matrix.symfony }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       # Every leg is a required gate: one failing must not cancel the others,
       # or half the diagnosis is lost.
@@ -70,10 +109,17 @@ jobs:
           composer global config --no-plugins allow-plugins.symfony/flex true
           composer global require --no-progress --no-scripts --no-plugins symfony/flex
 
+      # Asked for rather than assumed: Composer 2 resolves its cache under the
+      # XDG location, so a hard-coded ~/.composer/cache would have cached an
+      # empty directory on every run.
+      - name: Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Composer
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.composer/cache
+          path: ${{ steps.composer-cache.outputs.dir }}
           key: composer-${{ runner.os }}-php${{ matrix.php }}-sf${{ matrix.symfony }}-${{ hashFiles('composer.json') }}
           restore-keys: composer-${{ runner.os }}-php${{ matrix.php }}-sf${{ matrix.symfony }}-
 
@@ -82,14 +128,6 @@ jobs:
       # tooling drift early — see the schedule trigger above.
       - name: Resolve dependencies
         run: composer update --no-interaction --no-progress --prefer-dist
-
-      # Style is a property of the source, so one verdict covers the matrix:
-      # same fixer version, same config, same files. Running it four times
-      # would only quadruple the log. The floor is the leg that runs it, since
-      # cs:fix must emit syntax the floor can parse.
-      - name: Code style (php-cs-fixer)
-        if: matrix.php == '8.3' && matrix.symfony == '7.4.*'
-        run: composer cs:check
 
       # Static analysis, unlike style, *is* per-leg: PHPStan resolves against
       # the Symfony version actually installed, so a signature that changed

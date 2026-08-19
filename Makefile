@@ -62,10 +62,7 @@ qa: ## Quality gate: style + phpstan + tests
 	$(EXEC) composer qa
 
 symfony: ## Re-resolve against one Symfony line: make symfony V=6.4.*
-	$(EXEC) composer update --with-all-dependencies \
-	    "symfony/config:$(V)" "symfony/dependency-injection:$(V)" \
-	    "symfony/http-kernel:$(V)" "symfony/security-bundle:$(V)" \
-	    "symfony/framework-bundle:$(V)"
+	$(DC) exec -T -e SYMFONY_REQUIRE=$(V) php composer update
 
 qa-84: ## Quality gate on PHP 8.4 (the ceiling of the supported window)
 	$(DC84) up -d php84

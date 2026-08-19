@@ -4,6 +4,7 @@ parameters:
         min: 80300
         max: 80400
     paths:
+        - config
         - src
         - tests
     tmpDir: var/phpstan

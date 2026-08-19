@@ -29,4 +29,11 @@ RUN { \
 
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
+# Flex, so `SYMFONY_REQUIRE=6.4.* composer update` pins a Symfony line locally
+# through exactly the mechanism CI uses. Hand-listing the symfony/* packages in
+# the Makefile would drift the moment a sixth component is required.
+ENV COMPOSER_ALLOW_SUPERUSER=1
+RUN composer global config --no-plugins allow-plugins.symfony/flex true \
+ && composer global require --no-progress --no-scripts --no-plugins symfony/flex
+
 WORKDIR /app

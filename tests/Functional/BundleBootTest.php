@@ -12,6 +12,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\ErrorHandler\ErrorHandler;
 use Symfony\Component\HttpKernel\KernelInterface;
 
 #[CoversClass(MedzuchJwtBundle::class)]
@@ -19,17 +20,24 @@ final class BundleBootTest extends KernelTestCase
 {
     protected function tearDown(): void
     {
-        $booted = null !== self::$kernel;
-
         parent::tearDown();
 
         // FrameworkBundle registers a global exception handler when it boots in
         // debug mode and never removes it on shutdown, which PHPUnit reports as
         // a risky test — and `failOnRisky` is on, so it fails the suite. Undo it
         // here rather than turning the check off: a leaked handler is worth
-        // knowing about when it is *our* leak, and this restores only after a
-        // boot that actually installed one.
-        if ($booted) {
+        // knowing about when it is *our* leak.
+        //
+        // "A kernel was booted" is not the right condition: the configuration
+        // test throws during compilation, possibly before the handler is
+        // installed, and popping the stack then would remove PHPUnit's own
+        // handler instead. So inspect what is actually on top — probe by
+        // setting null (which returns the current handler) and immediately
+        // undoing that probe.
+        $current = set_exception_handler(null);
+        restore_exception_handler();
+
+        if (is_array($current) && ($current[0] ?? null) instanceof ErrorHandler) {
             restore_exception_handler();
         }
     }

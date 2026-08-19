@@ -46,6 +46,16 @@ final class MedzuchJwtBundle extends AbstractBundle
                     ->defaultNull()
                     ->info('Service id of a PSR-20 clock. Null uses the library\'s SystemClock.')
                     ->example('app.frozen_clock')
+                    // A scalar node accepts `123`, `false` and `''` as happily
+                    // as a service id, and each of those would have fallen
+                    // through to the default — an application that mistyped
+                    // its clock id would have silently run on wall time. The
+                    // key is optional; what it must not be is present and
+                    // meaningless.
+                    ->validate()
+                        ->ifTrue(static fn (mixed $value): bool => null !== $value && (!\is_string($value) || '' === trim($value)))
+                        ->thenInvalid('medzuch_jwt.clock must be a non-empty service id, got %s')
+                    ->end()
                 ->end();
     }
 
@@ -67,9 +77,12 @@ final class MedzuchJwtBundle extends AbstractBundle
         // Everything time-dependent in this bundle resolves that id, so an
         // application can freeze time in tests by pointing it at a FrozenClock
         // without any test-only branch in the bundle itself.
+        // The configuration tree has already refused anything that is neither
+        // null nor a non-empty service id; `is_string()` is what tells static
+        // analysis so, since `$config` is untyped at this boundary.
         $clock = $config['clock'] ?? null;
 
-        if (is_string($clock) && $clock !== '') {
+        if (is_string($clock)) {
             $builder->setAlias('medzuch_jwt.clock', $clock);
         }
     }
