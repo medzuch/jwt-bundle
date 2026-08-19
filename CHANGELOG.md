@@ -16,6 +16,22 @@ Nothing released yet — the package is in Phase 0 (skeleton). See
 
 ### Added
 
+- **Named `keys` and `consumers`, and a working token handler.** A firewall can
+  now point `token_handler` at `medzuch_jwt.handler.<name>` and get RFC 9068
+  access-token verification through the library's access-token profile: issuer,
+  audience, algorithm allowlist, `typ` pinning and the required-claim set, with
+  optional clock leeway bounded by the library's own ceiling. HMAC keys come
+  from configuration as a secret — an env reference, so no key material reaches
+  a container parameter that `debug:container` would print.
+- **Wiring mistakes fail at container build, not at the first request.** All of
+  these are refused with a message naming the configuration key at fault: a
+  consumer naming a key that does not exist; an allowed algorithm with no key
+  behind it, so a token using it could never be verified; two keys a token
+  cannot tell apart — sharing a `kid`, or sharing an algorithm with no `kid` at
+  all (DEC-5: resolution is first-match-wins in both directions and never falls
+  back, so the second key verifies nothing and rotation silently invalidates
+  every token in flight); an empty `kid`; a YAML map where a sequence is
+  expected; leeway above the library's ceiling; and unknown algorithm names.
 - **Bundle skeleton.** `MedzuchJwtBundle` on `AbstractBundle`, which derives
   the `medzuch_jwt` configuration root and the `Medzuch\JwtBundle\` namespace
   from the class name. Both are public API from this point on.
