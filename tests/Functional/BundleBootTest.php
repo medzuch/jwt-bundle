@@ -6,13 +6,13 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 
 use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\Jwt\Primitives\SystemClock;
+use Medzuch\JwtBundle\MedzuchJwtBundle;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\HttpKernel\KernelInterface;
-use Medzuch\JwtBundle\MedzuchJwtBundle;
 
 #[CoversClass(MedzuchJwtBundle::class)]
 final class BundleBootTest extends KernelTestCase
