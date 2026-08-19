@@ -21,11 +21,11 @@ Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
 
 ## Installation
 
-```bash
-composer require medzuch/jwt-bundle
-```
+The package is not on Packagist yet and has no tagged release, so point Composer at the
+repository and ask for the development branch by name — a plain `composer require` finds no
+stable version to install.
 
-Until the package is published, add the repository first:
+Add the repository to your `composer.json`:
 
 ```json
 {
@@ -33,6 +33,12 @@ Until the package is published, add the repository first:
         { "type": "vcs", "url": "https://github.com/medzuch/jwt-bundle" }
     ]
 }
+```
+
+Then:
+
+```bash
+composer require medzuch/jwt-bundle:dev-develop
 ```
 
 Without Symfony Flex, register the bundle yourself in `config/bundles.php`:
@@ -161,6 +167,10 @@ Every argument after `subject` is optional and narrows what configuration alread
 An application that issues its own tokens and verifies them on its own API needs one key, one
 issuer and one consumer that agree on `issuer` and `audience`:
 
+`logger` names any PSR-3 service. The id below assumes MonologBundle with a `jwt` channel
+declared (`monolog: channels: [jwt]`); without one, the container will not build. Omit the line
+to disable logging entirely.
+
 ```yaml
 # config/packages/medzuch_jwt.yaml
 medzuch_jwt:
@@ -203,6 +213,20 @@ Generate one with at least 32 bytes of entropy (48 for HS384, 64 for HS512 — R
 ```bash
 php -r 'echo base64_encode(random_bytes(32)), PHP_EOL;'
 ```
+
+That prints base64, so decode it on the way in with Symfony's `base64:` processor — the two go
+together:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default:
+            hmac: '%env(base64:JWT_SECRET)%'
+```
+
+Wiring a base64 string as `%env(JWT_SECRET)%` also works and is not weaker, but then the key
+material is the encoded text rather than the bytes you generated, which makes the length rules
+above harder to reason about.
 
 The secret stays an environment reference all the way into the key, so it never becomes a
 container parameter and never appears in `debug:container` output. The flip side is that its
