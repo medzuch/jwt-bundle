@@ -69,7 +69,7 @@ final class MedzuchJwtBundle extends AbstractBundle
             $builder->setAlias('medzuch_jwt.clock', $config['clock']);
         }
 
-        $this->assertKidsAreDistinguishable($config['keys']);
+        $this->assertKeysAreDistinguishable($config['keys']);
 
         $services = $container->services();
         $this->registerKeys($services, $config['keys']);
@@ -108,7 +108,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $key->scalarNode('hmac')
             ->isRequired()
             ->cannotBeEmpty()
-            ->info('Shared secret. Use an env reference; %env(base64:NAME)% decodes a base64 secret.')
+            ->info('Shared secret, at least 32/48/64 bytes for HS256/384/512 (RFC 8725 §3.5). Use an env reference; %env(base64:NAME)% decodes a base64 secret. The length cannot be checked at build: the secret stays an env reference so it never reaches a container parameter, so a short one fails when the key is first used.')
             ->example('%env(JWT_SECRET)%')
             ->end();
 
@@ -121,6 +121,10 @@ final class MedzuchJwtBundle extends AbstractBundle
         $key->scalarNode('kid')
             ->defaultNull()
             ->info('Key id published in the token header. Required once two keys share an algorithm.')
+            ->validate()
+                ->ifTrue(static fn(mixed $value): bool => '' === $value)
+                ->thenInvalid('A key\'s "kid" cannot be the empty string; omit it instead.')
+            ->end()
             ->end();
     }
 
@@ -147,18 +151,21 @@ final class MedzuchJwtBundle extends AbstractBundle
         $audience->scalarPrototype()->cannotBeEmpty()->end();
         $audience->isRequired();
         $audience->requiresAtLeastOneElement();
+        self::rejectMaps($audience, 'audience');
 
         $keys = $consumer->arrayNode('keys');
         $keys->info('Names from the `keys` section. Verification tries the key the token names, or the one bound to its algorithm.');
         $keys->scalarPrototype()->cannotBeEmpty()->end();
         $keys->isRequired();
         $keys->requiresAtLeastOneElement();
+        self::rejectMaps($keys, 'keys');
 
         $algorithms = $consumer->arrayNode('allowed_algorithms');
         $algorithms->info('JOSE `alg` values accepted. Anything else is refused before a signature is checked.');
         $algorithms->enumPrototype()->values(SigningAlgorithms::names())->end();
         $algorithms->isRequired();
         $algorithms->requiresAtLeastOneElement();
+        self::rejectMaps($algorithms, 'allowed_algorithms');
 
         $consumer->integerNode('leeway')
             ->defaultValue(0)
@@ -179,22 +186,45 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
-     * DEC-5: without a `kid`, the library resolves a token to the *first* key
-     * bound to its algorithm and fails if that one does not verify — it does not
-     * try the rest. Two kid-less keys on one algorithm therefore make rotation a
-     * hard cutover that invalidates every token in flight, which is worth
-     * refusing at build rather than discovering mid-rotation.
+     * A list-shaped node must not be given a YAML map. Symfony's prototyped
+     * array nodes accept arbitrary keys, and the library refuses an associative
+     * array — but it refuses it inside a lazily built service, which makes a
+     * configuration mistake arrive as a 500 on the first request, phrased as a
+     * problem with the token.
+     */
+    private static function rejectMaps(ArrayNodeDefinition $node, string $name): void
+    {
+        $node->validate()
+            ->ifTrue(static fn(mixed $value): bool => is_array($value) && !array_is_list($value))
+            ->thenInvalid(sprintf('medzuch_jwt consumer "%s" must be a sequence, not a map. Got %%s', $name))
+            ->end();
+    }
+
+    /**
+     * Key resolution is first-match-wins in both directions and never falls
+     * back: {@see \Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver} matches a
+     * header `kid` exactly or throws, and a `kid`-less header takes the first
+     * key bound to the token's algorithm. So two keys a token cannot tell apart
+     * — sharing a `kid`, or sharing an algorithm with no `kid` at all — mean the
+     * second one verifies nothing, and rotation silently invalidates every
+     * token still in flight (DEC-5). Both are refused here rather than
+     * discovered mid-rotation.
      *
      * @param array<string, array{hmac: string, algorithm: string, kid: string|null}> $keys
      */
-    private function assertKidsAreDistinguishable(array $keys): void
+    private function assertKeysAreDistinguishable(array $keys): void
     {
         $anonymousByAlgorithm = [];
+        $namesByKid = [];
 
         foreach ($keys as $name => $key) {
             if (null === $key['kid']) {
                 $anonymousByAlgorithm[$key['algorithm']][] = $name;
+
+                continue;
             }
+
+            $namesByKid[$key['kid']][] = $name;
         }
 
         foreach ($anonymousByAlgorithm as $algorithm => $names) {
@@ -203,6 +233,16 @@ final class MedzuchJwtBundle extends AbstractBundle
                     'Keys "%s" are all bound to %s with no "kid", so a token cannot say which one signed it. Give each of them a kid.',
                     implode('", "', $names),
                     $algorithm,
+                ));
+            }
+        }
+
+        foreach ($namesByKid as $kid => $names) {
+            if (count($names) > 1) {
+                throw new InvalidConfigurationException(sprintf(
+                    'Keys "%s" share the kid "%s". A token naming it is verified against the first of them and never the others.',
+                    implode('", "', $names),
+                    $kid,
                 ));
             }
         }
@@ -234,15 +274,15 @@ final class MedzuchJwtBundle extends AbstractBundle
 
             $services->set('medzuch_jwt.jwk_set.' . $name, JwkSet::class)
                 ->factory([JwkSet::class, 'of'])
-                ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key), $consumer['keys']));
+                ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key), array_values($consumer['keys'])));
 
             $services->set('medzuch_jwt.consumer.' . $name, AccessTokenConsumer::class)
                 ->factory([AccessTokenProfile::class, 'consumer'])
                 ->args([
                     $consumer['issuer'],
-                    $consumer['audience'],
+                    array_values($consumer['audience']),
                     service('medzuch_jwt.jwk_set.' . $name),
-                    array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), $consumer['allowed_algorithms']),
+                    array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), array_values($consumer['allowed_algorithms'])),
                     service('medzuch_jwt.clock'),
                     null === $logger ? null : service($logger),
                     null,
@@ -275,14 +315,20 @@ final class MedzuchJwtBundle extends AbstractBundle
             $bound[] = $keys[$key]['algorithm'];
         }
 
-        // A consumer whose keys are bound to none of its allowed algorithms
-        // rejects every token it will ever see. That is a wiring mistake, and
-        // it is knowable now rather than at the first request.
-        if ([] === array_intersect($bound, $consumer['allowed_algorithms'])) {
+        // Every allowed algorithm must have a key behind it, not merely one of
+        // them: an algorithm on the allowlist that no key can verify is a
+        // permanently dead branch, and the usual way to get one is asking for
+        // an algorithm this release has no key source for. The check holds
+        // while every key source is static; remote JWKS (K5) publishes its
+        // algorithms at runtime and will need its own reading of "satisfied".
+        $unsatisfied = array_values(array_diff($consumer['allowed_algorithms'], $bound));
+
+        if ([] !== $unsatisfied) {
             throw new InvalidConfigurationException(sprintf(
-                'Consumer "%s" allows %s but its keys are bound to %s, so it can never verify a token.',
+                'Consumer "%s" allows %s, but none of its keys is bound to %s, so a token using it could never be verified. Its keys are bound to: %s.',
                 $name,
-                implode('/', $consumer['allowed_algorithms']),
+                implode('/', $unsatisfied),
+                1 === count($unsatisfied) ? 'it' : 'them',
                 implode('/', array_unique($bound)),
             ));
         }

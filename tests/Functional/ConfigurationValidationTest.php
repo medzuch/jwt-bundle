@@ -57,11 +57,11 @@ final class ConfigurationValidationTest extends KernelTestCase
         ]]);
     }
 
-    #[TestDox('a consumer whose keys match none of its allowed algorithms fails at container build')]
+    #[TestDox('an allowed algorithm with no key behind it fails at container build')]
     public function testConsumerThatCanNeverVerify(): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessageMatches('/can never verify a token/');
+        $this->expectExceptionMessageMatches('/could never be verified/');
 
         self::bootKernel(['medzuch_jwt' => [
             'keys' => ['default' => ['hmac' => self::SECRET, 'algorithm' => 'HS256']],
@@ -96,6 +96,56 @@ final class ConfigurationValidationTest extends KernelTestCase
         ]]);
 
         self::assertTrue(self::getContainer()->has('medzuch_jwt.handler.api'));
+    }
+
+    #[TestDox('an algorithm on the allowlist with no key is refused even when another one is satisfied')]
+    public function testPartiallySatisfiedAllowlist(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/allows RS256/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'consumers' => ['api' => self::consumer(['allowed_algorithms' => ['HS256', 'RS256']])],
+        ]]);
+    }
+
+    #[TestDox('two keys sharing a kid fail at container build')]
+    public function testDuplicateKid(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/share the kid "2026-01"/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => [
+                'current' => ['hmac' => self::SECRET, 'kid' => '2026-01'],
+                'previous' => ['hmac' => self::SECRET . '-old', 'kid' => '2026-01'],
+            ],
+            'consumers' => ['api' => self::consumer(['keys' => ['current', 'previous']])],
+        ]]);
+    }
+
+    #[TestDox('an empty kid is refused at container build rather than when the key is first used')]
+    public function testEmptyKid(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET, 'kid' => '']],
+            'consumers' => ['api' => self::consumer()],
+        ]]);
+    }
+
+    #[TestDox('a map where a sequence is expected names the configuration key, not the token')]
+    public function testAudienceAsMap(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/must be a sequence, not a map/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'consumers' => ['api' => self::consumer(['audience' => ['primary' => 'https://api.test']])],
+        ]]);
     }
 
     #[TestDox('leeway above the library ceiling fails at container build')]
