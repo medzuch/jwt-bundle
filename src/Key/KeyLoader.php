@@ -7,6 +7,7 @@ namespace Medzuch\JwtBundle\Key;
 use Medzuch\Jwt\Exception\InvalidKeyException;
 use Medzuch\Jwt\Key\EcPrivateKey;
 use Medzuch\Jwt\Key\EcPublicKey;
+use Medzuch\Jwt\Key\KeyUse;
 use Medzuch\Jwt\Key\PrivateKey;
 use Medzuch\Jwt\Key\PublicKey;
 use Medzuch\Jwt\Key\RsaPrivateKey;
@@ -74,8 +75,12 @@ final class KeyLoader
         $pem = self::read($source, $algorithm);
 
         return match (SigningAlgorithms::familyOf($algorithm)) {
-            SigningAlgorithms::FAMILY_RSA => RsaPublicKey::fromPem($pem, $algorithm, $kid),
-            SigningAlgorithms::FAMILY_EC => EcPublicKey::fromPem($pem, $algorithm, $kid),
+            // `use: sig` is stated rather than left out: these keys exist only
+            // to verify signatures, some relying parties filter on it before
+            // they read `alg`, and it is information the bundle has and the
+            // published document would otherwise omit (RFC 7517 §4.2).
+            SigningAlgorithms::FAMILY_RSA => RsaPublicKey::fromPem($pem, $algorithm, $kid, KeyUse::Sig),
+            SigningAlgorithms::FAMILY_EC => EcPublicKey::fromPem($pem, $algorithm, $kid, KeyUse::Sig),
             default => throw new InvalidKeyException(sprintf('No PEM key source for algorithm "%s".', $algorithm)),
         };
     }

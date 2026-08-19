@@ -6,6 +6,7 @@ namespace Medzuch\JwtBundle\Jwks;
 
 use Medzuch\Jwt\Key\JwkSet;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Serves the public keys a relying party needs to verify this issuer's tokens
@@ -28,7 +29,7 @@ final class JwksController
         private readonly int $maxAge,
     ) {}
 
-    public function __invoke(): JsonResponse
+    public function __invoke(Request $request): JsonResponse
     {
         $response = new JsonResponse($this->keys->toArray());
 
@@ -40,6 +41,13 @@ final class JwksController
         // cache them refetches on every token it verifies.
         $response->setPublic();
         $response->setMaxAge($this->maxAge);
+
+        // The document is a pure function of the configured keys, so its own
+        // content is the validator. This is also what makes a `cache_max_age`
+        // of zero mean revalidate rather than refetch: without a validator a
+        // client has nothing to ask "still current?" with.
+        $response->setEtag(hash('xxh128', (string) $response->getContent()));
+        $response->isNotModified($request);
 
         return $response;
     }

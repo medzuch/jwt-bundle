@@ -80,28 +80,38 @@ final class SecuredKernel extends Kernel
             'router' => ['utf8' => true],
         ]);
 
+        // Firewalls follow the configuration, the way an application's would:
+        // a kernel that publishes a JWK Set and nothing else has no login to
+        // wire and no consumer to point a firewall at.
+        $firewalls = [];
+
+        if (self::configures($this->bundleConfig, 'issuers', 'default')) {
+            $firewalls['login'] = [
+                'pattern' => '^/login',
+                'stateless' => true,
+                'provider' => 'users',
+                'json_login' => [
+                    'check_path' => '/login',
+                    'success_handler' => 'medzuch_jwt.login.default',
+                ],
+            ];
+        }
+
+        if (self::configures($this->bundleConfig, 'consumers', 'api')) {
+            $firewalls['api'] = [
+                'pattern' => '^/api',
+                'stateless' => true,
+                'provider' => 'users',
+                'access_token' => ['token_handler' => 'medzuch_jwt.handler.api'],
+            ];
+        }
+
         $container->extension('security', [
             'password_hashers' => [InMemoryUser::class => ['algorithm' => 'plaintext']],
             'providers' => [
                 'users' => ['memory' => ['users' => ['alice' => ['password' => 'open-sesame', 'roles' => ['ROLE_USER']]]]],
             ],
-            'firewalls' => [
-                'login' => [
-                    'pattern' => '^/login',
-                    'stateless' => true,
-                    'provider' => 'users',
-                    'json_login' => [
-                        'check_path' => '/login',
-                        'success_handler' => 'medzuch_jwt.login.default',
-                    ],
-                ],
-                'api' => [
-                    'pattern' => '^/api',
-                    'stateless' => true,
-                    'provider' => 'users',
-                    'access_token' => ['token_handler' => 'medzuch_jwt.handler.api'],
-                ],
-            ],
+            'firewalls' => [] === $firewalls ? ['none' => ['security' => false]] : $firewalls,
             'access_control' => [
                 ['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY'],
             ],
@@ -122,6 +132,16 @@ final class SecuredKernel extends Kernel
             // Collecting rather than discarding: a silenced kernel also
             // silences the deprecations and errors a round trip would report.
             ->set('logger', TestLogger::class)->public();
+    }
+
+    /**
+     * @param array<array-key, mixed> $config
+     */
+    private static function configures(array $config, string $section, string $name): bool
+    {
+        $entries = $config[$section] ?? null;
+
+        return is_array($entries) && isset($entries[$name]);
     }
 
     protected function configureRoutes(RoutingConfigurator $routes): void

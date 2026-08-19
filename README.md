@@ -353,6 +353,19 @@ The bundle registers no route of its own: where a JWKS document lives — under 
 behind a prefix, on a separate host — is the application's decision, and a route the bundle
 owned would either take that choice away or duplicate it.
 
+**The route has to be reachable without a token.** That is the entire purpose of the document,
+and an `access_control` that starts with a catch-all will serve a relying party a 401 instead:
+
+```yaml
+security:
+    access_control:
+        - { path: ^/\.well-known/jwks\.json$, roles: PUBLIC_ACCESS }
+        - { path: ^/, roles: IS_AUTHENTICATED_FULLY }
+```
+
+The response carries an `ETag` over the document, so a conditional request gets a `304` and
+`cache_max_age: 0` means revalidate rather than refetch.
+
 Only verification halves are published, and **a shared secret is refused at container build**: a
 symmetric key's JWK carries the secret itself, so publishing it would hand every reader the key
 that signs, in a document that parses perfectly and returns 200.

@@ -27,10 +27,8 @@ use Symfony\Component\Security\Core\Exception\BadCredentialsException;
 #[CoversClass(KeyLoader::class)]
 final class AsymmetricKeyTest extends KernelTestCase
 {
+    use GeneratesKeypairs;
     use RestoresExceptionHandler;
-
-    /** @var array<string, array{private: string, public: string}> */
-    private static array $keypairs = [];
 
     /** @var list<string> */
     private static array $files = [];
@@ -196,42 +194,6 @@ final class AsymmetricKeyTest extends KernelTestCase
                 ],
             ],
         ];
-    }
-
-    /**
-     * @param array<string, mixed> $options
-     *
-     * @return array{private: string, public: string}
-     */
-    private static function keypair(string $name, array $options): array
-    {
-        return self::$keypairs[$name] ??= self::freshKeypair($options);
-    }
-
-    /**
-     * @param array<string, mixed> $options
-     *
-     * @return array{private: string, public: string}
-     */
-    private static function freshKeypair(array $options): array
-    {
-        $resource = openssl_pkey_new($options);
-
-        if (false === $resource) {
-            throw new RuntimeException('could not generate a keypair');
-        }
-
-        if (!openssl_pkey_export($resource, $private)) {
-            throw new RuntimeException('could not export the private key');
-        }
-
-        $details = openssl_pkey_get_details($resource);
-
-        if (!is_array($details) || !is_string($details['key'])) {
-            throw new RuntimeException('could not read the public key');
-        }
-
-        return ['private' => (string) $private, 'public' => $details['key']];
     }
 
     private static function writeToFile(string $pem): string
