@@ -37,7 +37,7 @@ final class BundleBootTest extends KernelTestCase
         $current = set_exception_handler(null);
         restore_exception_handler();
 
-        if (is_array($current) && ($current[0] ?? null) instanceof ErrorHandler) {
+        if (is_array($current) && $current[0] instanceof ErrorHandler) {
             restore_exception_handler();
         }
     }

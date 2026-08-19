@@ -53,7 +53,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                     // key is optional; what it must not be is present and
                     // meaningless.
                     ->validate()
-                        ->ifTrue(static fn (mixed $value): bool => null !== $value && (!\is_string($value) || '' === trim($value)))
+                        ->ifTrue(static fn(mixed $value): bool => null !== $value && (!\is_string($value) || '' === trim($value)))
                         ->thenInvalid('medzuch_jwt.clock must be a non-empty service id, got %s')
                     ->end()
                 ->end();
