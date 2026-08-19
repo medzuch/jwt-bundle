@@ -1,0 +1,64 @@
+# Minimal local dev/test setup.
+#   docker compose up -d
+#   docker compose exec php sh                    # interactive shell
+#   docker compose exec php composer install
+#   docker compose exec php vendor/bin/phpunit
+#
+# Xdebug:
+#   Loaded but off by default (zero perf cost). Enable per-command:
+#     docker compose exec -e XDEBUG_MODE=debug    php vendor/bin/phpunit --filter=...
+#     docker compose exec -e XDEBUG_MODE=coverage php vendor/bin/phpunit --coverage-html=var/coverage
+
+services:
+  php:
+    build: ./docker
+    working_dir: /app
+    volumes:
+      - .:/app
+      - composer-cache:/tmp/composer-cache
+    environment:
+      COMPOSER_CACHE_DIR: /tmp/composer-cache
+      COMPOSER_ALLOW_SUPERUSER: 1
+      # No tags exist yet and `develop` is not a version branch, so composer
+      # cannot infer the root version and warns on every command. Stating it
+      # here is the documented answer; it also keeps the guessed 1.0.0 out of a
+      # package whose first release is 0.1.0.
+      COMPOSER_ROOT_VERSION: 0.1.x-dev
+      XDEBUG_MODE: "${XDEBUG_MODE:-off}"
+    extra_hosts:
+      # Lets Xdebug reach the host on Linux Docker engines (incl. WSL2).
+      - "host.docker.internal:host-gateway"
+    tty: true
+    stdin_open: true
+    command: tail -f /dev/null
+
+  # Same image recipe on the other end of the supported window. Opt-in via the
+  # `php84` profile, so a plain `docker compose up -d` stays one container. It
+  # gets its own `vendor/` (a named volume shadowing the bind mount) because
+  # dependencies resolved by one runtime must not be reused by the other —
+  # that mismatch is exactly what this service exists to catch.
+  php84:
+    profiles: [php84]
+    build:
+      context: ./docker
+      args:
+        PHP_VERSION: '8.4'
+    working_dir: /app
+    volumes:
+      - .:/app
+      - vendor-php84:/app/vendor
+      - composer-cache:/tmp/composer-cache
+    environment:
+      COMPOSER_CACHE_DIR: /tmp/composer-cache
+      COMPOSER_ALLOW_SUPERUSER: 1
+      COMPOSER_ROOT_VERSION: 0.1.x-dev
+      XDEBUG_MODE: "${XDEBUG_MODE:-off}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    tty: true
+    stdin_open: true
+    command: tail -f /dev/null
+
+volumes:
+  composer-cache:
+  vendor-php84:

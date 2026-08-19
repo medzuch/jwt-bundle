@@ -1,0 +1,9 @@
+# Blank issues stay enabled on purpose. The two forms below are the guided path
+# for the cases worth structuring; a question that fits neither should not have
+# to be dressed up as a bug report, and Discussions is deliberately off — an
+# unread inbox is worse than no inbox.
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/medzuch/jwt-bundle/security/advisories/new
+    about: Report privately through GitHub Security Advisories. Never open a public issue for a vulnerability — see SECURITY.md.
