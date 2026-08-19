@@ -1,0 +1,139 @@
+name: CI
+
+# Every action is pinned to a commit SHA with the version in a trailing
+# comment. This is not style: the repository enforces SHA pinning, so a tag
+# reference is rejected before the workflow starts.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  # Weekly run against freshly resolved dependencies. composer.lock is
+  # gitignored, so every CI run already resolves the newest allowed versions —
+  # what this schedule adds is *noticing without a push*. Upstream releases a
+  # stricter analyser or a Symfony patch that breaks us, and this reports it on
+  # its own instead of reddening the next unrelated pull request (which is
+  # exactly how it went in medzuch/jwt-php#37).
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Style is a property of the source: one fixer version, one config, one
+  # verdict. It gets its own job rather than riding on a matrix leg — pinned to
+  # a leg, the gate would disappear silently the day that corner is dropped
+  # from the matrix, with CI still green.
+  style:
+    name: Code style
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The floor, because `cs:fix` rewrites code and must not emit syntax the
+      # floor cannot parse. `cs:check` is --dry-run, but running the check
+      # anywhere else would invite fixing anywhere else.
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-style-${{ hashFiles('composer.json') }}
+          restore-keys: composer-${{ runner.os }}-style-
+
+      - name: Resolve dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: php-cs-fixer
+        run: composer cs:check
+
+  qa:
+    name: QA (PHP ${{ matrix.php }}, Symfony ${{ matrix.symfony }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # Every leg is a required gate: one failing must not cancel the others,
+      # or half the diagnosis is lost.
+      fail-fast: false
+      matrix:
+        # The supported window from DEC-2 in docs/plan.md. Symfony 8 requires
+        # PHP 8.4, and the library's ceiling is 8.4, so the corners are fixed:
+        # oldest supported Symfony on the PHP floor, newest on the ceiling.
+        include:
+          - { php: '8.3', symfony: '6.4.*' }
+          - { php: '8.3', symfony: '7.4.*' }
+          - { php: '8.4', symfony: '7.4.*' }
+          - { php: '8.4', symfony: '8.0.*' }
+    env:
+      XDEBUG_MODE: off
+      SYMFONY_REQUIRE: ${{ matrix.symfony }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: json, openssl, sodium, mbstring, intl, opcache
+          ini-values: zend.assertions=1, assert.exception=1, error_reporting=-1
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-publish
+
+      # Flex is what makes SYMFONY_REQUIRE mean anything: it constrains every
+      # symfony/* package to the matrix line in one place. Pinning them by hand
+      # would mean listing each transitive component and re-listing it whenever
+      # a dependency is added.
+      - name: Install Symfony Flex (dependency-line pinning)
+        run: |
+          composer global config --no-plugins allow-plugins.symfony/flex true
+          composer global require --no-progress --no-scripts --no-plugins symfony/flex
+
+      # Asked for rather than assumed: Composer 2 resolves its cache under the
+      # XDG location, so a hard-coded ~/.composer/cache would have cached an
+      # empty directory on every run.
+      - name: Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-php${{ matrix.php }}-sf${{ matrix.symfony }}-${{ hashFiles('composer.json') }}
+          restore-keys: composer-${{ runner.os }}-php${{ matrix.php }}-sf${{ matrix.symfony }}-
+
+      # `update`, not `install`: composer.lock is deliberately gitignored, so
+      # the resolved tree is CI's own and always current. That is what surfaces
+      # tooling drift early — see the schedule trigger above.
+      - name: Resolve dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      # Static analysis, unlike style, *is* per-leg: PHPStan resolves against
+      # the Symfony version actually installed, so a signature that changed
+      # between majors only shows up on the leg that has it.
+      - name: Static analysis (PHPStan level 9)
+        run: composer phpstan -- --error-format=github
+
+      - name: Tests
+        run: composer test

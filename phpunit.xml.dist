@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         executionOrder="random"
+         resolveDependencies="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         failOnNotice="true"
+         failOnEmptyTestSuite="true"
+         beStrictAboutOutputDuringTests="true"
+         beStrictAboutTestsThatDoNotTestAnything="true"
+         beStrictAboutCoverageMetadata="true"
+         cacheDirectory="var/phpunit"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerWarnings="true">
+  <!--
+    failOnDeprecation is deliberately absent, unlike in medzuch/jwt-php: the
+    bundle boots a real Symfony kernel, so deprecations from the framework
+    across three supported majors would fail this suite for reasons that have
+    nothing to do with the bundle. Turning it on needs symfony/phpunit-bridge
+    to separate our own deprecations from indirect ones — a Phase 1 task.
+    Until then displayDetailsOnTestsThatTriggerDeprecations keeps them visible.
+
+    A `unit` suite joins this file when there is a unit to test; an empty one
+    would only make failOnEmptyTestSuite fire on every run.
+  -->
+  <testsuites>
+    <testsuite name="functional">
+      <directory>tests/Functional</directory>
+    </testsuite>
+  </testsuites>
+  <source restrictNotices="true" restrictWarnings="true" ignoreIndirectDeprecations="true">
+    <include>
+      <directory>src</directory>
+    </include>
+  </source>
+  <php>
+    <ini name="error_reporting" value="-1"/>
+    <ini name="memory_limit" value="512M"/>
+    <ini name="date.timezone" value="UTC"/>
+  </php>
+</phpunit>

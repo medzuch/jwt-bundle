@@ -1,0 +1,83 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Medzuch\JwtBundle\Tests\Functional;
+
+use Medzuch\Jwt\Primitives\FrozenClock;
+use Medzuch\Jwt\Primitives\SystemClock;
+use Medzuch\JwtBundle\MedzuchJwtBundle;
+use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\TestDox;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\ErrorHandler\ErrorHandler;
+use Symfony\Component\HttpKernel\KernelInterface;
+
+#[CoversClass(MedzuchJwtBundle::class)]
+final class BundleBootTest extends KernelTestCase
+{
+    /**
+     * FrameworkBundle installs a global exception handler when it boots in
+     * debug mode and never removes it, which PHPUnit reports as a risky test.
+     * Restoring unconditionally would pop PHPUnit's own handler whenever a boot
+     * failed before installing one, so check what is actually on top first.
+     */
+    protected function tearDown(): void
+    {
+        parent::tearDown();
+
+        $current = set_exception_handler(null);
+        restore_exception_handler();
+
+        if (is_array($current) && $current[0] instanceof ErrorHandler) {
+            restore_exception_handler();
+        }
+    }
+
+    /**
+     * @param array<array-key, mixed> $options
+     */
+    protected static function createKernel(array $options = []): KernelInterface
+    {
+        $config = $options['medzuch_jwt'] ?? [];
+
+        return new TestKernel(is_array($config) ? $config : []);
+    }
+
+    #[TestDox('the bundle compiles into a container with no configuration at all')]
+    public function testBootsWithoutConfiguration(): void
+    {
+        self::bootKernel();
+
+        self::assertInstanceOf(SystemClock::class, self::getContainer()->get('medzuch_jwt.clock'));
+    }
+
+    #[TestDox('a configured clock replaces the default rather than sitting beside it')]
+    public function testConfiguredClockReplacesTheDefault(): void
+    {
+        self::bootKernel(['medzuch_jwt' => ['clock' => 'test.frozen_clock']]);
+
+        $clock = self::getContainer()->get('medzuch_jwt.clock');
+
+        self::assertInstanceOf(FrozenClock::class, $clock);
+        self::assertSame('2026-01-01T00:00:00+00:00', $clock->now()->format('c'));
+    }
+
+    #[TestDox('an unknown configuration key fails at container build, not at the first request')]
+    public function testUnknownConfigurationKeyIsRejected(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+
+        self::bootKernel(['medzuch_jwt' => ['no_such_key' => true]]);
+    }
+
+    #[TestDox('a clock that is present but not a service id is refused')]
+    public function testEmptyClockIsRejected(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+
+        self::bootKernel(['medzuch_jwt' => ['clock' => '']]);
+    }
+}
