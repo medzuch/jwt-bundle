@@ -1,0 +1,19 @@
+parameters:
+    level: 9
+    phpVersion:
+        min: 80300
+        max: 80400
+    paths:
+        - src
+        - tests
+    tmpDir: var/phpstan
+    parallel:
+        maximumNumberOfProcesses: 4
+    treatPhpDocTypesAsCertain: true
+    reportUnmatchedIgnoredErrors: true
+
+includes:
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+    - vendor/phpstan/phpstan-phpunit/extension.neon
+    - vendor/phpstan/phpstan-phpunit/rules.neon
+    - vendor/phpstan/phpstan-deprecation-rules/rules.neon
