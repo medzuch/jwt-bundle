@@ -128,7 +128,7 @@ final class AccessTokenHandlerTest extends KernelTestCase
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array{keys: array<string, array<string, mixed>>, consumers: array<string, array<string, mixed>>}
      */
     private static function configuration(): array
     {

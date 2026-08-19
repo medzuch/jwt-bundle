@@ -9,7 +9,7 @@ use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\JwkSet;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
-use Medzuch\Jwt\Validation\ValidatorBuilder;
+use Medzuch\Jwt\Jwt\ValidatorBuilder;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
@@ -138,27 +138,27 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->info('The only `iss` this consumer accepts.')
             ->end();
 
-        $consumer->arrayNode('audience')
-            ->info('Identifiers this resource server answers to. A token is accepted when its `aud` names any of them.')
-            ->beforeNormalization()->castToArray()->end()
-            ->scalarPrototype()->cannotBeEmpty()->end()
-            ->isRequired()
-            ->requiresAtLeastOneElement()
-            ->end();
+        // Each node is held in a variable rather than chained: NodeDefinition
+        // methods return the base type or a nullable parent, so a fluent chain
+        // loses ArrayNodeDefinition after the first hop.
+        $audience = $consumer->arrayNode('audience');
+        $audience->info('Identifiers this resource server answers to. A token is accepted when its `aud` names any of them.');
+        $audience->beforeNormalization()->castToArray()->end();
+        $audience->scalarPrototype()->cannotBeEmpty()->end();
+        $audience->isRequired();
+        $audience->requiresAtLeastOneElement();
 
-        $consumer->arrayNode('keys')
-            ->info('Names from the `keys` section. Verification tries the key the token names, or the one bound to its algorithm.')
-            ->scalarPrototype()->cannotBeEmpty()->end()
-            ->isRequired()
-            ->requiresAtLeastOneElement()
-            ->end();
+        $keys = $consumer->arrayNode('keys');
+        $keys->info('Names from the `keys` section. Verification tries the key the token names, or the one bound to its algorithm.');
+        $keys->scalarPrototype()->cannotBeEmpty()->end();
+        $keys->isRequired();
+        $keys->requiresAtLeastOneElement();
 
-        $consumer->arrayNode('allowed_algorithms')
-            ->info('JOSE `alg` values accepted. Anything else is refused before a signature is checked.')
-            ->enumPrototype()->values(SigningAlgorithms::names())->end()
-            ->isRequired()
-            ->requiresAtLeastOneElement()
-            ->end();
+        $algorithms = $consumer->arrayNode('allowed_algorithms');
+        $algorithms->info('JOSE `alg` values accepted. Anything else is refused before a signature is checked.');
+        $algorithms->enumPrototype()->values(SigningAlgorithms::names())->end();
+        $algorithms->isRequired();
+        $algorithms->requiresAtLeastOneElement();
 
         $consumer->integerNode('leeway')
             ->defaultValue(0)
