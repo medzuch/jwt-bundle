@@ -15,7 +15,6 @@ use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
-use Symfony\Component\ErrorHandler\ErrorHandler;
 use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\Security\Core\Exception\BadCredentialsException;
 
@@ -28,21 +27,11 @@ use Symfony\Component\Security\Core\Exception\BadCredentialsException;
 #[CoversClass(AccessTokenHandler::class)]
 final class AccessTokenHandlerTest extends KernelTestCase
 {
+    use RestoresExceptionHandler;
+
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
     private const ISSUER = 'https://issuer.test';
     private const AUDIENCE = 'https://api.test';
-
-    protected function tearDown(): void
-    {
-        parent::tearDown();
-
-        $current = set_exception_handler(null);
-        restore_exception_handler();
-
-        if (is_array($current) && $current[0] instanceof ErrorHandler) {
-            restore_exception_handler();
-        }
-    }
 
     /**
      * @param array<array-key, mixed> $options

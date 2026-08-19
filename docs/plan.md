@@ -207,7 +207,7 @@ default and adds no runtime cost when unconfigured.
 
 | # | Capability | Backed by | Tier |
 |---|---|---|---|
-| I1 | `AccessTokenIssuer::issue(subject, audience, scopes, ttl, extraClaims): string` | `AccessTokenProfile::issuer()` | T1 |
+| I1 | `AccessTokenIssuer::issue(subject, scopes, claims, ttl, audience): IssuedToken` — audience, client id and TTL come from configuration; each argument narrows it for one token. Returns a value object rather than a string so the lifetime travels with the token, instead of the caller re-deriving an `expires_in` it just asked for | `AccessTokenProfile::issuer()` | T1 |
 | I2 | Named issuers (different audiences/keys/TTLs per client or tenant) | config tree §4 | T2 |
 | I3 | `TokenClaimProviderInterface` tagged services — apps contribute claims (tenant, email, entitlements) without subclassing the issuer | DI tags | T2 |
 | I4 | `JwtIssuingEvent` (mutable claims) + `JwtIssuedEvent` (audit hook) | EventDispatcher | T2 |
@@ -478,15 +478,18 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   *(Not started; nothing blocks it.)*
 - **Phase 1 — MVP (v0.1).** T1 items: named `keys`/`issuers`/`consumers` with
   one entry each, HMAC key from env, `AccessTokenHandler` + native firewall
-  wiring, `AccessTokenIssuer`, login success handler, `provider` user mode,
-  PSR-3 logging, compile-time config validation. Functional test proving
-  issue → request → authenticated controller.
+  wiring, `AccessTokenIssuer`, login success handler (I5 — listed under Phase 4
+  in earlier drafts, but it is what makes the MVP usable without hand-writing a
+  controller), `provider` user mode, PSR-3 logging, compile-time config
+  validation. Functional test proving issue → request → authenticated
+  controller. *(Shipped; C3's `claims`/`custom` modes and C10's `max_token_age`
+  are the T2 half and stay in Phase 4.)*
 - **Phase 2 — Keys & rotation (v0.2).** K1–K4, K9: PEM/JWK sources, named keys,
   `kid` selection, active/accepted split, JWKS publisher, `jwt:key:generate`,
   RS256/ES256/EdDSA support end to end.
 - **Phase 3 — Federation (v0.3).** K5–K6, C6, C14: remote JWKS with cache and
   fallback, ID-token consumer, OIDC-RP quickstart, audience lists.
-- **Phase 4 — DX & hardening (v0.4 → v1.0).** C3–C5, C9, C10, C13, I2–I5,
+- **Phase 4 — DX & hardening (v0.4 → v1.0).** C4, C5, C9, C13, I2–I4,
   O2–O5, D1–D5, D7: user modes, role mapping, extractors, denylist, scope
   voter, claim providers, events, profiler panel, console commands, test
   helpers, documentation, `WWW-Authenticate` handling. **1.0 = the T1+T2 set,

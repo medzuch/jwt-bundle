@@ -37,6 +37,12 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
  */
 final class MedzuchJwtBundle extends AbstractBundle
 {
+    /**
+     * Claims {@see \Medzuch\Jwt\Jwt\JwtBuilder::withClaim()} refuses, because
+     * each has a typed setter that enforces its shape.
+     */
+    private const REGISTERED_CLAIMS = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti'];
+
     public function configure(DefinitionConfigurator $definition): void
     {
         $root = $definition->rootNode();
@@ -178,6 +184,16 @@ final class MedzuchJwtBundle extends AbstractBundle
         $claims->normalizeKeys(false);
         $claims->useAttributeAsKey('name');
         $claims->variablePrototype()->end();
+        // The library routes registered claims through typed setters and
+        // refuses them here, so this configuration would build a green
+        // container and throw on the first token minted.
+        $claims->validate()
+            ->ifTrue(static fn(mixed $value): bool => is_array($value) && [] !== array_intersect(array_keys($value), self::REGISTERED_CLAIMS))
+            ->thenInvalid(sprintf(
+                'Static claims cannot include the registered claims %s — they are set from configuration (`issuer`, `audience`, `ttl`) or by the profile. Got %%s',
+                '"' . implode('", "', self::REGISTERED_CLAIMS) . '"',
+            ))
+            ->end();
     }
 
     private function configureConsumers(NodeBuilder $children): void
@@ -331,7 +347,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ));
             }
 
-            $services->set('medzuch_jwt.profile.' . $name, AccessTokenProfile::class)
+            $services->set('medzuch_jwt.issuer.' . $name . '.profile', AccessTokenProfile::class)
                 ->factory([AccessTokenProfile::class, 'issuer'])
                 ->args([
                     $issuer['issuer'],
@@ -342,7 +358,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
             $services->set('medzuch_jwt.issuer.' . $name, AccessTokenIssuer::class)
                 ->args([
-                    service('medzuch_jwt.profile.' . $name),
+                    service('medzuch_jwt.issuer.' . $name . '.profile'),
                     array_values($issuer['audience']),
                     $issuer['client_id'],
                     $issuer['ttl'],

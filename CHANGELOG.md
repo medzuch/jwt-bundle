@@ -25,7 +25,12 @@ Nothing released yet — the package is in Phase 0 (skeleton). See
   one, so restating it could only ever disagree. `medzuch_jwt.login.<name>`
   plugs into any authenticator's `success_handler` (`json_login`, `form_login`)
   and answers a successful login with `access_token` / `token_type` /
-  `expires_in`. An issuer named `default` is aliased for autowiring.
+  `expires_in`, under `Cache-Control: no-store` (RFC 6749 §5.1 — a cached token
+  response is a disclosed token). An issuer named `default` is aliased for
+  autowiring. A static claim naming one of the registered claims (`iss`, `sub`,
+  `aud`, `exp`, `nbf`, `iat`, `jti`) is refused at container build, where every
+  other misconfiguration in this bundle is refused, rather than throwing on the
+  first token minted.
 - **Named `keys` and `consumers`, and a working token handler.** A firewall can
   now point `token_handler` at `medzuch_jwt.handler.<name>` and get RFC 9068
   access-token verification through the library's access-token profile: issuer,

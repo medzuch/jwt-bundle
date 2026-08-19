@@ -32,10 +32,18 @@ final class AccessTokenSuccessHandler implements AuthenticationSuccessHandlerInt
     {
         $issued = $this->issuer->issue($token->getUserIdentifier());
 
-        return new JsonResponse([
+        $response = new JsonResponse([
             'access_token' => $issued->value,
             'token_type' => 'Bearer',
             'expires_in' => $issued->expiresIn,
         ]);
+
+        // RFC 6749 §5.1: a response carrying a token must not be stored. A
+        // cached bearer token is a disclosed one the moment a proxy is in the
+        // path.
+        $response->headers->set('Cache-Control', 'no-store');
+        $response->headers->set('Pragma', 'no-cache');
+
+        return $response;
     }
 }

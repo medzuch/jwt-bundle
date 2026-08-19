@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Tests\Functional\App;
 
 use Medzuch\JwtBundle\MedzuchJwtBundle;
-use Psr\Log\NullLogger;
+use Medzuch\JwtBundle\Tests\Functional\App\CollectingLogger as TestLogger;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
 use Symfony\Bundle\SecurityBundle\SecurityBundle;
@@ -14,6 +14,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\HttpKernel\Kernel;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
+use Symfony\Component\Security\Core\User\InMemoryUser;
 
 /**
  * A kernel with a real firewall in front of a real controller, so the round
@@ -80,10 +81,20 @@ final class SecuredKernel extends Kernel
         ]);
 
         $container->extension('security', [
+            'password_hashers' => [InMemoryUser::class => ['algorithm' => 'plaintext']],
             'providers' => [
-                'users' => ['memory' => ['users' => ['alice' => ['roles' => ['ROLE_USER']]]]],
+                'users' => ['memory' => ['users' => ['alice' => ['password' => 'open-sesame', 'roles' => ['ROLE_USER']]]]],
             ],
             'firewalls' => [
+                'login' => [
+                    'pattern' => '^/login',
+                    'stateless' => true,
+                    'provider' => 'users',
+                    'json_login' => [
+                        'check_path' => '/login',
+                        'success_handler' => 'medzuch_jwt.login.default',
+                    ],
+                ],
                 'api' => [
                     'pattern' => '^/api',
                     'stateless' => true,
@@ -99,19 +110,27 @@ final class SecuredKernel extends Kernel
         $container->extension('medzuch_jwt', $this->bundleConfig);
 
         $container->services()
+            ->set(NeverReachedController::class)
+            ->public()
+
             ->set(WhoAmIController::class)
             ->autowire()
             ->public()
 
             // Without Monolog, Symfony's fallback logger writes every firewall
             // decision to stderr, which PHPUnit reports as unexpected output.
-            // The bundle's own logging is asserted where it belongs — through
-            // the `logger` configuration key, not through the kernel's default.
-            ->set('logger', NullLogger::class);
+            // Collecting rather than discarding: a silenced kernel also
+            // silences the deprecations and errors a round trip would report.
+            ->set('logger', TestLogger::class)->public();
     }
 
     protected function configureRoutes(RoutingConfigurator $routes): void
     {
         $routes->add('whoami', '/api/whoami')->controller(WhoAmIController::class);
+
+        // json_login intercepts this path before routing; the route exists so
+        // that a request which somehow reaches the router gets a 500 naming the
+        // problem rather than a 404 suggesting a typo.
+        $routes->add('login', '/login')->methods(['POST'])->controller(NeverReachedController::class);
     }
 }

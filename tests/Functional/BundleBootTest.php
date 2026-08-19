@@ -12,29 +12,12 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
-use Symfony\Component\ErrorHandler\ErrorHandler;
 use Symfony\Component\HttpKernel\KernelInterface;
 
 #[CoversClass(MedzuchJwtBundle::class)]
 final class BundleBootTest extends KernelTestCase
 {
-    /**
-     * FrameworkBundle installs a global exception handler when it boots in
-     * debug mode and never removes it, which PHPUnit reports as a risky test.
-     * Restoring unconditionally would pop PHPUnit's own handler whenever a boot
-     * failed before installing one, so check what is actually on top first.
-     */
-    protected function tearDown(): void
-    {
-        parent::tearDown();
-
-        $current = set_exception_handler(null);
-        restore_exception_handler();
-
-        if (is_array($current) && $current[0] instanceof ErrorHandler) {
-            restore_exception_handler();
-        }
-    }
+    use RestoresExceptionHandler;
 
     /**
      * @param array<array-key, mixed> $options
