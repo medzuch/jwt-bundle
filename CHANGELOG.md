@@ -29,10 +29,12 @@ a class or method signature would be.
 
 ### Changed
 
-- **A consumer's keys are reached through `medzuch_jwt.key.<name>.verification`**,
-  which for a shared secret is an alias to the key itself. Signing keeps
-  `medzuch_jwt.key.<name>`. Symmetric keys are both halves at once; asymmetric
-  ones are not, and the container should not pretend otherwise.
+- **Key services answer by role**: `medzuch_jwt.key.<name>.signing` and
+  `medzuch_jwt.key.<name>.verification`, so both sides read the same at the call
+  site. For a shared secret both are aliases to `medzuch_jwt.key.<name>`, which
+  a symmetric key genuinely is; for a keypair only the half that was configured
+  exists. Symmetric keys are both halves at once, asymmetric ones are not, and
+  the container should not pretend otherwise.
 - **The `kid` ambiguity check moved from the whole configuration to each
   consumer's key set**, which is where the ambiguity actually lives — the
   resolver only ever sees the keys of the consumer doing the verifying. The

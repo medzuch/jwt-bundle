@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional;
 
+use Medzuch\Jwt\Exception\InvalidKeyException;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
@@ -60,6 +61,9 @@ final class AsymmetricKeyTest extends KernelTestCase
     {
         yield 'RS256' => ['RS256', ['private_key_type' => \OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]];
         yield 'ES256' => ['ES256', ['private_key_type' => \OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']];
+        // P-521 is where fixed-width signature padding goes wrong, so it earns
+        // its place even though ES256 exercises the same code path.
+        yield 'ES512' => ['ES512', ['private_key_type' => \OPENSSL_KEYTYPE_EC, 'curve_name' => 'secp521r1']];
     }
 
     /**
@@ -128,6 +132,41 @@ final class AsymmetricKeyTest extends KernelTestCase
         $token = self::issuer()->issue('user-42');
 
         self::assertSame('user-42', self::handler()->getUserBadgeFrom($token->value)->getUserIdentifier());
+    }
+
+    #[TestDox('a key path that cannot be read names the file rather than failing obscurely')]
+    public function testUnreadableKeyFile(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration('RS256', '/nowhere/private.pem', '/nowhere/public.pem')]);
+
+        $this->expectException(InvalidKeyException::class);
+        $this->expectExceptionMessageMatches('#/nowhere/private\.pem#');
+
+        self::getContainer()->get('medzuch_jwt.key.signing');
+    }
+
+    #[TestDox('a truncated PEM fails as a key error, not as an OpenSSL warning')]
+    public function testMalformedPem(): void
+    {
+        $keypair = self::keypair('RS256', ['private_key_type' => \OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]);
+        $truncated = substr($keypair['private'], 0, 120) . "\n-----END PRIVATE KEY-----\n";
+
+        self::bootKernel(['medzuch_jwt' => self::configuration('RS256', $truncated, $keypair['public'])]);
+
+        $this->expectException(InvalidKeyException::class);
+
+        self::getContainer()->get('medzuch_jwt.key.signing');
+    }
+
+    #[TestDox('the loader refuses an algorithm with no PEM representation')]
+    public function testAlgorithmWithoutPemSource(): void
+    {
+        // Unreachable through the container, which refuses EdDSA earlier, so
+        // the belt is asserted where it actually lives.
+        $this->expectException(InvalidKeyException::class);
+        $this->expectExceptionMessageMatches('/No PEM key source/');
+
+        KeyLoader::signingKeyClass('EdDSA');
     }
 
     /**

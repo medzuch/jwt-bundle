@@ -115,6 +115,7 @@ final class ReadmeExamplesTest extends KernelTestCase
 
                 if (isset($key['hmac']) || isset($key['pem_private'])) {
                     $ids[] = sprintf('medzuch_jwt.key.%s', $name);
+                    $ids[] = sprintf('medzuch_jwt.key.%s.signing', $name);
                 }
 
                 if (isset($key['hmac']) || isset($key['pem_public'])) {

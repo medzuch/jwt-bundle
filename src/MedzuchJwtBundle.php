@@ -8,8 +8,6 @@ use DateInterval;
 use Medzuch\Jwt\Jwt\ValidatorBuilder;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\JwkSet;
-use Medzuch\Jwt\Key\PrivateKey;
-use Medzuch\Jwt\Key\PublicKey;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
@@ -278,13 +276,6 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
-     * A list-shaped node must not be given a YAML map. Symfony's prototyped
-     * array nodes accept arbitrary keys, and the library refuses an associative
-     * array — but it refuses it inside a lazily built service, which makes a
-     * configuration mistake arrive as a 500 on the first request, phrased as a
-     * problem with the token.
-     */
-    /**
      * Key sources carry no default: an optional scalar without one is simply
      * absent from the normalised configuration, which {@see self::keyEntries()}
      * fills in. A null default plus a hand-written emptiness check would read
@@ -325,6 +316,13 @@ final class MedzuchJwtBundle extends AbstractBundle
         return $entries;
     }
 
+    /**
+     * A list-shaped node must not be given a YAML map. Symfony's prototyped
+     * array nodes accept arbitrary keys, and the library refuses an associative
+     * array — but it refuses it inside a lazily built service, which makes a
+     * configuration mistake arrive as a 500 on the first request, phrased as a
+     * problem with the token.
+     */
     private static function rejectMaps(ArrayNodeDefinition $node, string $name): void
     {
         $node->validate()
@@ -408,19 +406,24 @@ final class MedzuchJwtBundle extends AbstractBundle
                     ->factory([HmacKey::class, 'fromBinary'])
                     ->args([$key['hmac'], $key['algorithm'], $key['kid']]);
 
+                // Both roles answer by name, so every call site reads the same
+                // whether the key is symmetric or not.
+                $services->alias('medzuch_jwt.key.' . $name . '.signing', 'medzuch_jwt.key.' . $name);
                 $services->alias('medzuch_jwt.key.' . $name . '.verification', 'medzuch_jwt.key.' . $name);
 
                 continue;
             }
 
             if (null !== $key['pem_private']) {
-                $services->set('medzuch_jwt.key.' . $name, PrivateKey::class)
+                $services->set('medzuch_jwt.key.' . $name, KeyLoader::signingKeyClass($key['algorithm']))
                     ->factory([KeyLoader::class, 'signingKey'])
                     ->args([$key['pem_private'], $key['algorithm'], $key['kid'], $key['pem_passphrase']]);
+
+                $services->alias('medzuch_jwt.key.' . $name . '.signing', 'medzuch_jwt.key.' . $name);
             }
 
             if (null !== $key['pem_public']) {
-                $services->set('medzuch_jwt.key.' . $name . '.verification', PublicKey::class)
+                $services->set('medzuch_jwt.key.' . $name . '.verification', KeyLoader::verificationKeyClass($key['algorithm']))
                     ->factory([KeyLoader::class, 'verificationKey'])
                     ->args([$key['pem_public'], $key['algorithm'], $key['kid']]);
             }
@@ -454,7 +457,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         }
 
         if (SigningAlgorithms::FAMILY_HMAC !== $family && null !== $key['hmac']) {
-            throw new InvalidConfigurationException(sprintf('Key "%s" is bound to %s, which needs a PEM, not a shared secret. The shared-secret algorithms are %s.', $name, $key['algorithm'], implode('/', SigningAlgorithms::HMAC)));
+            throw new InvalidConfigurationException(sprintf('Key "%s" is bound to %s, which needs a PEM, not a shared secret. The shared-secret algorithms are %s.', $name, $key['algorithm'], implode('/', SigningAlgorithms::namesForFamily(SigningAlgorithms::FAMILY_HMAC))));
         }
 
         if (SigningAlgorithms::FAMILY_OKP === $family) {
@@ -495,7 +498,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ->args([
                     $issuer['issuer'],
                     inline_service(SigningAlgorithms::CLASSES[$keys[$issuer['key']]['algorithm']]),
-                    service('medzuch_jwt.key.' . $issuer['key']),
+                    service('medzuch_jwt.key.' . $issuer['key'] . '.signing'),
                     service('medzuch_jwt.clock'),
                 ]);
 
@@ -580,6 +583,8 @@ final class MedzuchJwtBundle extends AbstractBundle
             $bound[] = $keys[$key]['algorithm'];
         }
 
+        $this->assertKeysAreDistinguishable($name, array_intersect_key($keys, array_flip($consumer['keys'])));
+
         // Every allowed algorithm must have a key behind it, not merely one of
         // them: an algorithm on the allowlist that no key can verify is a
         // permanently dead branch, and the usual way to get one is asking for
@@ -587,8 +592,6 @@ final class MedzuchJwtBundle extends AbstractBundle
         // while every key source is static; remote JWKS (K5) publishes its
         // algorithms at runtime and will need its own reading of "satisfied".
         $unsatisfied = array_values(array_diff($consumer['allowed_algorithms'], $bound));
-
-        $this->assertKeysAreDistinguishable($name, array_intersect_key($keys, array_flip($consumer['keys'])));
 
         if ([] !== $unsatisfied) {
             throw new InvalidConfigurationException(sprintf(

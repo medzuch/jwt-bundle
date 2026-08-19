@@ -29,6 +29,35 @@ use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
  */
 final class KeyLoader
 {
+    /**
+     * The concrete class each half resolves to, so the container can declare
+     * what a key service actually is. `PrivateKey` and `PublicKey` are
+     * interfaces: naming one as a service class tells `debug:container` and
+     * every type check something that can never be true.
+     *
+     * @return class-string
+     */
+    public static function signingKeyClass(string $algorithm): string
+    {
+        return match (SigningAlgorithms::familyOf($algorithm)) {
+            SigningAlgorithms::FAMILY_RSA => RsaPrivateKey::class,
+            SigningAlgorithms::FAMILY_EC => EcPrivateKey::class,
+            default => throw new InvalidKeyException(sprintf('No PEM key source for algorithm "%s".', $algorithm)),
+        };
+    }
+
+    /**
+     * @return class-string
+     */
+    public static function verificationKeyClass(string $algorithm): string
+    {
+        return match (SigningAlgorithms::familyOf($algorithm)) {
+            SigningAlgorithms::FAMILY_RSA => RsaPublicKey::class,
+            SigningAlgorithms::FAMILY_EC => EcPublicKey::class,
+            default => throw new InvalidKeyException(sprintf('No PEM key source for algorithm "%s".', $algorithm)),
+        };
+    }
+
     public static function signingKey(string $source, string $algorithm, ?string $kid, ?string $passphrase): PrivateKey
     {
         $pem = self::read($source, $algorithm);
@@ -60,9 +89,15 @@ final class KeyLoader
         $pem = @file_get_contents($source);
 
         if (false === $pem) {
-            // The path, not the contents: naming a file that could not be read
-            // is the whole diagnostic, and nothing secret is in the path.
-            throw new InvalidKeyException(sprintf('Cannot read the %s key file "%s".', $algorithm, $source));
+            // Names both readings, because a value that is neither armoured nor
+            // a readable path is as likely to be a mangled inline PEM as a
+            // wrong filename. The path is safe to print; the contents are not,
+            // and are not printed anywhere.
+            throw new InvalidKeyException(sprintf(
+                'Cannot read the %s key from "%s": it is neither a readable file nor a PEM (a PEM begins with -----BEGIN).',
+                $algorithm,
+                $source,
+            ));
         }
 
         return $pem;
