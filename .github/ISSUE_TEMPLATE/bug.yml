@@ -1,0 +1,51 @@
+name: Bug report
+description: Something the bundle does that it should not, or does not do that it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Not for vulnerabilities.** An authentication bypass, a leaked key, or a
+        check that turns out to be a no-op goes through
+        [private reporting](https://github.com/medzuch/jwt-bundle/security/advisories/new),
+        not here.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: The behaviour you see, and the behaviour you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: The relevant part of your `medzuch_jwt` configuration and the firewall it is bound to. Redact secrets — never paste a key or a real token.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Smallest sequence that shows it. A failing test against the bundle's own test kernel is ideal.
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Bundle, medzuch/jwt-php, Symfony and PHP.
+      placeholder: "jwt-bundle 0.1.0, jwt-php 1.2.0, Symfony 7.4.16, PHP 8.3.33"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Stack trace, log output from the `jwt` channel, or what you already ruled out.

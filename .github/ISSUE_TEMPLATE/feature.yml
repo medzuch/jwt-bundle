@@ -1,0 +1,54 @@
+name: Feature or task
+description: A capability from the design, or a piece of work that should exist.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most of what this bundle will do is already scoped in
+        [`docs/plan.md`](https://github.com/medzuch/jwt-bundle/blob/main/docs/plan.md) §3,
+        with a tier (T1/T2/T3) and a catalogue ID. If your request is one of
+        those rows, name it — the discussion is then about *when*, not *whether*.
+
+  - type: input
+    id: catalogue
+    attributes:
+      label: Catalogue ID
+      description: The row from `docs/plan.md` §3 this implements — C1, I5, K3, O4, D8 … Use "n/a" if it is not in the catalogue yet.
+      placeholder: "C9"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What an application cannot do today, or has to do by hand. Not the solution — the situation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: shape
+    attributes:
+      label: Proposed shape
+      description: Configuration, service, or interface as you imagine it. A YAML sketch is worth more than a paragraph.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Which layer does this belong in?
+      description: The bundle wires; the library does crypto and claim validation. Work that needs new claim or crypto logic belongs upstream in `medzuch/jwt-php`.
+      options:
+        - Bundle — wiring, configuration, Symfony contracts
+        - Library — crypto, parsing, claim validation (may need an upstream issue first)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: How we will know it is finished. Include the configuration BC implications, if any.
