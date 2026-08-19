@@ -22,7 +22,7 @@ use Symfony\Component\HttpKernel\Kernel;
 final class TestKernel extends Kernel
 {
     /**
-     * @param array<string, mixed> $bundleConfig configuration under the `medzuch_jwt` root key
+     * @param array<array-key, mixed> $bundleConfig configuration under the `medzuch_jwt` root key
      */
     public function __construct(private readonly array $bundleConfig = [])
     {
@@ -38,19 +38,15 @@ final class TestKernel extends Kernel
     public function registerContainerConfiguration(LoaderInterface $loader): void
     {
         $loader->load(function (ContainerBuilder $container): void {
-            $framework = ['secret' => 'test-secret', 'test' => true];
-
-            // Version-conditional, and deliberately only here: 6.4 deprecates
-            // leaving `http_method_override` unset, while later majors dropped
-            // the option altogether, so neither a fixed value nor omission
-            // works across the supported window. DEC-2 rules this out in
-            // `src/` — this is the test harness, whose job is to absorb such
-            // differences so the bundle itself never has to.
-            if (Kernel::VERSION_ID < 70000) {
-                $framework['http_method_override'] = false;
-            }
-
-            $container->loadFromExtension('framework', $framework);
+            // Symfony 6.4 deprecates leaving `http_method_override` unset,
+            // while later majors dropped the option, so no single value works
+            // across the window. Rather than branch on Kernel::VERSION_ID — a
+            // constant every analyser folds, making the comparison "always
+            // true" on one leg and "always false" on the next — the harness
+            // simply wears the 6.4 deprecation notice. Nothing fails on it
+            // (see phpunit.xml.dist), and the bundle itself stays free of
+            // version-conditional code, which is what DEC-2 actually asks for.
+            $container->loadFromExtension('framework', ['secret' => 'test-secret', 'test' => true]);
             $container->loadFromExtension('medzuch_jwt', $this->bundleConfig);
 
             // Stand-in for an application-provided clock, so the override path

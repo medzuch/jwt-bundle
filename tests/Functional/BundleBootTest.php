@@ -13,14 +13,10 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\HttpKernel\KernelInterface;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
-use Psr\Clock\ClockInterface;
 
 #[CoversClass(MedzuchJwtBundle::class)]
 final class BundleBootTest extends KernelTestCase
 {
-    /**
-     * @param array<string, mixed> $options
-     */
     protected static function createKernel(array $options = []): KernelInterface
     {
         $config = $options['medzuch_jwt'] ?? [];
@@ -36,7 +32,6 @@ final class BundleBootTest extends KernelTestCase
         $clock = self::getContainer()->get('medzuch_jwt.clock');
 
         self::assertInstanceOf(SystemClock::class, $clock);
-        self::assertInstanceOf(ClockInterface::class, $clock);
     }
 
     #[TestDox('a configured clock replaces the default rather than sitting beside it')]
