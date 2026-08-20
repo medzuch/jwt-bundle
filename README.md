@@ -12,34 +12,21 @@ Works for any of these roles, in any combination:
 - **OIDC relying party** — verify a third-party IdP's tokens via cached, rotation-aware JWKS.
 - **Service-to-service** — machine tokens between your own services.
 
-> **Status: pre-1.0.** The MVP works end to end — issue a token on login, verify it on a
-> firewall, be authenticated — with HMAC, RSA and EC keys, key rotation and a JWKS endpoint.
-> Nothing about it is stable yet; see [`docs/plan.md`](docs/plan.md) for the full design and
-> roadmap.
+> **Status: pre-1.0.** Issuing and verifying work end to end — mint a token on login, verify
+> it on a firewall, be authenticated — with HMAC, RSA, EC and Ed25519 keys from PEM or JWK
+> sources, key rotation, a JWK Set endpoint and a key-generation command. Nothing about it is
+> stable yet; see [`docs/plan.md`](docs/plan.md) for the full design and roadmap.
 
 Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
 
 ## Installation
 
-The package is not on Packagist yet and has no tagged release, so point Composer at the
-repository and ask for the development branch by name — a plain `composer require` finds no
-stable version to install.
-
-Add the repository to your `composer.json`:
-
-```json
-{
-    "repositories": [
-        { "type": "vcs", "url": "https://github.com/medzuch/jwt-bundle" }
-    ]
-}
-```
-
-Then:
-
 ```bash
-composer require medzuch/jwt-bundle:dev-develop
+composer require medzuch/jwt-bundle:^0.2
 ```
+
+The constraint is worth pinning that tightly: pre-1.0, a minor release may move the
+configuration surface, and the [changelog](CHANGELOG.md) records what changed and how.
 
 Without Symfony Flex, register the bundle yourself in `config/bundles.php`:
 
