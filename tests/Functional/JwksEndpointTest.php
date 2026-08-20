@@ -46,6 +46,19 @@ final class JwksEndpointTest extends WebTestCase
         self::assertSame('application/jwk-set+json', $client->getResponse()->headers->get('Content-Type'));
     }
 
+    #[TestDox('a sibling path under the same firewall and the same catch-all rule is refused')]
+    public function testTheExemptionIsWhatServesTheDocument(): void
+    {
+        $client = self::createClient();
+        $client->request('GET', '/.well-known/probe');
+
+        // Without this, the assertion above says only that an endpoint no
+        // firewall ever sees answers 200. The probe shares the document's
+        // firewall and its catch-all rule and differs in one thing: the
+        // exemption the README tells applications to write.
+        self::assertContains($client->getResponse()->getStatusCode(), [Response::HTTP_UNAUTHORIZED, Response::HTTP_FORBIDDEN]);
+    }
+
     #[TestDox('every configured key is published, with its kid, algorithm and use')]
     public function testPublishesEveryConfiguredKey(): void
     {

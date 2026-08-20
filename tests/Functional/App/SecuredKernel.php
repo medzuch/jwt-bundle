@@ -106,15 +106,25 @@ final class SecuredKernel extends Kernel
             ];
         }
 
+        $accessControl = [['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY']];
+
+        // The shape the README warns about: everything behind a firewall, a
+        // catch-all access rule, and the JWK Set exempted ahead of it. Served
+        // outside any firewall the endpoint answers 200 whatever the rules
+        // say, and the warning would have nothing to fail against.
+        if (self::publishes($this->bundleConfig)) {
+            $firewalls['public'] = ['pattern' => '^/', 'stateless' => true, 'provider' => 'users'];
+            array_unshift($accessControl, ['path' => '^/\\.well-known/jwks\\.json$', 'roles' => 'PUBLIC_ACCESS']);
+            $accessControl[] = ['path' => '^/', 'roles' => 'IS_AUTHENTICATED_FULLY'];
+        }
+
         $container->extension('security', [
             'password_hashers' => [InMemoryUser::class => ['algorithm' => 'plaintext']],
             'providers' => [
                 'users' => ['memory' => ['users' => ['alice' => ['password' => 'open-sesame', 'roles' => ['ROLE_USER']]]]],
             ],
             'firewalls' => [] === $firewalls ? ['none' => ['security' => false]] : $firewalls,
-            'access_control' => [
-                ['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY'],
-            ],
+            'access_control' => $accessControl,
         ]);
 
         $container->extension('medzuch_jwt', $this->bundleConfig);
@@ -137,6 +147,16 @@ final class SecuredKernel extends Kernel
     /**
      * @param array<array-key, mixed> $config
      */
+    private static function publishes(array $config): bool
+    {
+        $jwks = $config['jwks'] ?? null;
+
+        return is_array($jwks) && [] !== ($jwks['keys'] ?? []);
+    }
+
+    /**
+     * @param array<array-key, mixed> $config
+     */
     private static function configures(array $config, string $section, string $name): bool
     {
         $entries = $config[$section] ?? null;
@@ -151,12 +171,16 @@ final class SecuredKernel extends Kernel
         // Where a JWK Set lives is the application's decision, and this
         // application makes it the way any other would: it routes to the
         // controller when it has configured keys to publish.
-        $jwks = $this->bundleConfig['jwks'] ?? null;
-
-        if (is_array($jwks) && [] !== ($jwks['keys'] ?? [])) {
+        if (self::publishes($this->bundleConfig)) {
             $routes->add('jwks', '/.well-known/jwks.json')
                 ->methods(['GET'])
                 ->controller('medzuch_jwt.jwks_controller');
+
+            // A sibling under the same firewall and the same catch-all rule,
+            // routed so that the router does not 404 the request before
+            // security sees it. Its refusal is what shows the exemption above
+            // is doing the work.
+            $routes->add('well_known_probe', '/.well-known/probe')->controller(NeverReachedController::class);
         }
 
         // json_login intercepts this path before routing; the route exists so
