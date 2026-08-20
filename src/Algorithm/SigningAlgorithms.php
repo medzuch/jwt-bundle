@@ -23,11 +23,13 @@ use Medzuch\Jwt\Algorithm\Signing\Rs512;
  * refuses it by construction, and a configuration key that could reintroduce it
  * would undo that.
  *
- * The list is deliberately wider than what can be configured today — only HMAC
- * keys have a source so far. Naming an algorithm with no key behind it fails at
- * container build with a message that says so, which beats an enum that grows
- * with each key source and gives "is not a supported value" for an algorithm
- * the library implements perfectly well.
+ * Every algorithm here has a key source: a shared secret for the HS family, a
+ * PEM or a JWK for the RSA and EC ones, and a JWK for EdDSA, which RFC 8037
+ * defines as a JWK and nothing else. The list is still allowed to run ahead of
+ * the sources — naming an algorithm with no key behind it fails at container
+ * build with a message that says so, which beats an enum that grows with each
+ * key source and gives "is not a supported value" for an algorithm the library
+ * implements perfectly well.
  *
  * @internal
  */
@@ -47,6 +49,30 @@ final class SigningAlgorithms
         'EdDSA' => EdDsa::class,
     ];
 
+    public const FAMILY_HMAC = 'hmac';
+    public const FAMILY_RSA = 'rsa';
+    public const FAMILY_EC = 'ec';
+    public const FAMILY_OKP = 'okp';
+
+    /**
+     * The key family each algorithm needs. A key is bound to one algorithm and
+     * a family answers what kind of material that algorithm can be given.
+     *
+     * @var array<string, string>
+     */
+    public const FAMILIES = [
+        'HS256' => self::FAMILY_HMAC,
+        'HS384' => self::FAMILY_HMAC,
+        'HS512' => self::FAMILY_HMAC,
+        'RS256' => self::FAMILY_RSA,
+        'RS384' => self::FAMILY_RSA,
+        'RS512' => self::FAMILY_RSA,
+        'ES256' => self::FAMILY_EC,
+        'ES384' => self::FAMILY_EC,
+        'ES512' => self::FAMILY_EC,
+        'EdDSA' => self::FAMILY_OKP,
+    ];
+
     /** @var list<string> */
     public const HMAC = ['HS256', 'HS384', 'HS512'];
 
@@ -54,5 +80,16 @@ final class SigningAlgorithms
     public static function names(): array
     {
         return array_keys(self::CLASSES);
+    }
+
+    public static function familyOf(string $algorithm): string
+    {
+        return self::FAMILIES[$algorithm] ?? throw new \InvalidArgumentException(sprintf('Unknown algorithm "%s".', $algorithm));
+    }
+
+    /** @return list<string> */
+    public static function namesForFamily(string $family): array
+    {
+        return array_keys(array_filter(self::FAMILIES, static fn(string $f): bool => $f === $family));
     }
 }

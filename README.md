@@ -12,34 +12,21 @@ Works for any of these roles, in any combination:
 - **OIDC relying party** — verify a third-party IdP's tokens via cached, rotation-aware JWKS.
 - **Service-to-service** — machine tokens between your own services.
 
-> **Status: v0.1.0, pre-1.0.** The MVP works end to end — issue a token on login, verify it on a
-> firewall, be authenticated — but nothing about it is stable yet, and only HMAC keys exist.
-> Asymmetric keys, rotation and JWKS arrive in the next phase; see
-> [`docs/plan.md`](docs/plan.md) for the full design and roadmap.
+> **Status: pre-1.0.** Issuing and verifying work end to end — mint a token on login, verify
+> it on a firewall, be authenticated — with HMAC, RSA, EC and Ed25519 keys from PEM or JWK
+> sources, key rotation, a JWK Set endpoint and a key-generation command. Nothing about it is
+> stable yet; see [`docs/plan.md`](docs/plan.md) for the full design and roadmap.
 
 Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
 
 ## Installation
 
-The package is not on Packagist yet and has no tagged release, so point Composer at the
-repository and ask for the development branch by name — a plain `composer require` finds no
-stable version to install.
-
-Add the repository to your `composer.json`:
-
-```json
-{
-    "repositories": [
-        { "type": "vcs", "url": "https://github.com/medzuch/jwt-bundle" }
-    ]
-}
-```
-
-Then:
-
 ```bash
-composer require medzuch/jwt-bundle:dev-develop
+composer require medzuch/jwt-bundle:^0.2
 ```
+
+The constraint is worth pinning that tightly: pre-1.0, a minor release may move the
+configuration surface, and the [changelog](CHANGELOG.md) records what changed and how.
 
 Without Symfony Flex, register the bundle yourself in `config/bundles.php`:
 
@@ -197,7 +184,12 @@ medzuch_jwt:
 
 ## Keys
 
-The MVP takes HMAC secrets from the environment:
+A key is bound to exactly one algorithm, and the algorithm decides what material it must be
+given: a shared secret for `HS*`, a PEM or a JWK for `RS*` and `ES*`, a JWK for `EdDSA`.
+
+`bin/console jwt:key:generate` writes any of them and prints the configuration that uses it.
+
+### Shared secrets
 
 ```yaml
 medzuch_jwt:
@@ -205,10 +197,118 @@ medzuch_jwt:
         default:
             hmac: '%env(JWT_SECRET)%'       # or %env(base64:JWT_SECRET)% for a base64 secret
             algorithm: HS256                # HS256 | HS384 | HS512
-            kid: ~                          # required once two keys share an algorithm
+            kid: ~                          # required once a consumer verifies with two keys it cannot tell apart
 ```
 
-Generate one with at least 32 bytes of entropy (48 for HS384, 64 for HS512 — RFC 8725 §3.5):
+### RSA and EC keys
+
+The two halves are separate entries, because they are separate things: only the private one can
+sign, and only the public one can verify. Each `pem_*` value is either a path to a PEM file or
+the PEM itself — told apart by the armour, since no path begins with `-----BEGIN`.
+
+```yaml
+medzuch_jwt:
+    keys:
+        signing:
+            pem_private: '%kernel.project_dir%/config/jwt/private.pem'
+            pem_passphrase: '%env(JWT_KEY_PASSPHRASE)%'    # omit for an unencrypted key
+            algorithm: RS256                               # RS256/384/512 | ES256/384/512
+            kid: '2026-01'
+        verifying:
+            pem_public: '%kernel.project_dir%/config/jwt/public.pem'
+            algorithm: RS256
+            kid: '2026-01'
+
+    issuers:
+        default:
+            issuer: '%env(APP_URL)%'
+            key: signing
+            client_id: '%env(APP_CLIENT_ID)%'
+            audience: '%env(APP_URL)%'
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [verifying]
+            allowed_algorithms: [RS256]
+```
+
+Generate a keypair with `bin/console jwt:key:generate RS256 --kid 2026-08 --out config/jwt`,
+which also prints the block above with the paths filled in, or by hand:
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out config/jwt/private.pem
+openssl pkey -in config/jwt/private.pem -pubout -out config/jwt/public.pem
+```
+
+A resource server verifying someone else's tokens configures only the public half. An
+authorization server that does not verify its own tokens configures only the private one.
+
+### JWK keys, and EdDSA
+
+A key can be given as a JWK instead of a PEM — a path to a JSON file or the JSON itself:
+
+```yaml
+medzuch_jwt:
+    keys:
+        signing:
+            jwk_private: '%kernel.project_dir%/config/jwt/signing.private.jwk.json'
+            algorithm: EdDSA
+            kid: '2026-08'
+        verifying:
+            jwk_public: '%kernel.project_dir%/config/jwt/signing.public.jwk.json'
+            algorithm: EdDSA
+            kid: '2026-08'
+```
+
+**`EdDSA` is configured this way and no other.** RFC 8037 defines Ed25519 as a JWK, and there is
+no PEM spelling of it to read; a key bound to `EdDSA` with a `pem_*` source is refused at
+container build, saying which source it takes.
+
+A JWK states its own `alg`, `kid` and `use`, and so does the configuration pointing at it. The
+two have to agree. What the configuration states and the document leaves out is filled in — a
+`kid` in the configuration binds a document that carries none — but a disagreement is refused
+when the key is loaded, naming both readings. The configuration is what the container was built
+from: which algorithms a consumer can verify and which keys a token can tell apart are answered
+from it, and a document that quietly said something else would make those answers describe a
+different key than the one signing.
+
+Two refusals worth knowing, because both would otherwise be silent:
+
+- a document carrying `d` behind `jwk_public` — that is the private half, and the JWKS endpoint
+  would publish it verbatim, in a document that parses and returns 200;
+- a **JWK Set** where a key belongs. It is the document people have on hand, since it is what a
+  JWKS endpoint serves, so it is named for what it is rather than reported as a malformed key.
+
+### Generating keys
+
+```bash
+bin/console jwt:key:generate RS256 --kid 2026-08 --out config/jwt
+bin/console jwt:key:generate EdDSA --kid 2026-08 --format jwk --out config/jwt --name signing
+bin/console jwt:key:generate HS256 --name api
+```
+
+The command writes the key and prints the `medzuch_jwt` block that uses it — which of the four
+sources it belongs in, with both halves and the `kid` already in place. Every key it emits is
+built through the same library that reads it back.
+
+A relative `--out` is anchored to `%kernel.project_dir%` in the printed block. The key is read
+when the key service is first built, in whatever working directory that process happens to have
+— php-fpm's, a worker's — so a path relative to where you ran the console would work locally and
+fail on the first request that signs.
+
+Without `--out` the material is printed instead, which puts a private key in your scrollback.
+With `--out` it is written to files: the private half readable only by its owner, and neither
+half ever overwritten — a key file replaced in place invalidates every token still in flight,
+and the second run is the one that would do it silently.
+
+A shared secret is printed as an environment line rather than written to a file, because that is
+where the `hmac` source reads it from.
+
+### HMAC secret length
+
+An HMAC secret needs at least 32 bytes of entropy (48 for HS384, 64 for HS512 — RFC 8725 §3.5):
 
 ```bash
 php -r 'echo base64_encode(random_bytes(32)), PHP_EOL;'
@@ -233,6 +333,91 @@ container parameter and never appears in `debug:container` output. The flip side
 length cannot be checked when the container is built: too short a secret fails when the key is
 first used, not at deploy time.
 
+## Rotating a key
+
+Rotation is a configuration move rather than a feature. An issuer signs with **one** key while a
+consumer accepts **several**, so a new key can start signing while tokens from the old one are
+still in flight:
+
+1. Add the new keypair alongside the old one, each with its own `kid`
+   (`jwt:key:generate <alg> --kid <new-kid> --out config/jwt` writes it and prints the entry).
+2. Add the new public half to the consumer's `keys`. Nothing changes yet — the issuer still
+   signs with the old key, and both are now accepted.
+3. Point the issuer at the new private half. New tokens carry the new `kid`; tokens minted a
+   minute ago still verify.
+4. Once the longest `ttl` has passed, remove the old key from `keys` and delete it.
+
+```yaml
+medzuch_jwt:
+    keys:
+        signing_2026:  { pem_private: '…/2026.pem',     algorithm: RS256, kid: '2026-01' }
+        verify_2026:   { pem_public:  '…/2026.pub.pem', algorithm: RS256, kid: '2026-01' }
+        verify_2025:   { pem_public:  '…/2025.pub.pem', algorithm: RS256, kid: '2025-07' }
+
+    issuers:
+        default:
+            issuer: '%env(APP_URL)%'
+            key: signing_2026          # step 3 changes this line
+            client_id: '%env(APP_CLIENT_ID)%'
+            audience: '%env(APP_URL)%'
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [verify_2026, verify_2025]
+            allowed_algorithms: [RS256]
+```
+
+**The `kid`s are what make the overlap work.** Without them the library resolves a token to the
+first key bound to its algorithm and does not try the others, so the second key would verify
+nothing — which is why a consumer configured that way is refused at container build.
+
+## Publishing a JWK Set
+
+Relying parties that verify your tokens need your public keys. List the ones to publish, and
+route to the controller wherever the document belongs:
+
+```yaml
+medzuch_jwt:
+    keys:
+        verify_2026:   { pem_public: '…/2026.pub.pem', algorithm: RS256, kid: '2026-01' }
+        verify_2025:   { pem_public: '…/2025.pub.pem', algorithm: RS256, kid: '2025-07' }
+
+    jwks:
+        keys: [verify_2026, verify_2025]
+        cache_max_age: 300
+```
+
+```yaml
+# config/routes.yaml
+medzuch_jwt_jwks:
+    path: /.well-known/jwks.json
+    methods: [GET]
+    controller: medzuch_jwt.jwks_controller
+```
+
+The bundle registers no route of its own: where a JWKS document lives — under `/.well-known/`,
+behind a prefix, on a separate host — is the application's decision, and a route the bundle
+owned would either take that choice away or duplicate it.
+
+**The route has to be reachable without a token.** That is the entire purpose of the document,
+and an `access_control` that starts with a catch-all will serve a relying party a 401 instead:
+
+```yaml
+security:
+    access_control:
+        - { path: ^/\.well-known/jwks\.json$, roles: PUBLIC_ACCESS }
+        - { path: ^/, roles: IS_AUTHENTICATED_FULLY }
+```
+
+The response carries an `ETag` over the document, so a conditional request gets a `304` and
+`cache_max_age: 0` means revalidate rather than refetch.
+
+Only verification halves are published, and **a shared secret is refused at container build**: a
+symmetric key's JWK carries the secret itself, so publishing it would hand every reader the key
+that signs, in a document that parses perfectly and returns 200.
+
 ## Configuration reference
 
 The complete tree, with every option, default and explanation, is generated from the bundle
@@ -252,11 +437,21 @@ looking like rejected tokens at runtime:
 
 - a consumer or issuer naming a key that does not exist
 - an allowed algorithm with no key behind it — a token using it could never be verified
-- two keys a token cannot tell apart: sharing a `kid`, or sharing an algorithm with no `kid`
+- two keys in one consumer's set that a token cannot tell apart: sharing a `kid`, or sharing an
+  algorithm with no `kid`
+- a key given the wrong kind of material for its algorithm — a secret for `RS256`, a PEM for
+  `HS256` or for `EdDSA`, more than one kind at once, or none
+- a consumer verifying with a private-only key, or an issuer signing with a public-only one
+- a JWK Set publishing a shared secret, a key with no public half, or a key that does not exist
 - a static claim named `iss`, `sub`, `aud`, `exp`, `nbf`, `iat` or `jti` — those are set from
   configuration or by the profile
 - a YAML map where a sequence is expected, an unknown algorithm name, leeway above the
   library's ceiling
+
+A JWK is read when the key is first built rather than when the container is compiled — the
+document stays a path or an environment reference so it never lands in the compiled container —
+so what it says is checked there: a document disagreeing with the configuration about `alg` or
+`kid`, a private JWK where the public half belongs, or a JWK Set where a key does.
 
 ## What it deliberately does not do
 

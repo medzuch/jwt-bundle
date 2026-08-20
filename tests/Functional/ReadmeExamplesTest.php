@@ -88,7 +88,7 @@ final class ReadmeExamplesTest extends KernelTestCase
     {
         $ids = [];
 
-        foreach (['keys' => ['key'], 'consumers' => ['consumer', 'handler'], 'issuers' => ['issuer', 'login']] as $section => $prefixes) {
+        foreach (['consumers' => ['consumer', 'handler'], 'issuers' => ['issuer', 'login']] as $section => $prefixes) {
             $entries = $configuration[$section] ?? [];
 
             if (!is_array($entries)) {
@@ -98,6 +98,28 @@ final class ReadmeExamplesTest extends KernelTestCase
             foreach (array_keys($entries) as $name) {
                 foreach ($prefixes as $prefix) {
                     $ids[] = sprintf('medzuch_jwt.%s.%s', $prefix, $name);
+                }
+            }
+        }
+
+        // A key entry advertises the halves it actually carries: a public-only
+        // entry can verify and not sign, and there is no signing service to
+        // expect from it.
+        $keys = $configuration['keys'] ?? [];
+
+        if (is_array($keys)) {
+            foreach ($keys as $name => $key) {
+                if (!is_array($key)) {
+                    continue;
+                }
+
+                if (isset($key['hmac']) || isset($key['pem_private']) || isset($key['jwk_private'])) {
+                    $ids[] = sprintf('medzuch_jwt.key.%s', $name);
+                    $ids[] = sprintf('medzuch_jwt.key.%s.signing', $name);
+                }
+
+                if (isset($key['hmac']) || isset($key['pem_public']) || isset($key['jwk_public'])) {
+                    $ids[] = sprintf('medzuch_jwt.key.%s.verification', $name);
                 }
             }
         }

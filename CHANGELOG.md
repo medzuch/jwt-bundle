@@ -11,6 +11,100 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-20
+
+Phase 2 of the roadmap in [`docs/plan.md`](docs/plan.md): keys stop being one
+shared secret. RSA, EC and Ed25519 keys, from PEM or JWK documents, named and
+rotatable without downtime; a JWK Set endpoint for the relying parties that
+verify your tokens; and a command that generates any of it and prints the
+configuration to paste.
+
+**Still pre-1.0.** Configuration keys are public API and changes to them are
+recorded with a deprecation path, but the surface is young enough that it
+should be expected to move. No configuration key from 0.1.0 was removed or
+renamed, so an application on HMAC keys upgrades by changing the constraint —
+unless it named one key twice in a consumer's `keys`, which is now refused;
+see **Changed**.
+
+### Added
+
+- **JWK key sources, and with them EdDSA.** A key entry takes `jwk_private` and/or
+  `jwk_public` — a path to a JSON file or the JSON itself — beside the `pem_*` and
+  `hmac` sources it already had. `EdDSA` is configured this way and no other: RFC 8037
+  defines Ed25519 as a JWK and there is no PEM spelling of it to read, so a `pem_*`
+  source bound to `EdDSA` is refused at container build, saying which source it takes.
+  A JWK states its own `alg`, `kid` and `use` and so does the configuration pointing at
+  it; what the configuration states and the document omits is filled in, and a
+  disagreement is refused when the key is loaded, naming both readings. The two
+  refusals that would otherwise be silent: a document carrying `d` behind `jwk_public`,
+  which the JWKS endpoint would publish verbatim, and a JWK **Set** where a single key
+  belongs — the document people have on hand, since it is what a JWKS endpoint serves.
+- **`jwt:key:generate`.** Generates an HMAC secret, an RSA or EC keypair in PEM or JWK,
+  or an Ed25519 keypair, and prints the `medzuch_jwt` block that uses it — which source
+  the material belongs in, both halves, and the `kid` in place. Key paths in that block
+  are anchored to `%kernel.project_dir%`, because the key is read when the key service is
+  first built, in whatever working directory that process has. `--out` writes the files
+  instead of printing them: into a `0700` directory, the private half `0600` and created
+  before it holds anything, and neither half ever overwritten, because a key file replaced
+  in place invalidates every token still in flight. A shared secret is printed as an
+  environment line rather than written, since that is where the `hmac` source reads it.
+  The command is registered only when `symfony/console` is installed, so a container
+  without one still builds.
+- **A JWK Set endpoint.** `medzuch_jwt.jwks` names the keys to publish and
+  `medzuch_jwt.jwks_controller` serves them as RFC 7517 `application/jwk-set+json`,
+  cacheable for a configurable time. The bundle registers **no route**: where the
+  document lives is a routing decision and routing belongs to the application
+  (DEC-6 in the plan). Publishing a shared secret is refused at container build —
+  a symmetric key's JWK carries the secret itself, so it would hand every reader
+  the key that signs, in a document that parses and returns 200. So is a key with
+  no public half, one that does not exist, one named twice, and a set whose keys
+  a relying party could not tell apart — the same `kid` rules a consumer's keys
+  already answer to, for the same reason: the published document is the only
+  thing a relying party has to resolve against. Published keys state
+  `use: "sig"`, and the response carries an `ETag`, so a conditional request
+  gets a 304 and `cache_max_age: 0` means revalidate rather than refetch.
+- **Key rotation works without a rotation feature.** An issuer signs with one key
+  while a consumer accepts several, so adding a key, accepting it, then signing
+  with it rotates with no downtime — and the `kid` requirement that makes the
+  overlap resolvable is already enforced. Documented as a procedure in the
+  README, with a functional test that mints from the retired key and verifies it
+  alongside the current one.
+- **RSA and EC keys.** A key entry takes `pem_private` and/or `pem_public`
+  instead of `hmac`, each of them either a path to a PEM file or the PEM
+  itself — told apart by the armour, since no path begins with `-----BEGIN`.
+  `pem_passphrase` opens an encrypted private key. The two halves are separate
+  entries because they are separate things: only the private one signs, only
+  the public one verifies, and a private key cannot stand in for its public
+  half. RS256/384/512 and ES256/384/512 work end to end; `EdDSA` has no key
+  source yet and says so.
+- **A key's algorithm decides what material it must be given.** A shared secret
+  for an RSA algorithm, a PEM for an HMAC one, both at once, or neither are all
+  refused at container build, as are a passphrase with no private key to
+  unlock, a consumer verifying with a private-only key, and an issuer signing
+  with a public-only one.
+
+### Changed
+
+- **A consumer naming the same key twice is refused at container build.** It
+  booted in 0.1.0: the key went into the verification set twice, and since
+  resolution is first-match-wins the second copy was simply unreachable. It is
+  now an error for the same reason the other key checks are — the second
+  mention cannot change what verifies, so it was either a typo or a
+  misunderstanding of what listing a key twice would do. The only affected
+  configuration is one that already carried a redundant entry.
+- **Key services answer by role**: `medzuch_jwt.key.<name>.signing` and
+  `medzuch_jwt.key.<name>.verification`, so both sides read the same at the call
+  site. For a shared secret both are aliases to `medzuch_jwt.key.<name>`, which
+  a symmetric key genuinely is; for a keypair only the half that was configured
+  exists. Symmetric keys are both halves at once, asymmetric ones are not, and
+  the container should not pretend otherwise.
+- **The `kid` ambiguity check moved from the whole configuration to each
+  consumer's key set**, which is where the ambiguity actually lives — the
+  resolver only ever sees the keys of the consumer doing the verifying. The
+  global check rejected the most ordinary asymmetric setup there is: a private
+  entry and a public entry that are two halves of one keypair, sharing an
+  algorithm and a `kid` precisely because they are the same key.
+
 ## [0.1.0] — 2026-08-19
 
 First release: the MVP of the design in [`docs/plan.md`](docs/plan.md), which is
@@ -92,5 +186,6 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.1.0
