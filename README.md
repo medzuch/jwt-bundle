@@ -306,6 +306,11 @@ The command writes the key and prints the `medzuch_jwt` block that uses it — w
 sources it belongs in, with both halves and the `kid` already in place. Every key it emits is
 built through the same library that reads it back.
 
+A relative `--out` is anchored to `%kernel.project_dir%` in the printed block. The key is read
+when the key service is first built, in whatever working directory that process happens to have
+— php-fpm's, a worker's — so a path relative to where you ran the console would work locally and
+fail on the first request that signs.
+
 Without `--out` the material is printed instead, which puts a private key in your scrollback.
 With `--out` it is written to files: the private half readable only by its owner, and neither
 half ever overwritten — a key file replaced in place invalidates every token still in flight,

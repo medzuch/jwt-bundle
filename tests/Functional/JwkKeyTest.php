@@ -190,6 +190,40 @@ final class JwkKeyTest extends KernelTestCase
         self::assertSame('sig', $key->use()?->value);
     }
 
+    #[TestDox('a signing key marked for encryption is refused, not only a published one')]
+    public function testPrivateKeyMarkedForEncryption(): void
+    {
+        $pair = self::ed25519Jwks('2026-08');
+        $config = self::configuration('EdDSA', self::restated($pair['private'], ['use' => 'enc']), $pair['public'], '2026-08');
+
+        self::bootKernel(['medzuch_jwt' => $config]);
+
+        // The half nobody publishes is still a signature key: left unchecked
+        // it would sign happily, and DEC-7 says the document does not get to
+        // disagree with what the configuration is describing.
+        $this->expectException(InvalidKeyException::class);
+        $this->expectExceptionMessageMatches('/marked use "enc", so it is not a signature key/');
+
+        self::getContainer()->get('medzuch_jwt.key.signing');
+    }
+
+    #[TestDox('a document that is not JSON says what is wrong with it')]
+    public function testMalformedJson(): void
+    {
+        $pair = self::ed25519Jwks('2026-08');
+        $config = self::configuration('EdDSA', $pair['private'], $pair['public'], '2026-08');
+        $config['keys']['verifying']['jwk_public'] = '{"kty": "OKP", "crv": ';
+
+        self::bootKernel(['medzuch_jwt' => $config]);
+
+        // "not a JSON object" would send the reader looking for the wrong
+        // thing; the parser already knows it is a syntax error and where.
+        $this->expectException(InvalidKeyException::class);
+        $this->expectExceptionMessageMatches('/is not valid JSON: Syntax error/');
+
+        self::getContainer()->get('medzuch_jwt.key.verifying.verification');
+    }
+
     #[TestDox('a JWK Set where one key belongs names the mistake')]
     public function testJwkSetIsNotAKeySource(): void
     {

@@ -126,8 +126,15 @@ final class KeyLoader
      */
     private static function jwk(string $source, string $algorithm, ?string $kid, bool $private): array
     {
-        $origin = self::origin($source, $algorithm, 'JWK', '{');
-        $decoded = json_decode(self::read($source, $algorithm, 'JWK', '{'), true);
+        ['content' => $content, 'origin' => $origin] = self::document($source, $algorithm, 'JWK', '{');
+
+        try {
+            $decoded = json_decode($content, true, flags: \JSON_THROW_ON_ERROR);
+        } catch (\JsonException $invalid) {
+            // The reason and the offset are the whole of what the reader needs
+            // here, and they are the one part of the document safe to print.
+            throw new InvalidKeyException(sprintf('The %s is not valid JSON: %s', $origin, $invalid->getMessage()), 0, $invalid);
+        }
 
         if (!is_array($decoded) || array_is_list($decoded)) {
             throw new InvalidKeyException(sprintf('The %s is not a JSON object.', $origin));
@@ -153,8 +160,12 @@ final class KeyLoader
             $jwk['kid'] = $kid;
         }
 
+        self::assertSignatureUse($jwk, $origin);
+
         if (!$private) {
-            self::assertPublishableAsSignature($jwk, $origin);
+            // Stated only on the half that gets published: `use` is what a
+            // relying party filters on, and the private half is read by this
+            // application alone (RFC 7517 §4.2).
             $jwk['use'] = KeyUse::Sig->value;
         }
 
@@ -182,13 +193,15 @@ final class KeyLoader
     }
 
     /**
-     * A verification key here signs nothing else and is published as `use:
-     * "sig"` (RFC 7517 §4.2). A document that claims the other purpose is a
-     * different key than the one the configuration is describing.
+     * Both halves are signature keys: every key this bundle configures exists
+     * to sign or to verify a signature, so a document claiming the other
+     * purpose is a different key than the one being described — on the private
+     * side too, where it would otherwise sign happily and only be caught, if at
+     * all, deep in the library.
      *
      * @param array<string, mixed> $jwk
      */
-    private static function assertPublishableAsSignature(array $jwk, string $origin): void
+    private static function assertSignatureUse(array $jwk, string $origin): void
     {
         $use = $jwk['use'] ?? null;
 
@@ -225,8 +238,23 @@ final class KeyLoader
 
     private static function read(string $source, string $algorithm, string $format, string $opening): string
     {
+        return self::document($source, $algorithm, $format, $opening)['content'];
+    }
+
+    /**
+     * The document and how to name it in an error, decided together: inline or
+     * a path is one question, and answering it in two places is how an error
+     * ends up naming an inline document the loader read from a file.
+     *
+     * A path is safe to print; the contents of an inline key are not, and never
+     * appear in a message.
+     *
+     * @return array{content: string, origin: string}
+     */
+    private static function document(string $source, string $algorithm, string $format, string $opening): array
+    {
         if (str_starts_with(ltrim($source), $opening)) {
-            return $source;
+            return ['content' => $source, 'origin' => sprintf('inline %s %s', $algorithm, $format)];
         }
 
         $contents = @file_get_contents($source);
@@ -234,8 +262,7 @@ final class KeyLoader
         if (false === $contents) {
             // Names both readings, because a value that is neither armoured nor
             // a readable path is as likely to be a mangled inline document as a
-            // wrong filename. The path is safe to print; the contents are not,
-            // and are not printed anywhere.
+            // wrong filename.
             throw new InvalidKeyException(sprintf(
                 'Cannot read the %s key from "%s": it is neither a readable file nor a %s (which begins with %s).',
                 $algorithm,
@@ -245,17 +272,6 @@ final class KeyLoader
             ));
         }
 
-        return $contents;
-    }
-
-    /**
-     * How to name the document in an error. A path is safe to print; the
-     * contents of an inline key are not, and never appear in a message.
-     */
-    private static function origin(string $source, string $algorithm, string $format, string $opening): string
-    {
-        return str_starts_with(ltrim($source), $opening)
-            ? sprintf('inline %s %s', $algorithm, $format)
-            : sprintf('%s %s in "%s"', $algorithm, $format, $source);
+        return ['content' => $contents, 'origin' => sprintf('%s %s in "%s"', $algorithm, $format, $source)];
     }
 }

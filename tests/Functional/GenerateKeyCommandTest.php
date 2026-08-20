@@ -36,18 +36,29 @@ final class GenerateKeyCommandTest extends KernelTestCase
     public static function setUpBeforeClass(): void
     {
         self::$directory = sys_get_temp_dir() . '/jwt-bundle-keygen-' . bin2hex(random_bytes(6));
+
+        // Created here rather than left to the first case that writes into it:
+        // a case run alone would otherwise chdir() into a directory that does
+        // not exist, stay where it was, and write key files into the repository.
+        mkdir(self::$directory, 0o700, true);
     }
 
     public static function tearDownAfterClass(): void
     {
-        $files = glob(self::$directory . '/*');
+        self::remove(self::$directory);
+        self::$directory = '';
+    }
 
-        foreach (false === $files ? [] : $files as $file) {
-            @unlink($file);
+    /** GLOB_BRACE is a glibc extension the test image does not have. */
+    private static function remove(string $path): void
+    {
+        $entries = glob($path . '/*');
+
+        foreach (false === $entries ? [] : $entries as $entry) {
+            is_dir($entry) ? self::remove($entry) : @unlink($entry);
         }
 
-        @rmdir(self::$directory);
-        self::$directory = '';
+        @rmdir($path);
     }
 
     /**
@@ -93,6 +104,74 @@ final class GenerateKeyCommandTest extends KernelTestCase
         self::assertSame(['algorithm' => $algorithm, 'kid' => '2026-08'], array_intersect_key($configuration['keys'][$name], ['algorithm' => null, 'kid' => null]));
 
         self::assertSame('user-42', self::roundTrip($configuration, $name, $algorithm));
+    }
+
+    #[TestDox('a relative --out is anchored to the project directory, not to whoever runs the container')]
+    public function testRelativeOutIsAnchored(): void
+    {
+        $previous = getcwd();
+        self::assertIsString($previous);
+
+        // The container builds the key when it is first needed, in php-fpm's
+        // working directory or a worker's — not in the one the console ran in.
+        // A relative path copied into the configuration works here and fails
+        // there, on the first request that signs.
+        self::assertTrue(chdir(self::$directory), 'the relative case is only meaningful from a known directory');
+
+        try {
+            $tester = self::generate(['algorithm' => 'ES256', '--name' => 'relative', '--out' => 'config/jwt']);
+        } finally {
+            chdir($previous);
+        }
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertFileExists(self::$directory . '/config/jwt/relative.private.pem');
+
+        $configuration = self::snippet($tester->getDisplay());
+
+        self::assertSame('%kernel.project_dir%/config/jwt/relative.private.pem', $configuration['keys']['relative']['pem_private']);
+        self::assertSame('%kernel.project_dir%/config/jwt/relative.public.pem', $configuration['keys']['relative']['pem_public']);
+    }
+
+    #[TestDox('the printed paths are anchored even when nothing was written')]
+    public function testPrintedKeyIsAnchoredToo(): void
+    {
+        $tester = self::generate(['algorithm' => 'ES256', '--name' => 'printed']);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('-----BEGIN', $tester->getDisplay());
+
+        $configuration = self::snippet($tester->getDisplay());
+
+        self::assertSame('%kernel.project_dir%/config/jwt/printed.private.pem', $configuration['keys']['printed']['pem_private']);
+    }
+
+    #[TestDox('an option the algorithm cannot use is refused rather than quietly ignored')]
+    public function testUnusableOptions(): void
+    {
+        $secretAsJwk = self::generate(['algorithm' => 'HS256', '--format' => 'jwk']);
+
+        self::assertSame(Command::INVALID, $secretAsJwk->getStatusCode());
+        self::assertStringContainsString('--format applies to key pairs', $secretAsJwk->getDisplay());
+
+        $curveWithBits = self::generate(['algorithm' => 'ES256', '--bits' => '4096', '--out' => self::$directory]);
+
+        self::assertSame(Command::INVALID, $curveWithBits->getStatusCode());
+        self::assertStringContainsString('--bits sizes an RSA modulus', $curveWithBits->getDisplay());
+    }
+
+    #[TestDox('the public half is refused as firmly as the private one, and nothing is left behind')]
+    public function testPublicHalfIsAlsoNeverReplaced(): void
+    {
+        $path = self::$directory . '/half.public.pem';
+        file_put_contents($path, 'someone else was here');
+
+        $tester = self::generate(['algorithm' => 'ES256', '--name' => 'half', '--out' => self::$directory]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('already exists', $tester->getDisplay());
+        self::assertSame('someone else was here', file_get_contents($path));
+        self::assertFileDoesNotExist(self::$directory . '/half.private.pem');
     }
 
     #[TestDox('the private half is written for its owner only')]

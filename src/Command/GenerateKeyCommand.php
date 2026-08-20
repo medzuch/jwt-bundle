@@ -96,6 +96,18 @@ final class GenerateKeyCommand extends Command
         try {
             $family = SigningAlgorithms::familyOf($algorithm);
 
+            // An option the algorithm cannot use is refused rather than
+            // ignored. The alternative — accepting it quietly — teaches that
+            // --format was considered, which is exactly wrong for the reader
+            // who passed --format=jwk expecting a JWK.
+            $unusable = self::unusableOption($input, $algorithm, $family);
+
+            if (null !== $unusable) {
+                $io->error($unusable);
+
+                return Command::INVALID;
+            }
+
             if (SigningAlgorithms::FAMILY_HMAC === $family) {
                 return $this->generateSecret($io, $algorithm, $name, $kid, $out);
             }
@@ -106,9 +118,13 @@ final class GenerateKeyCommand extends Command
                 return Command::INVALID;
             }
 
+            // Only an RSA modulus has a size to give, so only there is --bits
+            // read at all; every other algorithm has already refused it above.
+            $bits = SigningAlgorithms::FAMILY_RSA === $family ? self::bits($input) : 0;
+
             $material = self::FORMAT_JWK === $format
-                ? $this->jwkPair($algorithm, $kid, self::bits($input))
-                : $this->pemPair($algorithm, self::bits($input));
+                ? $this->jwkPair($algorithm, $kid, $bits)
+                : $this->pemPair($algorithm, $bits);
 
             return $this->emitPair($io, $material, $algorithm, $name, $kid, $format, $out);
         } catch (\RuntimeException $failure) {
@@ -165,8 +181,8 @@ final class GenerateKeyCommand extends Command
             }
 
             $written = [
-                'private' => sprintf('%s/%s.private.%s', 'config/jwt', $name, $extension),
-                'public' => sprintf('%s/%s.public.%s', 'config/jwt', $name, $extension),
+                'private' => sprintf('config/jwt/%s.private.%s', $name, $extension),
+                'public' => sprintf('config/jwt/%s.public.%s', $name, $extension),
             ];
             $io->note('The configuration below assumes you save them under config/jwt.');
         } else {
@@ -176,8 +192,8 @@ final class GenerateKeyCommand extends Command
         }
 
         $this->configuration($io, $name, $algorithm, $kid, [
-            $sources[0] => sprintf("'%s'", $written['private']),
-            $sources[1] => sprintf("'%s'", $written['public']),
+            $sources[0] => sprintf("'%s'", self::configuredPath($written['private'])),
+            $sources[1] => sprintf("'%s'", self::configuredPath($written['public'])),
         ]);
 
         return Command::SUCCESS;
@@ -190,7 +206,10 @@ final class GenerateKeyCommand extends Command
      */
     private function write(string $directory, string $name, string $extension, array $material): array
     {
-        if (!is_dir($directory) && !@mkdir($directory, 0o755, true) && !is_dir($directory)) {
+        // 0700, not 0755: the file mode already says the material is nobody
+        // else's business, and a listable directory hands out the key names and
+        // the kids in them for free.
+        if (!is_dir($directory) && !@mkdir($directory, 0o700, true) && !is_dir($directory)) {
             throw new \RuntimeException(sprintf('Cannot create the directory "%s".', $directory));
         }
 
@@ -199,33 +218,69 @@ final class GenerateKeyCommand extends Command
             'public' => sprintf('%s/%s.public.%s', rtrim($directory, '/'), $name, $extension),
         ];
 
+        // Fails before the first file is created, so a run refused for the
+        // second half leaves nothing behind.
         foreach ($paths as $path) {
-            if (file_exists($path)) {
-                throw new \RuntimeException(sprintf('"%s" already exists. Refusing to replace a key: every token signed with the old one stops verifying the moment it is gone.', $path));
-            }
+            self::assertAbsent($path);
         }
 
-        foreach ($paths as $half => $path) {
-            // The private half is created unreadable to anyone else before it
-            // holds anything: writing first and chmod-ing after leaves a window
-            // in which the key is world-readable.
-            if ('private' === $half) {
-                $handle = @fopen($path, 'x');
+        $created = [];
 
-                if (false === $handle) {
-                    throw new \RuntimeException(sprintf('Cannot write "%s".', $path));
-                }
-
-                fclose($handle);
-                chmod($path, 0o600);
+        try {
+            foreach ($paths as $half => $path) {
+                $created[] = $path;
+                $this->writeHalf($path, $material[$half], 'private' === $half);
+            }
+        } catch (\RuntimeException $failure) {
+            foreach ($created as $leftover) {
+                @unlink($leftover);
             }
 
-            if (false === @file_put_contents($path, $material[$half])) {
-                throw new \RuntimeException(sprintf('Cannot write "%s".', $path));
-            }
+            throw $failure;
         }
 
         return $paths;
+    }
+
+    /**
+     * Exclusive creation is the guarantee, for both halves: the check above
+     * only buys a better message, and between it and a plain write anything can
+     * appear at the path — a symlink included, which a write would follow.
+     */
+    private function writeHalf(string $path, string $material, bool $restricted): void
+    {
+        $handle = @fopen($path, 'x');
+
+        if (false === $handle) {
+            self::assertAbsent($path);
+
+            throw new \RuntimeException(sprintf('Cannot write "%s".', $path));
+        }
+
+        try {
+            // Narrowed before it holds anything: writing first and chmod-ing
+            // after leaves a window in which the key is world-readable. A
+            // filesystem that cannot honour the mode — a CIFS or overlay mount
+            // — is a refusal, not a private key with default permissions.
+            if ($restricted && !@chmod($path, 0o600)) {
+                throw new \RuntimeException(sprintf('Cannot restrict "%s" to its owner, so the private key is not written. This filesystem does not carry Unix permissions.', $path));
+            }
+
+            $written = fwrite($handle, $material);
+
+            if (false === $written || strlen($material) !== $written) {
+                throw new \RuntimeException(sprintf('Cannot write "%s".', $path));
+            }
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    private static function assertAbsent(string $path): void
+    {
+        if (file_exists($path)) {
+            throw new \RuntimeException(sprintf('"%s" already exists. Refusing to replace a key: every token signed with the old one stops verifying the moment it is gone.', $path));
+        }
     }
 
     /**
@@ -340,6 +395,45 @@ final class GenerateKeyCommand extends Command
         if (null === $kid) {
             $io->note('No kid: rotation needs one, because a token cannot say which of two keys on the same algorithm signed it. Re-run with --kid to bind one.');
         }
+    }
+
+    /**
+     * The option this algorithm has no use for, if one was passed. Only an
+     * option actually given counts: the defaults are what every run carries.
+     */
+    private static function unusableOption(InputInterface $input, string $algorithm, string $family): ?string
+    {
+        if (SigningAlgorithms::FAMILY_HMAC === $family && $input->hasParameterOption(['--format'])) {
+            return sprintf('%s takes a shared secret, which has neither a PEM nor a JWK form here. --format applies to key pairs.', $algorithm);
+        }
+
+        if (SigningAlgorithms::FAMILY_RSA !== $family && $input->hasParameterOption(['--bits'])) {
+            return sprintf('--bits sizes an RSA modulus, and %s has none: %s.', $algorithm, SigningAlgorithms::FAMILY_HMAC === $family
+                ? 'the length of a shared secret follows from the algorithm (RFC 8725 §3.5)'
+                : 'its curve is the one the algorithm names');
+        }
+
+        return null;
+    }
+
+    /**
+     * What the key path looks like in the configuration.
+     *
+     * A relative --out is relative to where the console was run, which is the
+     * project directory. The container reads the key when the key service is
+     * first built, in whatever process and working directory that happens to be
+     * — php-fpm's, a worker's — so a relative path copied into the
+     * configuration works locally and fails on the first request that signs.
+     */
+    private static function configuredPath(string $path): string
+    {
+        return self::isAbsolute($path) ? $path : '%kernel.project_dir%/' . $path;
+    }
+
+    private static function isAbsolute(string $path): bool
+    {
+        return '' !== $path
+            && ('/' === $path[0] || '\\' === $path[0] || 1 === preg_match('#^[a-zA-Z]:[\\\\/]#', $path));
     }
 
     private static function environmentVariable(string $name): string

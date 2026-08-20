@@ -26,10 +26,12 @@ a class or method signature would be.
   belongs — the document people have on hand, since it is what a JWKS endpoint serves.
 - **`jwt:key:generate`.** Generates an HMAC secret, an RSA or EC keypair in PEM or JWK,
   or an Ed25519 keypair, and prints the `medzuch_jwt` block that uses it — which source
-  the material belongs in, both halves, and the `kid` in place. `--out` writes the files
-  instead of printing them: the private half readable only by its owner, and neither half
-  ever overwritten, because a key file replaced in place invalidates every token still in
-  flight. A shared secret is printed as an environment line rather than written, since
+  the material belongs in, both halves, and the `kid` in place. Key paths in that block
+  are anchored to `%kernel.project_dir%`, because the key is read when the key service is
+  first built, in whatever working directory that process has. `--out` writes the files
+  instead of printing them: into a `0700` directory, the private half `0600` and created
+  before it holds anything, and neither half ever overwritten, because a key file replaced
+  in place invalidates every token still in flight. A shared secret is printed as an environment line rather than written, since
   that is where the `hmac` source reads it. The command is registered only when
   `symfony/console` is installed, so a container without one still builds.
 - **A JWK Set endpoint.** `medzuch_jwt.jwks` names the keys to publish and
