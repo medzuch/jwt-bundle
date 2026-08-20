@@ -29,8 +29,15 @@ final class ReadmeExamplesTest extends KernelTestCase
 {
     use RestoresExceptionHandler;
 
-    /** The README names a Monolog channel, which an application provides. */
-    private const APPLICATION_SERVICES = ['monolog.logger.jwt' => 'test.logger'];
+    /**
+     * Service ids the README names because an application has them: a Monolog
+     * channel, Symfony's PSR-18 client, and the default cache pool.
+     */
+    private const APPLICATION_SERVICES = [
+        'monolog.logger.jwt' => 'test.logger',
+        'psr18.http_client' => 'test.http_client',
+        'cache.app' => 'test.cache_pool',
+    ];
 
     /**
      * @param array<array-key, mixed> $options
@@ -99,6 +106,14 @@ final class ReadmeExamplesTest extends KernelTestCase
                 foreach ($prefixes as $prefix) {
                     $ids[] = sprintf('medzuch_jwt.%s.%s', $prefix, $name);
                 }
+            }
+        }
+
+        $sets = $configuration['remote_jwks'] ?? [];
+
+        if (is_array($sets)) {
+            foreach (array_keys($sets) as $set) {
+                $ids[] = sprintf('medzuch_jwt.remote_jwks.%s', $set);
             }
         }
 

@@ -14,7 +14,8 @@
 > **Status.** v0.2.0 released. Phases 0, 1 and 2 of §7 are shipped: PEM and JWK
 > key sources, named keys and rotation, the JWKS publisher and
 > `jwt:key:generate`. EdDSA works end to end, since the JWK source is the only
-> one RFC 8037 gives it. Next is Phase 3 (remote JWKS).
+> one RFC 8037 gives it. Phase 3 is under way: K5 and K6 — remote JWK Sets with
+> local fallback — are in, C6 (ID tokens) and C14 remain.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -231,8 +232,8 @@ default and adds no runtime cost when unconfigured.
 | K2 | Named key registry with `kid`, so config refers to keys by name | `JwkSet`, `KeyResolver` | T2 |
 | K3 | Rotation: an issuer signs with one key, a consumer accepts several; rotating = adding a key, accepting it, then signing with it, no downtime. Needs no `active` flag — `issuers.<name>.key` already says which key is active, and a second spelling could disagree with it | `StaticJwkSetResolver` | T2 |
 | K4 | JWKS publisher exposing public keys only, with cache headers and an `ETag`; the application routes to it (DEC-6). Publishing a symmetric key is refused at container build | `JwkSet::toArray()` + controller | T2 |
-| K5 | Remote JWKS consumption (`jwks_uri`) with PSR-18 client + PSR-16 cache, HTTPS-only, bounded body, throttled refresh-on-miss | `RemoteJwksResolver` (already implemented in the library) | T2 |
-| K6 | Composite resolution: remote JWKS with local fallback so an IdP outage doesn't break verification of still-valid keys | `CompositeResolver` | T2 |
+| K5 | Remote JWKS consumption (`jwks_uri`) with PSR-18 client + PSR-16 cache, HTTPS-only, bounded body, throttled refresh-on-miss. Named at the top level, so two consumers of one issuer share a cache entry and a refresh window | `RemoteJwksResolver` (already implemented in the library) | T2 |
+| K6 | Composite resolution: remote JWKS with local fallback so an IdP outage doesn't break verification of still-valid keys. Local first, so the common path is not a round trip | `CompositeResolver` | T2 |
 | K7 | OIDC discovery: fetch `jwks_uri` (and issuer metadata) from `/.well-known/openid-configuration` instead of hard-coding it | bundle + PSR-18 | T3 |
 | K8 | Publish an issuer discovery document for apps acting as an OP/AS (RFC 8414) | bundle controller | T3 |
 | K9 | Key material never appears in the profiler, logs, exception messages, or `debug:container` parameter dumps | bundle hardening | T1 |
@@ -500,7 +501,11 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   deliberately not there — see the row — and Symfony Secrets need no source of
   their own, since a secret reaches `hmac` as an env reference either way.)*
 - **Phase 3 — Federation (v0.3).** K5–K6, C6, C14: remote JWKS with cache and
-  fallback, ID-token consumer, OIDC-RP quickstart, audience lists.
+  fallback, ID-token consumer, OIDC-RP quickstart, audience lists. *(K5 and K6
+  shipped; C6 and C14 remain. The build-time check that every allowed algorithm
+  has a key behind it is suspended for a consumer with a remote set — the issuer
+  publishes its algorithms at runtime, which is the "own reading of satisfied"
+  the K5 row always implied.)*
 - **Phase 4 — DX & hardening (v0.4 → v1.0).** C4, C5, C9, C13, I2–I4,
   O2–O5, D1–D5, D7: user modes, role mapping, extractors, denylist, scope
   voter, claim providers, events, profiler panel, console commands, test

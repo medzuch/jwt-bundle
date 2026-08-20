@@ -11,6 +11,35 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+### Added
+
+- **Remote JWK Sets (K5).** A consumer can verify against an issuer's published keys
+  instead of keys configured here: `remote_jwks.<name>.uri` is fetched through a PSR-18
+  client, cached through PSR-16, and referenced by `consumers.<name>.remote_jwks`. Keys
+  the issuer rotates to are picked up without a deploy. The defaults name Symfony's own
+  services — `psr18.http_client` and `cache.app`, the latter wrapped for the PSR-16
+  interface the resolver takes — so an application with `framework.http_client` enabled
+  configures a URI and nothing else. HTTPS only, and a plaintext URI written literally is
+  refused at container build rather than when the first token arrives. Responses are
+  bounded (256 KB by default), the document is cached (`cache_ttl`, 300s), and a token
+  naming an unknown `kid` buys at most one refetch per `min_refresh` (60s), so tokens
+  bearing kids nobody published cannot be amplified into a fetch storm against the issuer.
+- **Local keys and a remote set together (K6).** Name both and the local keys are tried
+  first: a key already configured is never a round trip, and an unreachable issuer cannot
+  stop tokens signed with keys this application holds. A key the issuer has rotated to
+  falls through to the fetched set. There is no failover mode to configure and nothing
+  that behaves differently on the day the identity provider is down.
+
+### Changed
+
+- **`consumers.<name>.keys` is no longer required**, since a consumer may verify entirely
+  against a remote set. A consumer with neither `keys` nor `remote_jwks` is refused, with
+  a message naming both.
+- **With a remote set configured, the "every allowed algorithm has a key" check is not
+  made.** The issuer publishes their algorithms at runtime and may rotate to one this
+  application has never seen, so the question has no build-time answer. Without a remote
+  set the check is unchanged.
+
 ## [0.2.0] — 2026-08-20
 
 Phase 2 of the roadmap in [`docs/plan.md`](docs/plan.md): keys stop being one

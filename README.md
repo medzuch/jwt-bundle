@@ -418,6 +418,80 @@ Only verification halves are published, and **a shared secret is refused at cont
 symmetric key's JWK carries the secret itself, so publishing it would hand every reader the key
 that signs, in a document that parses perfectly and returns 200.
 
+## Verifying against an issuer's published keys
+
+A resource server that verifies someone else's tokens — an identity provider's, a partner's —
+does not have to be redeployed every time they rotate. Point a consumer at their `jwks_uri` and
+the keys are fetched and cached:
+
+```yaml
+medzuch_jwt:
+    remote_jwks:
+        partner_idp:
+            uri: 'https://idp.example.com/.well-known/jwks.json'
+            cache_ttl: 300          # seconds the document is cached
+            min_refresh: 60         # shortest interval between refetches on an unknown kid
+
+    consumers:
+        partner:
+            issuer: 'https://idp.example.com'
+            audience: '%env(APP_URL)%'
+            remote_jwks: partner_idp
+            allowed_algorithms: [RS256]
+```
+
+The defaults name Symfony's own services: `psr18.http_client` for the client and `cache.app`
+for the cache pool, which is wrapped for the PSR-16 interface the resolver takes. Install
+`symfony/http-client` and `psr/http-client` and both are there; name your own with
+`http_client`, `request_factory`, `cache_pool` or `cache` if they are not.
+
+**Connection and read timeouts belong to the client.** This bundle cannot impose a socket
+timeout on one it does not own, and an identity provider that accepts connections but never
+answers is the outage that hurts most — configure `framework.http_client` accordingly.
+
+What the fetching does and does not do:
+
+- **HTTPS only.** A plaintext `uri` is refused. Verification keys taken from a channel an
+  attacker can rewrite are not verification keys (RFC 8725 §3.10), and a token's own `jku` is
+  never followed.
+- **Cached, and refetched sparingly.** The common path touches no network. A token naming a
+  `kid` the cached set lacks buys one refetch — the issuer may have rotated — but no more often
+  than `min_refresh`, so tokens bearing kids nobody ever published cannot be amplified into a
+  fetch storm against the issuer.
+- **Bounded.** A response over `max_body_bytes` (256 KB by default) is refused before it is
+  parsed.
+
+### Surviving an outage
+
+Name local keys *and* a remote set, and the local ones are tried first:
+
+```yaml
+medzuch_jwt:
+    keys:
+        partner_2026: { pem_public: '…/partner-2026.pub.pem', algorithm: RS256, kid: '2026-01' }
+
+    remote_jwks:
+        partner_idp:
+            uri: 'https://idp.example.com/.well-known/jwks.json'
+
+    consumers:
+        partner:
+            issuer: 'https://idp.example.com'
+            audience: '%env(APP_URL)%'
+            keys: [partner_2026]
+            remote_jwks: partner_idp
+            allowed_algorithms: [RS256]
+```
+
+A token signed with the key you already hold verifies without a round trip, and keeps verifying
+while the issuer is unreachable. A token signed with a key they have rotated to since falls
+through to the fetched set. That is the whole of it: no failover mode to configure, and nothing
+that behaves differently on the day the identity provider is down.
+
+With a remote set configured, the build-time check that every allowed algorithm has a key
+behind it is not made — the issuer publishes their algorithms at runtime and may rotate to one
+this application has never seen, so the question has no answer while the container is built.
+
 ## Configuration reference
 
 The complete tree, with every option, default and explanation, is generated from the bundle

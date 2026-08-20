@@ -7,6 +7,7 @@ namespace Medzuch\JwtBundle\Tests\Functional\App;
 use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
+use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Config\Loader\LoaderInterface;
 use Symfony\Component\DependencyInjection\Compiler\PassConfig;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -50,6 +51,13 @@ final class TestKernel extends Kernel
             $container->loadFromExtension('medzuch_jwt', $this->bundleConfig);
 
             $container->register('test.logger', CollectingLogger::class)->setPublic(true);
+
+            // An identity provider and a cache the tests can interrogate. They
+            // cost nothing to the tests that ignore them, and a remote JWK Set
+            // cannot be exercised without both.
+            $container->register('test.http_client', StubHttpClient::class)->setPublic(true);
+            $container->register('test.cache', ArrayCache::class)->setPublic(true);
+            $container->register('test.cache_pool', ArrayAdapter::class)->setPublic(true);
 
             foreach ($this->aliases as $id => $target) {
                 $container->setAlias($id, $target);
