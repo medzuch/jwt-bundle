@@ -11,9 +11,10 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** v0.1.0 released. Phases 0 and 1 of §7 are shipped, and so is most
-> of Phase 2: PEM key sources, rotation and the JWKS publisher. JWK sources —
-> and with them EdDSA — and the key-generation command remain.
+> **Status.** v0.1.0 released. Phases 0 and 1 of §7 are shipped, and so is
+> Phase 2: PEM and JWK key sources, rotation, the JWKS publisher and
+> `jwt:key:generate`. EdDSA works end to end, since the JWK source is the only
+> one RFC 8037 gives it. Next is Phase 3 (remote JWKS).
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -83,7 +84,7 @@ jwt-bundle/
 │   ├── Key/                       # key source loaders, key registry, rotation
 │   ├── Jwks/                      # JWKS publisher controller + remote JWKS wiring
 │   ├── Event/                     # dispatched events
-│   ├── Command/                   # console commands
+│   ├── Command/                   # console commands (jwt:key:generate)
 │   ├── DataCollector/             # profiler panel
 │   └── Test/                      # test helpers shipped to consumers
 ├── config/
@@ -226,7 +227,7 @@ default and adds no runtime cost when unconfigured.
 
 | # | Capability | Backed by | Tier |
 |---|---|---|---|
-| K1 | Key sources: inline/env secret, base64 secret, PEM file, JWK file, JWKS file, Symfony Secrets vault, custom service | `HmacKey`, `RsaPrivateKey::fromPem()`, `JwkParser`, `JwkSet` | T1 (env secret), T2 (rest) |
+| K1 | Key sources: inline/env secret, base64 secret, PEM file, JWK file, Symfony Secrets vault, custom service. A whole **JWKS file** is not one: a set says nothing at build time about which keys a consumer can verify with or which two a token could not tell apart, and consuming a set is what K5 does over HTTP | `HmacKey`, `RsaPrivateKey::fromPem()`, `JwkParser`, `JwkSet` | T1 (env secret), T2 (rest) |
 | K2 | Named key registry with `kid`, so config refers to keys by name | `JwkSet`, `KeyResolver` | T2 |
 | K3 | Rotation: an issuer signs with one key, a consumer accepts several; rotating = adding a key, accepting it, then signing with it, no downtime. Needs no `active` flag — `issuers.<name>.key` already says which key is active, and a second spelling could disagree with it | `StaticJwkSetResolver` | T2 |
 | K4 | JWKS publisher exposing public keys only, with cache headers and an `ETag`; the application routes to it (DEC-6). Publishing a symmetric key is refused at container build | `JwkSet::toArray()` + controller | T2 |
@@ -252,7 +253,7 @@ default and adds no runtime cost when unconfigured.
 |---|---|---|
 | D1 | `jwt:token:create` — mint a token from CLI for local testing (subject, audience, scopes, TTL, named issuer) | T2 |
 | D2 | `jwt:token:inspect` — decode and verify a token, printing header/claims/verdict with human-readable failure reasons | T2 |
-| D3 | `jwt:key:generate` — generate HMAC secret / RSA / EC / OKP keypair in PEM or JWK, with `kid` | T2 |
+| D3 | `jwt:key:generate` — generate HMAC secret / RSA / EC / OKP keypair in PEM or JWK, with `kid`, and print the configuration that uses it. Refuses to overwrite a key file and writes the private half 0600 | T2 |
 | D4 | `jwt:jwks:dump` — print the public JWK Set (what K4 would serve) | T2 |
 | D5 | Test helpers shipped in `src/Test/`: a `TestTokenFactory` for functional tests, assertion helpers, a frozen-clock service alias for time-travel tests | T2 |
 | D6 | Flex recipe: registers the bundle, writes a starter `config/packages/medzuch_jwt.yaml` and `.env` entries | T3 |
@@ -493,11 +494,11 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   `max_token_age` are the T2 half and stay in Phase 4.)*
 - **Phase 2 — Keys & rotation (v0.2).** K1–K4, K9: PEM/JWK sources, named keys,
   `kid` selection, active/accepted split, JWKS publisher, `jwt:key:generate`,
-  RS256/ES256/EdDSA support end to end. *(PEM sources, rotation and the JWKS
-  publisher shipped; JWK sources — and with them EdDSA — and the key-generation
-  command remain. The active/accepted split needed no `active` flag: an issuer
-  names one key and a consumer names several, which is the same thing said
-  once instead of twice.)*
+  RS256/ES256/EdDSA support end to end. *(Shipped. The active/accepted split
+  needed no `active` flag: an issuer names one key and a consumer names several,
+  which is the same thing said once instead of twice. K1's JWKS-file source is
+  deliberately not there — see the row — and Symfony Secrets need no source of
+  their own, since a secret reaches `hmac` as an env reference either way.)*
 - **Phase 3 — Federation (v0.3).** K5–K6, C6, C14: remote JWKS with cache and
   fallback, ID-token consumer, OIDC-RP quickstart, audience lists.
 - **Phase 4 — DX & hardening (v0.4 → v1.0).** C4, C5, C9, C13, I2–I4,
@@ -631,6 +632,21 @@ have needed a `path` key and an `enabled` key to answer questions the
 application's own routing already answers, and an imported route file that
 disagrees with `enabled` is a failure mode with no upside. The cost is three
 lines of YAML in the application, which is what any other controller costs.
+
+**DEC-7 — a JWK and the configuration pointing at it must agree.** A JWK states
+its own `alg`, `kid` and `use`; the configuration states them too, because
+`keys.<name>.algorithm` and `.kid` are what the container is built from — which
+algorithms a consumer can verify (K1), which two keys a token could not tell
+apart (DEC-5), whether a key has a half to publish (K4). The document is read
+when the key is first built (K9), long after those answers were given. So the
+configuration is authoritative for what the bundle reasons about, the document
+is authoritative for the material, and where the document is silent the
+configuration fills it in; a disagreement is refused, naming both readings.
+The rejected alternative was letting the document win: it would make every
+build-time answer describe a key other than the one signing, and it would let a
+`kid` nobody configured appear in a published JWK Set. Reopen if a key source
+arrives whose documents cannot be re-stated in configuration — a remote JWKS
+(K5) is exactly that, and it is resolved at runtime for the same reason.
 
 ---
 

@@ -16,9 +16,10 @@ use Symfony\Component\HttpKernel\KernelInterface;
 /**
  * The published document, over HTTP, through the application's own route.
  *
- * The fixture publishes one RSA and one EC key, so the "no private material"
- * scan means something for both families rather than for the one that happens
- * to be everywhere else in this suite.
+ * The fixture publishes an RSA, an EC and an Ed25519 key — the last one from a
+ * JWK source, which is the only spelling EdDSA has — so the "no private
+ * material" scan means something for every family the bundle can publish
+ * rather than for the one that happens to be everywhere else in this suite.
  */
 #[CoversClass(JwksController::class)]
 final class JwksEndpointTest extends WebTestCase
@@ -64,13 +65,13 @@ final class JwksEndpointTest extends WebTestCase
     {
         $keys = self::document(self::createClient());
 
-        self::assertCount(2, $keys);
+        self::assertCount(3, $keys);
 
         foreach ($keys as $jwk) {
             self::assertIsArray($jwk);
             self::assertSame('sig', $jwk['use'] ?? null, 'a verification key should say what it is for (RFC 7517 §4.2)');
-            self::assertContains($jwk['kid'] ?? null, ['rsa-2026', 'ec-2026']);
-            self::assertContains($jwk['alg'] ?? null, ['RS256', 'ES256']);
+            self::assertContains($jwk['kid'] ?? null, ['rsa-2026', 'ec-2026', 'ed-2026']);
+            self::assertContains($jwk['alg'] ?? null, ['RS256', 'ES256', 'EdDSA']);
         }
     }
 
@@ -142,13 +143,15 @@ final class JwksEndpointTest extends WebTestCase
     {
         $rsa = self::keypair('rsa');
         $ec = self::keypair('ec', ['private_key_type' => \OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+        $ed = self::ed25519Jwks('ed-2026');
 
         return [
             'keys' => [
                 'rsa' => ['pem_public' => $rsa['public'], 'algorithm' => 'RS256', 'kid' => 'rsa-2026'],
                 'ec' => ['pem_public' => $ec['public'], 'algorithm' => 'ES256', 'kid' => 'ec-2026'],
+                'ed' => ['jwk_public' => $ed['public'], 'algorithm' => 'EdDSA', 'kid' => 'ed-2026'],
             ],
-            'jwks' => ['keys' => ['rsa', 'ec'], 'cache_max_age' => self::MAX_AGE],
+            'jwks' => ['keys' => ['rsa', 'ec', 'ed'], 'cache_max_age' => self::MAX_AGE],
         ];
     }
 }

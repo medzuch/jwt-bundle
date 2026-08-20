@@ -198,7 +198,9 @@ medzuch_jwt:
 ## Keys
 
 A key is bound to exactly one algorithm, and the algorithm decides what material it must be
-given: a shared secret for `HS*`, a PEM for `RS*` and `ES*`.
+given: a shared secret for `HS*`, a PEM or a JWK for `RS*` and `ES*`, a JWK for `EdDSA`.
+
+`bin/console jwt:key:generate` writes any of them and prints the configuration that uses it.
 
 ### Shared secrets
 
@@ -245,7 +247,8 @@ medzuch_jwt:
             allowed_algorithms: [RS256]
 ```
 
-Generate a keypair with:
+Generate a keypair with `bin/console jwt:key:generate RS256 --kid 2026-08 --out config/jwt`,
+which also prints the block above with the paths filled in, or by hand:
 
 ```bash
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out config/jwt/private.pem
@@ -255,9 +258,66 @@ openssl pkey -in config/jwt/private.pem -pubout -out config/jwt/public.pem
 A resource server verifying someone else's tokens configures only the public half. An
 authorization server that does not verify its own tokens configures only the private one.
 
-`EdDSA` is listed as an algorithm but has no key source yet: Ed25519 has no PEM representation
-in the library, and a JWK source is planned. Configuring it says so rather than failing
-obscurely.
+### JWK keys, and EdDSA
+
+A key can be given as a JWK instead of a PEM — a path to a JSON file or the JSON itself:
+
+```yaml
+medzuch_jwt:
+    keys:
+        signing:
+            jwk_private: '%kernel.project_dir%/config/jwt/signing.private.jwk.json'
+            algorithm: EdDSA
+            kid: '2026-08'
+        verifying:
+            jwk_public: '%kernel.project_dir%/config/jwt/signing.public.jwk.json'
+            algorithm: EdDSA
+            kid: '2026-08'
+```
+
+**`EdDSA` is configured this way and no other.** RFC 8037 defines Ed25519 as a JWK, and there is
+no PEM spelling of it to read; a key bound to `EdDSA` with a `pem_*` source is refused at
+container build, saying which source it takes.
+
+A JWK states its own `alg`, `kid` and `use`, and so does the configuration pointing at it. The
+two have to agree. What the configuration states and the document leaves out is filled in — a
+`kid` in the configuration binds a document that carries none — but a disagreement is refused
+when the key is loaded, naming both readings. The configuration is what the container was built
+from: which algorithms a consumer can verify and which keys a token can tell apart are answered
+from it, and a document that quietly said something else would make those answers describe a
+different key than the one signing.
+
+Two refusals worth knowing, because both would otherwise be silent:
+
+- a document carrying `d` behind `jwk_public` — that is the private half, and the JWKS endpoint
+  would publish it verbatim, in a document that parses and returns 200;
+- a **JWK Set** where a key belongs. It is the document people have on hand, since it is what a
+  JWKS endpoint serves, so it is named for what it is rather than reported as a malformed key.
+
+### Generating keys
+
+```bash
+bin/console jwt:key:generate RS256 --kid 2026-08 --out config/jwt
+bin/console jwt:key:generate EdDSA --kid 2026-08 --format jwk --out config/jwt --name signing
+bin/console jwt:key:generate HS256 --name api
+```
+
+The command writes the key and prints the `medzuch_jwt` block that uses it — which of the four
+sources it belongs in, with both halves and the `kid` already in place. Every key it emits is
+built through the same library that reads it back.
+
+A relative `--out` is anchored to `%kernel.project_dir%` in the printed block. The key is read
+when the key service is first built, in whatever working directory that process happens to have
+— php-fpm's, a worker's — so a path relative to where you ran the console would work locally and
+fail on the first request that signs.
+
+Without `--out` the material is printed instead, which puts a private key in your scrollback.
+With `--out` it is written to files: the private half readable only by its owner, and neither
+half ever overwritten — a key file replaced in place invalidates every token still in flight,
+and the second run is the one that would do it silently.
+
+A shared secret is printed as an environment line rather than written to a file, because that is
+where the `hmac` source reads it from.
 
 ### HMAC secret length
 
@@ -292,7 +352,8 @@ Rotation is a configuration move rather than a feature. An issuer signs with **o
 consumer accepts **several**, so a new key can start signing while tokens from the old one are
 still in flight:
 
-1. Add the new keypair alongside the old one, each with its own `kid`.
+1. Add the new keypair alongside the old one, each with its own `kid`
+   (`jwt:key:generate <alg> --kid <new-kid> --out config/jwt` writes it and prints the entry).
 2. Add the new public half to the consumer's `keys`. Nothing changes yet — the issuer still
    signs with the old key, and both are now accepted.
 3. Point the issuer at the new private half. New tokens carry the new `kid`; tokens minted a
@@ -392,13 +453,18 @@ looking like rejected tokens at runtime:
 - two keys in one consumer's set that a token cannot tell apart: sharing a `kid`, or sharing an
   algorithm with no `kid`
 - a key given the wrong kind of material for its algorithm — a secret for `RS256`, a PEM for
-  `HS256`, both at once, or neither
+  `HS256` or for `EdDSA`, more than one kind at once, or none
 - a consumer verifying with a private-only key, or an issuer signing with a public-only one
 - a JWK Set publishing a shared secret, a key with no public half, or a key that does not exist
 - a static claim named `iss`, `sub`, `aud`, `exp`, `nbf`, `iat` or `jti` — those are set from
   configuration or by the profile
 - a YAML map where a sequence is expected, an unknown algorithm name, leeway above the
   library's ceiling
+
+A JWK is read when the key is first built rather than when the container is compiled — the
+document stays a path or an environment reference so it never lands in the compiled container —
+so what it says is checked there: a document disagreeing with the configuration about `alg` or
+`kid`, a private JWK where the public half belongs, or a JWK Set where a key does.
 
 ## What it deliberately does not do
 

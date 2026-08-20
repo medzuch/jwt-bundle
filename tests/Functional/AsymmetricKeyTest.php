@@ -156,15 +156,24 @@ final class AsymmetricKeyTest extends KernelTestCase
         self::getContainer()->get('medzuch_jwt.key.signing');
     }
 
-    #[TestDox('the loader refuses an algorithm with no PEM representation')]
-    public function testAlgorithmWithoutPemSource(): void
+    #[TestDox('the loader refuses a shared-secret algorithm where a key pair belongs')]
+    public function testSharedSecretAlgorithmHasNoKeyPair(): void
     {
-        // Unreachable through the container, which refuses EdDSA earlier, so
-        // the belt is asserted where it actually lives.
+        // Unreachable through the container, which refuses the combination
+        // earlier, so the belt is asserted where it actually lives.
+        $this->expectException(InvalidKeyException::class);
+        $this->expectExceptionMessageMatches('/takes a shared secret, not a key pair/');
+
+        KeyLoader::signingKeyClass('HS256');
+    }
+
+    #[TestDox('the loader refuses EdDSA given a PEM: RFC 8037 defines the key as a JWK')]
+    public function testEdDsaHasNoPemRepresentation(): void
+    {
         $this->expectException(InvalidKeyException::class);
         $this->expectExceptionMessageMatches('/No PEM key source/');
 
-        KeyLoader::signingKeyClass('EdDSA');
+        KeyLoader::signingKey("-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----", 'EdDSA', null, null);
     }
 
     /**
