@@ -31,9 +31,10 @@ a class or method signature would be.
   first built, in whatever working directory that process has. `--out` writes the files
   instead of printing them: into a `0700` directory, the private half `0600` and created
   before it holds anything, and neither half ever overwritten, because a key file replaced
-  in place invalidates every token still in flight. A shared secret is printed as an environment line rather than written, since
-  that is where the `hmac` source reads it. The command is registered only when
-  `symfony/console` is installed, so a container without one still builds.
+  in place invalidates every token still in flight. A shared secret is printed as an
+  environment line rather than written, since that is where the `hmac` source reads it.
+  The command is registered only when `symfony/console` is installed, so a container
+  without one still builds.
 - **A JWK Set endpoint.** `medzuch_jwt.jwks` names the keys to publish and
   `medzuch_jwt.jwks_controller` serves them as RFC 7517 `application/jwk-set+json`,
   cacheable for a configurable time. The bundle registers **no route**: where the

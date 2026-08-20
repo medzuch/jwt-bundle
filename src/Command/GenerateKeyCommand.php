@@ -224,12 +224,16 @@ final class GenerateKeyCommand extends Command
             self::assertAbsent($path);
         }
 
+        // Each half is recorded only once it exists, and only this run can
+        // have created it: a path that failed because something was already
+        // there is the file the refusal exists to protect, and cleaning it up
+        // would delete it on the way out.
         $created = [];
 
         try {
             foreach ($paths as $half => $path) {
-                $created[] = $path;
                 $this->writeHalf($path, $material[$half], 'private' === $half);
+                $created[] = $path;
             }
         } catch (\RuntimeException $failure) {
             foreach ($created as $leftover) {
@@ -271,6 +275,13 @@ final class GenerateKeyCommand extends Command
             if (false === $written || strlen($material) !== $written) {
                 throw new \RuntimeException(sprintf('Cannot write "%s".', $path));
             }
+        } catch (\RuntimeException $failure) {
+            // Its own leftover, and unambiguously its own: exclusive creation
+            // is what put the file here, so a half-written private key does not
+            // outlive the run that failed to finish it.
+            @unlink($path);
+
+            throw $failure;
         } finally {
             fclose($handle);
         }
