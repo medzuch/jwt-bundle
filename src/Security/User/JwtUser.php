@@ -67,6 +67,13 @@ final class JwtUser implements UserInterface
      * verified, and holds no credential. Declared because Symfony 6.4 and 7.4
      * require it; 8.0 dropped it from the interface, where it is simply an
      * extra method.
+     *
+     * The attribute is how 7.3+ is told the implementation is empty rather
+     * than forgotten — `AuthenticatorManager` looks for it by name and skips
+     * the deprecation. `\Deprecated` is a PHP 8.4 class and this package also
+     * runs on 8.3, where nothing resolves it: the attribute is read by name
+     * through reflection and never instantiated.
      */
+    #[\Deprecated]
     public function eraseCredentials(): void {}
 }

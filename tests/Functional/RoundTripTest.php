@@ -52,7 +52,9 @@ final class RoundTripTest extends WebTestCase
         $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token->value]);
 
         self::assertResponseIsSuccessful();
-        self::assertSame(['user' => 'alice'], self::json($client));
+        // The roles are the provider's: in the default mode the token names the
+        // user and the application's store says what they may do.
+        self::assertSame(['user' => 'alice', 'roles' => ['ROLE_USER']], self::json($client));
     }
 
     #[TestDox('the same endpoint refuses a request with no token')]
@@ -130,7 +132,9 @@ final class RoundTripTest extends WebTestCase
         $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token]);
 
         self::assertResponseIsSuccessful();
-        self::assertSame(['user' => 'alice'], self::json($client));
+        // The roles are the provider's: in the default mode the token names the
+        // user and the application's store says what they may do.
+        self::assertSame(['user' => 'alice', 'roles' => ['ROLE_USER']], self::json($client));
     }
 
     private static function issuer(): AccessTokenIssuer

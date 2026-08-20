@@ -95,6 +95,19 @@ final class UserModeTest extends KernelTestCase
         yield 'a claim holding something else' => [['claim' => 'nested'], []];
     }
 
+    #[TestDox('custom mode names the user itself: the badge agrees with the user it loads')]
+    public function testCustomModeNamesTheUser(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(['mode' => 'custom', 'factory' => 'test.user_factory'])]);
+
+        $badge = self::badgeFor(self::token());
+
+        // The factory derives an identity the token carries in no single
+        // claim; a badge still named after `sub` would put two identities in
+        // the logs for one request.
+        self::assertSame('user-42@tenant-7', $badge->getUserIdentifier());
+    }
+
     #[TestDox('custom mode asks the application, and its refusal is an authentication failure')]
     public function testCustomMode(): void
     {

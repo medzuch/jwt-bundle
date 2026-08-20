@@ -21,12 +21,15 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
  */
 final class ClaimsUserResolver implements UserResolverInterface
 {
-    public function __construct(private readonly ClaimRoles $roles) {}
+    public function __construct(
+        private readonly string $identityClaim,
+        private readonly ClaimRoles $roles,
+    ) {}
 
-    public function badgeFor(string $identifier, ClaimsSet $claims): UserBadge
+    public function badgeFor(ClaimsSet $claims): UserBadge
     {
         return new UserBadge(
-            $identifier,
+            ClaimIdentity::from($claims, $this->identityClaim),
             fn(string $identifier): JwtUser => new JwtUser($identifier, $this->roles->from($claims), $claims),
         );
     }

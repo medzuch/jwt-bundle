@@ -15,8 +15,10 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
  */
 final class ProviderUserResolver implements UserResolverInterface
 {
-    public function badgeFor(string $identifier, ClaimsSet $claims): UserBadge
+    public function __construct(private readonly string $identityClaim) {}
+
+    public function badgeFor(ClaimsSet $claims): UserBadge
     {
-        return new UserBadge($identifier);
+        return new UserBadge(ClaimIdentity::from($claims, $this->identityClaim));
     }
 }

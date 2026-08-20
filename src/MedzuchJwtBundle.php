@@ -34,6 +34,7 @@ use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
+use Symfony\Component\DependencyInjection\Loader\Configurator\InlineServiceConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ServicesConfigurator;
 use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
@@ -506,7 +507,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $user->scalarNode('identity_claim')
             ->defaultValue('sub')
             ->cannotBeEmpty()
-            ->info('Claim whose value identifies the user. In "provider" mode it is what the user provider is asked for.')
+            ->info('Claim whose value identifies the user. In "provider" mode it is what the user provider is asked for; mode "custom" ignores it, because the factory names the user it builds.')
             ->end();
 
         self::declareOptionalName(
@@ -543,7 +544,7 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->end();
 
         $defaults = $roles->arrayNode('defaults');
-        $defaults->info('Roles every verified token gets, whatever it claims. A baseline like ROLE_USER, which `is_granted` can then rely on.');
+        $defaults->info('Roles every verified token gets, whatever it claims. Empty unless set: a baseline like ROLE_USER is granted only if you ask for it, and nothing invents one.');
         $defaults->scalarPrototype()->cannotBeEmpty()->end();
         $defaults->defaultValue([]);
         self::rejectMaps($defaults, 'consumers.*.user.roles.defaults');
@@ -1013,7 +1014,6 @@ final class MedzuchJwtBundle extends AbstractBundle
             $services->set('medzuch_jwt.handler.' . $name, AccessTokenHandler::class)
                 ->args([
                     service('medzuch_jwt.consumer.' . $name),
-                    $consumer['user']['identity_claim'],
                     self::userResolver($name, $consumer['user']),
                     'exclusive' === $consumer['audience_policy'] ? array_values($consumer['audience']) : null,
                 ]);
@@ -1061,12 +1061,13 @@ final class MedzuchJwtBundle extends AbstractBundle
      *
      * @param array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}} $user
      */
-    private static function userResolver(string $name, array $user): mixed
+    private static function userResolver(string $name, array $user): InlineServiceConfigurator
     {
         self::assertUserModeIsCoherent($name, $user);
 
         return match ($user['mode']) {
             'claims' => inline_service(ClaimsUserResolver::class)->args([
+                $user['identity_claim'],
                 inline_service(ClaimRoles::class)->args([
                     $user['roles']['claim'],
                     $user['roles']['separator'],
@@ -1075,7 +1076,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ]),
             ]),
             'custom' => inline_service(CustomUserResolver::class)->args([service((string) $user['factory'])]),
-            default => inline_service(ProviderUserResolver::class),
+            default => inline_service(ProviderUserResolver::class)->args([$user['identity_claim']]),
         };
     }
 

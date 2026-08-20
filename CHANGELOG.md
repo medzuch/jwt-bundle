@@ -27,9 +27,15 @@ a class or method signature would be.
   prefix and a baseline every token gets. Anything else in the claim contributes no roles
   — a value under some key is not a grant.
 
-  Options belonging to another mode are refused at container build rather than ignored: a
-  `factory` in `provider` mode, a `roles` mapping where the provider or the factory
-  decides roles, and an empty roles separator, which `explode` has no reading for.
+  An option naming another mode's answer is refused at container build rather than ignored:
+  a `factory` where nothing calls one, a `roles.claim` or `roles.defaults` where the
+  provider or the factory decides roles, and an empty roles separator, which `explode` has
+  no reading for. `roles.separator` and `roles.prefix` carry defaults, so a value set
+  outside `claims` mode cannot be told from one never written and is simply unread.
+
+  In `custom` mode the factory names the user it builds — `identity_claim` is not
+  consulted — so an identity assembled from several claims is fine and the badge cannot
+  disagree with the user it loads.
 
 ## [0.3.0] — 2026-08-20
 
