@@ -11,6 +11,19 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-20
+
+Phase 3 of the roadmap in [`docs/plan.md`](docs/plan.md): federation. Keys can now
+come from the issuer rather than from your configuration, an OIDC provider's ID
+tokens can be verified where they arrive, and a consumer can insist that a token
+was minted for it alone.
+
+**Still pre-1.0.** Configuration keys are public API and changes to them are
+recorded with a deprecation path, but the surface is young enough that it should
+be expected to move. Nothing in 0.2.0 was removed or renamed, and no default
+changed: `consumers.<name>.keys` merely stopped being mandatory, and the new
+sections are inert until configured.
+
 ### Added
 
 - **Remote JWK Sets (K5).** A consumer can verify against an issuer's published keys
@@ -244,6 +257,7 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.3.0
 [0.2.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.1.0

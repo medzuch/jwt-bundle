@@ -11,12 +11,12 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** v0.2.0 released. Phases 0, 1 and 2 of §7 are shipped: PEM and JWK
-> key sources, named keys and rotation, the JWKS publisher and
-> `jwt:key:generate`. EdDSA works end to end, since the JWK source is the only
-> one RFC 8037 gives it. Phase 3 is complete: remote JWK Sets with local
-> fallback (K5, K6), ID-token verification (C6) and the audience policy (C14).
-> v0.3.0 is next.
+> **Status.** v0.3.0 released. Phases 0 through 3 of §7 are shipped: PEM and JWK
+> key sources, named keys and rotation, the JWKS publisher, `jwt:key:generate`,
+> and federation — remote JWK Sets with local fallback (K5, K6), ID-token
+> verification (C6) and the audience policy (C14). EdDSA works end to end, since
+> the JWK source is the only one RFC 8037 gives it. Next is Phase 4 (DX and
+> hardening), which is the road to 1.0.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -502,7 +502,8 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   deliberately not there — see the row — and Symfony Secrets need no source of
   their own, since a secret reaches `hmac` as an env reference either way.)*
 - **Phase 3 — Federation (v0.3).** K5–K6, C6, C14: remote JWKS with cache and
-  fallback, ID-token consumer, OIDC-RP quickstart, audience lists. *(Shipped. The build-time check that every allowed algorithm
+  fallback, ID-token consumer, OIDC-RP quickstart, audience lists. *(Shipped in
+  v0.3.0. The build-time check that every allowed algorithm
   has a key behind it is suspended for a consumer with a remote set — the issuer
   publishes its algorithms at runtime, which is the "own reading of satisfied"
   the K5 row always implied.)*
