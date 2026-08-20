@@ -11,6 +11,26 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+### Added
+
+- **User modes `claims` and `custom` (C3), and claim-to-role mapping (C4).**
+  `consumers.<name>.user.mode` decides where the user comes from. `provider` is the
+  default and unchanged: the identifier goes to the firewall's user provider. `claims`
+  builds a `JwtUser` from the token and consults no store — the mode for a resource
+  server verifying a third party's tokens, where there is nothing to look up and a local
+  row keyed on `sub` would be a copy that goes stale. The user keeps the whole claim set,
+  so a controller reads `$this->getUser()->claims()` instead of parsing the token again.
+  `custom` hands the claims to a service implementing `JwtUserFactoryInterface`.
+
+  Roles come from a claim under `user.roles`: a list (`["staff","billing"]`) or a
+  delimited string (`scope`, space-delimited per RFC 6749 §3.3), with a configurable
+  prefix and a baseline every token gets. Anything else in the claim contributes no roles
+  — a value under some key is not a grant.
+
+  Options belonging to another mode are refused at container build rather than ignored: a
+  `factory` in `provider` mode, a `roles` mapping where the provider or the factory
+  decides roles, and an empty roles separator, which `explode` has no reading for.
+
 ## [0.3.0] — 2026-08-20
 
 Phase 3 of the roadmap in [`docs/plan.md`](docs/plan.md): federation. Keys can now

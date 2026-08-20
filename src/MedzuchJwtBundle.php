@@ -21,6 +21,11 @@ use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
+use Medzuch\JwtBundle\Security\Identity\ClaimsUserResolver;
+use Medzuch\JwtBundle\Security\Identity\CustomUserResolver;
+use Medzuch\JwtBundle\Security\Identity\ProviderUserResolver;
+use Medzuch\JwtBundle\Security\User\ClaimRoles;
+use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
 use Symfony\Component\Cache\Psr16Cache;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
@@ -83,7 +88,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
-         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
+         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          * } $config */
         $container->import('../config/services.yaml');
@@ -492,11 +497,56 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->addDefaultsIfNotSet()
             ->children();
 
+        $user->enumNode('mode')
+            ->values(['provider', 'claims', 'custom'])
+            ->defaultValue('provider')
+            ->info('Where the user comes from. "provider" asks the firewall\'s user provider, which is right when a store is the authority. "claims" builds the user from the token, which is right when the issuer is — a resource server verifying a third party\'s tokens usually has nothing to look up. "custom" hands the claims to a service of yours.')
+            ->end();
+
         $user->scalarNode('identity_claim')
             ->defaultValue('sub')
             ->cannotBeEmpty()
-            ->info('Claim whose value is handed to the user provider as the user identifier.')
+            ->info('Claim whose value identifies the user. In "provider" mode it is what the user provider is asked for.')
             ->end();
+
+        self::declareOptionalName(
+            $user,
+            'factory',
+            'Service id implementing JwtUserFactoryInterface. Required by mode "custom", and refused by the others, which have their own answer.',
+            'app.jwt_user_factory',
+        );
+
+        $roles = $user->arrayNode('roles')
+            ->addDefaultsIfNotSet()
+            ->info('How the token\'s claims become roles. Only mode "claims" reads this: a user provider brings its own roles, and a custom factory decides for itself.')
+            ->children();
+
+        self::declareOptionalName(
+            $roles,
+            'claim',
+            'Claim carrying what the token grants — "scope" (RFC 6749 §3.3), "roles", "groups" or whatever your issuer sends. A list or a delimited string; both are read.',
+            'scope',
+        );
+
+        $roles->scalarNode('separator')
+            ->defaultValue(' ')
+            ->info('Delimiter, when the claim is a string. A space is what `scope` uses. Null treats a string claim as one whole value.')
+            ->validate()
+                ->ifTrue(static fn(mixed $value): bool => '' === $value)
+                ->thenInvalid('A roles separator cannot be the empty string: splitting on nothing has no meaning. Use null to take the claim whole.')
+            ->end()
+            ->end();
+
+        $roles->scalarNode('prefix')
+            ->defaultValue('ROLE_')
+            ->info('Prepended to each value, because Symfony\'s access rules speak in ROLE_*. Set it to an empty string if your issuer already sends them prefixed.')
+            ->end();
+
+        $defaults = $roles->arrayNode('defaults');
+        $defaults->info('Roles every verified token gets, whatever it claims. A baseline like ROLE_USER, which `is_granted` can then rely on.');
+        $defaults->scalarPrototype()->cannotBeEmpty()->end();
+        $defaults->defaultValue([]);
+        self::rejectMaps($defaults, 'consumers.*.user.roles.defaults');
     }
 
     /**
@@ -937,7 +987,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
-     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}> $consumers
+     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      */
     private function registerConsumers(ServicesConfigurator $services, array $keys, array $consumers, array $sets, ?string $logger): void
@@ -964,6 +1014,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ->args([
                     service('medzuch_jwt.consumer.' . $name),
                     $consumer['user']['identity_claim'],
+                    self::userResolver($name, $consumer['user']),
                     'exclusive' === $consumer['audience_policy'] ? array_values($consumer['audience']) : null,
                 ]);
         }
@@ -1000,6 +1051,62 @@ final class MedzuchJwtBundle extends AbstractBundle
             // `IdTokenVerifier $partner` and get the registration called
             // "partner" rather than a container lookup by string.
             $builder->registerAliasForArgument($id, IdTokenVerifier::class, $name);
+        }
+    }
+
+    /**
+     * Which of the three answers to "who is this token about" this consumer
+     * gives, as one collaborator rather than a handful of nullable arguments
+     * the handler would have to interpret.
+     *
+     * @param array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}} $user
+     */
+    private static function userResolver(string $name, array $user): mixed
+    {
+        self::assertUserModeIsCoherent($name, $user);
+
+        return match ($user['mode']) {
+            'claims' => inline_service(ClaimsUserResolver::class)->args([
+                inline_service(ClaimRoles::class)->args([
+                    $user['roles']['claim'],
+                    $user['roles']['separator'],
+                    $user['roles']['prefix'],
+                    array_values($user['roles']['defaults']),
+                ]),
+            ]),
+            'custom' => inline_service(CustomUserResolver::class)->args([service((string) $user['factory'])]),
+            default => inline_service(ProviderUserResolver::class),
+        };
+    }
+
+    /**
+     * Each mode answers the question a different way, so an option belonging to
+     * one of the others is not a harmless extra: it is a statement about the
+     * user that nothing will read.
+     *
+     * @param array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}} $user
+     */
+    private static function assertUserModeIsCoherent(string $name, array $user): void
+    {
+        if ('custom' === $user['mode'] && null === $user['factory']) {
+            throw new InvalidConfigurationException(sprintf('Consumer "%s" uses user mode "custom" but names no "factory". Give the service id of a %s.', $name, JwtUserFactoryInterface::class));
+        }
+
+        if ('custom' !== $user['mode'] && null !== $user['factory']) {
+            throw new InvalidConfigurationException(sprintf('Consumer "%s" names a user "factory" but its mode is "%s", which never calls one. Set mode to "custom", or drop the factory.', $name, $user['mode']));
+        }
+
+        if ('claims' === $user['mode']) {
+            return;
+        }
+
+        if (null !== $user['roles']['claim'] || [] !== $user['roles']['defaults']) {
+            throw new InvalidConfigurationException(sprintf(
+                'Consumer "%s" maps roles from claims but its mode is "%s", where roles come from %s. Set mode to "claims", or drop the "roles" section.',
+                $name,
+                $user['mode'],
+                'provider' === $user['mode'] ? 'the user provider' : 'your factory',
+            ));
         }
     }
 
