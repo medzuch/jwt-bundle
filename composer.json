@@ -31,20 +31,29 @@
     },
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3.95",
+        "nyholm/psr7": "^1.8",
         "phpstan/phpstan": "^2.1",
         "phpstan/phpstan-deprecation-rules": "^2.0",
         "phpstan/phpstan-phpunit": "^2.0",
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpunit/phpunit": "^12.0",
+        "psr/http-client": "^1.0",
+        "psr/http-factory": "^1.0",
         "psr/log": "^3.0",
+        "psr/simple-cache": "^3.0",
         "roave/security-advisories": "dev-latest",
         "symfony/browser-kit": "^6.4 || ^7.4 || ^8.0",
+        "symfony/cache": "^6.4 || ^7.4 || ^8.0",
         "symfony/console": "^6.4 || ^7.4 || ^8.0",
         "symfony/error-handler": "^6.4 || ^7.4 || ^8.0",
         "symfony/framework-bundle": "^6.4 || ^7.4 || ^8.0",
         "symfony/routing": "^6.4 || ^7.4 || ^8.0"
     },
     "suggest": {
+        "psr/http-client": "To consume a remote JWK Set: any PSR-18 client, Symfony's psr18.http_client included",
+        "psr/http-factory": "To point a remote JWK Set at a PSR-17 request factory, when the PSR-18 client is not one itself",
+        "psr/simple-cache": "To cache a remote JWK Set through a PSR-16 service of your own",
+        "symfony/cache": "To cache a remote JWK Set through a PSR-6 pool such as cache.app, which the default wiring wraps",
         "symfony/console": "To run jwt:key:generate, which creates a key and prints the configuration for it"
     },
     "autoload": {

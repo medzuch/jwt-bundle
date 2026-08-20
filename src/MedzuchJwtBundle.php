@@ -8,6 +8,9 @@ use DateInterval;
 use Medzuch\Jwt\Jwt\ValidatorBuilder;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\JwkSet;
+use Medzuch\Jwt\Key\Resolver\CompositeResolver;
+use Medzuch\Jwt\Key\Resolver\RemoteJwksResolver;
+use Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
@@ -17,6 +20,7 @@ use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
+use Symfony\Component\Cache\Psr16Cache;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
@@ -56,6 +60,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $this->configureGlobals($children);
         $this->configureKeys($children);
+        $this->configureRemoteJwks($children);
         $this->configureIssuers($children);
         $this->configureConsumers($children);
         $this->configureJwks($children);
@@ -75,7 +80,8 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     keys: array<string, array{hmac?: string, pem_private?: string, pem_public?: string, jwk_private?: string, jwk_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}>,
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
-         *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
+         *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
+         *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
          * } $config */
         $container->import('../config/services.yaml');
 
@@ -89,8 +95,9 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $services = $container->services();
         $this->registerKeys($services, $keys);
+        $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger']);
         $this->registerIssuers($services, $keys, $config['issuers']);
-        $this->registerConsumers($services, $keys, $config['consumers'], $config['logger']);
+        $this->registerConsumers($services, $keys, $config['consumers'], $config['remote_jwks'], $config['logger']);
         $this->registerJwks($services, $keys, $config['jwks']);
         $this->registerConsoleCommands($services);
     }
@@ -199,6 +206,91 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->end();
     }
 
+    /**
+     * A key set the bundle does not hold: an issuer publishes it, the
+     * application fetches it. Named at the top level rather than spelled out
+     * inside a consumer, because two consumers of the same identity provider
+     * are the ordinary case and they should share one cache entry and one
+     * refresh window, not race each other for them.
+     */
+    private function configureRemoteJwks(NodeBuilder $children): void
+    {
+        $set = $children->arrayNode('remote_jwks')
+            ->info('Named remote JWK Sets, referenced by name from consumers.')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $set->scalarNode('uri')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('The issuer\'s `jwks_uri`. HTTPS only: fetching verification keys over a channel an attacker can rewrite defeats the point (RFC 8725 §3.10). Never taken from a token\'s `jku`.')
+            ->example('https://idp.example.com/.well-known/jwks.json')
+            ->end();
+
+        $set->scalarNode('http_client')
+            ->defaultValue('psr18.http_client')
+            ->cannotBeEmpty()
+            ->info('Service id of a PSR-18 client. Symfony registers `psr18.http_client` once `psr/http-client` is installed and `framework.http_client` is enabled. Connection and response timeouts belong to the client: this bundle cannot impose a socket timeout on one it does not own.')
+            ->end();
+
+        self::declareOptionalName(
+            $set,
+            'request_factory',
+            'Service id of a PSR-17 request factory. Null uses the client, which is right for Symfony\'s `psr18.http_client` — it is a factory as well — and wrong for a client that is not.',
+            'nyholm.psr7.psr17_factory',
+        );
+
+        self::declareOptionalName($set, 'cache_pool', 'Service id of a PSR-6 cache pool, wrapped for the PSR-16 interface the resolver takes. This is the Symfony-shaped answer: `cache.app` is a pool.', 'cache.app');
+        self::declareOptionalName($set, 'cache', 'Service id of a PSR-16 cache, used as it is. For an application that already has one; otherwise use "cache_pool".', 'app.jwks_cache');
+
+        // The library refuses zero for all three, and it is right to: a
+        // lifetime of zero is a fetch per token, and a refresh window of zero
+        // is the amplifier the window exists to prevent. `min(1)` says so here
+        // rather than letting a configuration the tree accepted fail inside a
+        // service factory.
+        $set->integerNode('cache_ttl')
+            ->defaultValue(300)
+            ->min(1)
+            ->info('Seconds the fetched document is cached. The common path never touches the network. Zero is refused: it would fetch the set for every token.')
+            ->end();
+
+        $set->integerNode('min_refresh')
+            ->defaultValue(60)
+            ->min(1)
+            ->info('Shortest interval between refetches when a token names a `kid` the cached set does not have. Without it, a stream of tokens bearing unknown kids is an amplifier pointed at the issuer.')
+            ->end();
+
+        $set->integerNode('max_body_bytes')
+            ->defaultValue(256 * 1024)
+            ->min(1)
+            ->info('Responses larger than this are refused before parsing, so a hostile or broken endpoint cannot exhaust memory.')
+            ->end();
+    }
+
+    /**
+     * An optional reference to something named elsewhere — a service id, or a
+     * name from another section.
+     *
+     * `cannotBeEmpty()` is not what these want: null is their default and
+     * their way of saying "not configured", and `cannotBeEmpty()` refuses it
+     * when written out, so `remote_jwks: ~` would fail with a message about
+     * emptiness rather than being the no-op it reads as. What is refused is a
+     * blank string, which is a name nobody meant to write.
+     */
+    private static function declareOptionalName(NodeBuilder $node, string $name, string $info, string $example): void
+    {
+        $node->scalarNode($name)
+            ->defaultNull()
+            ->info($info)
+            ->example($example)
+            ->validate()
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && '' === trim($value))
+                ->thenInvalid('medzuch_jwt.' . $name . ' cannot be blank; omit it instead. Got %s')
+            ->end()
+            ->end();
+    }
+
     private function configureIssuers(NodeBuilder $children): void
     {
         $issuer = $children->arrayNode('issuers')
@@ -303,11 +395,16 @@ final class MedzuchJwtBundle extends AbstractBundle
         self::rejectMaps($audience, 'consumers.*.audience');
 
         $keys = $consumer->arrayNode('keys');
-        $keys->info('Names from the `keys` section. Verification tries the key the token names, or the one bound to its algorithm.');
+        $keys->info('Names from the `keys` section. Verification tries the key the token names, or the one bound to its algorithm. Optional only when "remote_jwks" is given; with both, these are tried first and the network is never touched for a key already here.');
         $keys->scalarPrototype()->cannotBeEmpty()->end();
-        $keys->isRequired();
-        $keys->requiresAtLeastOneElement();
         self::rejectMaps($keys, 'consumers.*.keys');
+
+        self::declareOptionalName(
+            $consumer,
+            'remote_jwks',
+            'Name from the `remote_jwks` section: an issuer\'s published key set, fetched and cached rather than configured. Keys the issuer rotates to are picked up without a deploy.',
+            'partner_idp',
+        );
 
         $algorithms = $consumer->arrayNode('allowed_algorithms');
         $algorithms->info('JOSE `alg` values accepted. Anything else is refused before a signature is checked.');
@@ -545,6 +642,83 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
+     * One resolver per named set, so consumers of the same issuer share a
+     * cache entry and a refresh window instead of each keeping their own.
+     *
+     * Nothing is fetched while the container is built — the resolver is
+     * constructed with a URI and fetches on the first token that needs a key
+     * (K9's reasoning, extended: a build that reaches the network fails when
+     * the network does, and bakes whatever it found into the compiled
+     * container).
+     *
+     * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}> $sets
+     */
+    private function registerRemoteJwks(ServicesConfigurator $services, ContainerBuilder $builder, array $sets, ?string $logger): void
+    {
+        foreach ($sets as $name => $set) {
+            self::assertRemoteJwksIsUsable($name, $set, $builder);
+
+            $services->set('medzuch_jwt.remote_jwks.' . $name, RemoteJwksResolver::class)
+                ->args([
+                    $set['uri'],
+                    service($set['http_client']),
+                    // Symfony's PSR-18 client is a PSR-17 factory too, which is
+                    // why the default is the client itself rather than a second
+                    // service id every application would have to name.
+                    service($set['request_factory'] ?? $set['http_client']),
+                    self::cacheReference($set),
+                    service('medzuch_jwt.clock'),
+                    $set['cache_ttl'],
+                    $set['min_refresh'],
+                    $set['max_body_bytes'],
+                    null === $logger ? null : service($logger),
+                ]);
+        }
+    }
+
+    /**
+     * @param array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int} $set
+     */
+    private static function cacheReference(array $set): mixed
+    {
+        if (null !== $set['cache']) {
+            return service($set['cache']);
+        }
+
+        return inline_service(Psr16Cache::class)->args([service($set['cache_pool'] ?? 'cache.app')]);
+    }
+
+    /**
+     * @param array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int} $set
+     */
+    private static function assertRemoteJwksIsUsable(string $name, array $set, ContainerBuilder $builder): void
+    {
+        if (null !== $set['cache'] && null !== $set['cache_pool']) {
+            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" names both a PSR-16 cache and a PSR-6 pool. Give one: "cache" is used as it is, "cache_pool" is wrapped.', $name));
+        }
+
+        // The same test the library makes, in the same direction: everything
+        // that is not https is refused, rather than the one spelling of
+        // plaintext that comes to mind. "HTTP://", "ftp://" and a bare host are
+        // all not-https, and a check that named only "http://" would let each
+        // of them reach the first token before failing.
+        //
+        // A URI assembled from the environment is exempt because there is
+        // nothing to read yet: it is a placeholder until the container is
+        // compiled, and the library refuses a plaintext one when the resolver
+        // is built.
+        $builder->resolveEnvPlaceholders($set['uri'], null, $fromEnvironment);
+
+        if ([] === ($fromEnvironment ?? []) && 0 !== stripos($set['uri'], 'https://')) {
+            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" has a jwks_uri that is not https. Verification keys taken from a channel an attacker can rewrite are not verification keys (RFC 8725 §3.10). Got "%s".', $name, $set['uri']));
+        }
+
+        if (null === $set['cache'] && !class_exists(Psr16Cache::class)) {
+            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" wraps a PSR-6 pool with %s, which is not installed. Run "composer require symfony/cache", or name a PSR-16 service under "cache".', $name, Psr16Cache::class));
+        }
+    }
+
+    /**
      * A key entry names exactly one kind of material, and the algorithm decides
      * which kind it must be — an RSA algorithm cannot be given a shared secret,
      * and HS256 cannot be given a PEM. Both would fail when the key is first
@@ -695,23 +869,30 @@ final class MedzuchJwtBundle extends AbstractBundle
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
-     * @param array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}> $consumers
+     * @param array<string, array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}> $consumers
+     * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      */
-    private function registerConsumers(ServicesConfigurator $services, array $keys, array $consumers, ?string $logger): void
+    private function registerConsumers(ServicesConfigurator $services, array $keys, array $consumers, array $sets, ?string $logger): void
     {
         foreach ($consumers as $name => $consumer) {
-            $this->assertConsumerCanVerify($name, $consumer, $keys);
+            $this->assertConsumerCanVerify($name, $consumer, $keys, $sets);
 
-            $services->set('medzuch_jwt.jwk_set.' . $name, JwkSet::class)
-                ->factory([JwkSet::class, 'of'])
-                ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($consumer['keys'])));
+            // A consumer verifying only against a remote set has no local set:
+            // registering an empty one would leave a service nothing
+            // references, showing up in `debug:container` as a key set with no
+            // keys in it.
+            if ([] !== $consumer['keys']) {
+                $services->set('medzuch_jwt.jwk_set.' . $name, JwkSet::class)
+                    ->factory([JwkSet::class, 'of'])
+                    ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($consumer['keys'])));
+            }
 
             $services->set('medzuch_jwt.consumer.' . $name, AccessTokenConsumer::class)
                 ->factory([AccessTokenProfile::class, 'consumer'])
                 ->args([
                     $consumer['issuer'],
                     array_values($consumer['audience']),
-                    service('medzuch_jwt.jwk_set.' . $name),
+                    self::keySource($services, $name, $consumer),
                     array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), array_values($consumer['allowed_algorithms'])),
                     service('medzuch_jwt.clock'),
                     null === $logger ? null : service($logger),
@@ -725,11 +906,59 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
-     * @param array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}} $consumer
-     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
+     * What the consumer verifies against: the local set, the remote one, or
+     * both — and when both, the local one first, so a key already configured
+     * is never a network round trip, and an issuer outage cannot stop tokens
+     * signed with keys this application already holds (K6).
+     *
+     * A composite is only worth building when there is something to compose:
+     * with one source the resolver is that source, and the set goes to the
+     * profile as a set, which is what it does when no remote is configured at
+     * all.
+     *
+     * @param array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}} $consumer
      */
-    private function assertConsumerCanVerify(string $name, array $consumer, array $keys): void
+    private static function keySource(ServicesConfigurator $services, string $name, array $consumer): mixed
     {
+        if (null === $consumer['remote_jwks']) {
+            return service('medzuch_jwt.jwk_set.' . $name);
+        }
+
+        $remote = service('medzuch_jwt.remote_jwks.' . $consumer['remote_jwks']);
+
+        if ([] === $consumer['keys']) {
+            return $remote;
+        }
+
+        $services->set('medzuch_jwt.resolver.' . $name, CompositeResolver::class)
+            ->args([
+                inline_service(StaticJwkSetResolver::class)->args([service('medzuch_jwt.jwk_set.' . $name)]),
+                $remote,
+            ]);
+
+        return service('medzuch_jwt.resolver.' . $name);
+    }
+
+    /**
+     * @param array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}                                                                                                             $consumer
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
+     * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>                                                                                                     $sets
+     */
+    private function assertConsumerCanVerify(string $name, array $consumer, array $keys, array $sets): void
+    {
+        if ([] === $consumer['keys'] && null === $consumer['remote_jwks']) {
+            throw new InvalidConfigurationException(sprintf('Consumer "%s" has nothing to verify with: give it "keys", "remote_jwks", or both.', $name));
+        }
+
+        if (null !== $consumer['remote_jwks'] && !isset($sets[$consumer['remote_jwks']])) {
+            throw new InvalidConfigurationException(sprintf(
+                'Consumer "%s" verifies against remote JWK Set "%s", which is not defined under medzuch_jwt.remote_jwks. Defined: %s.',
+                $name,
+                $consumer['remote_jwks'],
+                [] === $sets ? 'none' : '"' . implode('", "', array_keys($sets)) . '"',
+            ));
+        }
+
         $bound = [];
 
         foreach ($consumer['keys'] as $key) {
@@ -759,10 +988,15 @@ final class MedzuchJwtBundle extends AbstractBundle
         // Every allowed algorithm must have a key behind it, not merely one of
         // them: an algorithm on the allowlist that no key can verify is a
         // permanently dead branch, and the usual way to get one is asking for
-        // an algorithm this release has no key source for. The check holds
-        // while every key source is static; remote JWKS (K5) publishes its
-        // algorithms at runtime and will need its own reading of "satisfied".
-        $unsatisfied = array_values(array_diff($consumer['allowed_algorithms'], $bound));
+        // an algorithm this release has no key source for.
+        //
+        // The check only holds while every key source is static. A remote set
+        // publishes its algorithms at runtime and may rotate to a new one
+        // without redeploying this application, so an allowlist entry that no
+        // *local* key satisfies is not dead — it is the reason the remote set
+        // is there. With one configured, the question this check asks has no
+        // build-time answer, so it is not asked.
+        $unsatisfied = null === $consumer['remote_jwks'] ? array_values(array_diff($consumer['allowed_algorithms'], $bound)) : [];
 
         if ([] !== $unsatisfied) {
             throw new InvalidConfigurationException(sprintf(
