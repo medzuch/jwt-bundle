@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Tests\Functional;
 
 use DateInterval;
+use Medzuch\Jwt\Exception\JwksResolutionException;
 use Medzuch\Jwt\Key\RsaPrivateKey;
 use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
@@ -13,9 +14,12 @@ use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Tests\Functional\App\ArrayCache;
 use Medzuch\JwtBundle\Tests\Functional\App\StubHttpClient;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
+use Medzuch\JwtBundle\Tests\Functional\App\TransportFailure;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\Security\Core\Exception\BadCredentialsException;
@@ -44,11 +48,21 @@ final class RemoteJwksTest extends KernelTestCase
     /**
      * @param array<array-key, mixed> $options
      */
+    /**
+     * The service ids an application brings: Symfony registers `psr18.http_client`
+     * once `psr/http-client` is installed, and `cache.app` is there by default.
+     * Aliased to doubles so the branch that names neither can be built.
+     *
+     * @param array<array-key, mixed> $options
+     */
     protected static function createKernel(array $options = []): KernelInterface
     {
         $config = $options['medzuch_jwt'] ?? [];
 
-        return new TestKernel(is_array($config) ? $config : []);
+        return new TestKernel(is_array($config) ? $config : [], [
+            'psr18.http_client' => 'test.http_client',
+            'cache.app' => 'test.cache_pool',
+        ]);
     }
 
     #[TestDox('a token signed with a key only the issuer publishes verifies')]
@@ -59,6 +73,23 @@ final class RemoteJwksTest extends KernelTestCase
 
         self::assertSame('user-42', self::verify(self::token('remote')));
         self::assertSame([self::URI], self::client()->requested);
+    }
+
+    #[TestDox('a set naming no services at all is built from the Symfony ones the defaults point at')]
+    public function testDefaultWiring(): void
+    {
+        // Nothing but a URI, which is what the README advertises. This is the
+        // branch where a wiring mistake would be silent: the other tests name
+        // every service, so they never construct the wrapped PSR-6 pool, and
+        // never ask the client to be its own PSR-17 factory.
+        self::bootKernel(['medzuch_jwt' => self::configuration(set: ['http_client' => null, 'cache' => null])]);
+        self::publish();
+
+        self::assertSame('user-42', self::verify(self::token('remote')));
+        self::assertSame([self::URI], self::client()->requested);
+
+        // The pool, not the PSR-16 double: the default path wraps `cache.app`.
+        self::assertNotSame([], self::pool()->getValues());
     }
 
     #[TestDox('the document is fetched once and served from the cache after that')]
@@ -92,9 +123,13 @@ final class RemoteJwksTest extends KernelTestCase
         self::bootKernel(['medzuch_jwt' => self::configuration(['max_body_bytes' => 64])]);
         self::publish();
 
-        $this->expectException(BadCredentialsException::class);
+        // The cause, not just the refusal: every failure here arrives as the
+        // same BadCredentialsException, so a token rejected for an unrelated
+        // reason would pass a test that only named the outer exception.
+        $cause = self::refusalOf(self::token('remote'));
 
-        self::verify(self::token('remote'));
+        self::assertInstanceOf(JwksResolutionException::class, $cause);
+        self::assertStringContainsString('exceeds the 64-byte limit', $cause->getMessage());
     }
 
     #[TestDox('an unreachable issuer does not stop tokens signed with keys this application holds (K6)')]
@@ -118,6 +153,10 @@ final class RemoteJwksTest extends KernelTestCase
         self::publish();
 
         self::assertSame('user-42', self::verify(self::token('remote')));
+
+        // What separates this from the outage case above: the key was not
+        // local, so the round trip had to happen.
+        self::assertSame([self::URI], self::client()->requested);
     }
 
     #[TestDox('with the issuer unreachable and no local key, the token is refused as a credential')]
@@ -126,9 +165,10 @@ final class RemoteJwksTest extends KernelTestCase
         self::bootKernel(['medzuch_jwt' => self::configuration()]);
         self::client()->goesOffline();
 
-        $this->expectException(BadCredentialsException::class);
+        $cause = self::refusalOf(self::token('remote'));
 
-        self::verify(self::token('remote'));
+        self::assertInstanceOf(JwksResolutionException::class, $cause);
+        self::assertInstanceOf(TransportFailure::class, $cause->getPrevious(), 'the transport failure should still be readable under the credential error');
     }
 
     #[TestDox('tokens naming a kid the issuer never published cost one fetch, not one each')]
@@ -169,13 +209,45 @@ final class RemoteJwksTest extends KernelTestCase
         self::assertGreaterThan($throttled[1], self::attempts($unknown, 1)[0], 'past the window, an unknown kid is worth another look');
     }
 
-    #[TestDox('a plaintext jwks_uri fails at container build, not at the first token')]
-    public function testPlaintextUriIsRefused(): void
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function uris(): iterable
+    {
+        yield 'plaintext' => ['http://idp.test/jwks.json'];
+        // The spellings a check written against the obvious one lets through.
+        yield 'plaintext, shouted' => ['HTTP://idp.test/jwks.json'];
+        yield 'another scheme entirely' => ['ftp://idp.test/jwks.json'];
+        yield 'no scheme at all' => ['idp.test/jwks.json'];
+    }
+
+    #[DataProvider('uris')]
+    #[TestDox('a jwks_uri that is not https fails at container build: $_dataName')]
+    public function testNonHttpsUriIsRefused(string $uri): void
     {
         $this->expectException(InvalidConfigurationException::class);
         $this->expectExceptionMessageMatches('/not verification keys/');
 
-        self::bootKernel(['medzuch_jwt' => self::configuration(['uri' => 'http://idp.test/jwks.json'])]);
+        self::bootKernel(['medzuch_jwt' => self::configuration(['uri' => $uri])]);
+    }
+
+    #[TestDox('a jwks_uri assembled from the environment is left for the library to judge')]
+    public function testEnvironmentUriIsNotJudgedAtBuild(): void
+    {
+        // There is nothing to read at build time — the value is a placeholder
+        // until the container is compiled — and refusing it would make the
+        // recommended way of configuring a URI impossible.
+        putenv('JWT_TEST_JWKS_URI=' . self::URI);
+
+        try {
+            self::bootKernel(['medzuch_jwt' => self::configuration(['uri' => '%env(JWT_TEST_JWKS_URI)%'])]);
+            self::publish();
+
+            self::assertSame('user-42', self::verify(self::token('remote')));
+            self::assertSame([self::URI], self::client()->requested);
+        } finally {
+            putenv('JWT_TEST_JWKS_URI');
+        }
     }
 
     #[TestDox('a consumer naming a remote set that does not exist fails at container build')]
@@ -214,6 +286,17 @@ final class RemoteJwksTest extends KernelTestCase
         self::bootKernel(['medzuch_jwt' => self::configuration(['uri' => self::URI], algorithms: ['RS256', 'ES256'])]);
 
         self::assertTrue(self::getContainer()->has('medzuch_jwt.handler.partner'));
+    }
+
+    /** What actually refused the token, under the credential error every failure wears. */
+    private static function refusalOf(string $token): ?\Throwable
+    {
+        try {
+            self::verify($token);
+            self::fail('the token should not have resolved');
+        } catch (BadCredentialsException $refused) {
+            return $refused->getPrevious();
+        }
     }
 
     /**
@@ -283,6 +366,14 @@ final class RemoteJwksTest extends KernelTestCase
         return $client;
     }
 
+    private static function pool(): ArrayAdapter
+    {
+        $pool = self::getContainer()->get('test.cache_pool');
+        self::assertInstanceOf(ArrayAdapter::class, $pool);
+
+        return $pool;
+    }
+
     private static function cache(): ArrayCache
     {
         $cache = self::getContainer()->get('test.cache');
@@ -324,11 +415,11 @@ final class RemoteJwksTest extends KernelTestCase
                 'local' => $issuer('signing_local'),
             ],
             'remote_jwks' => [
-                'partner_idp' => $set + [
+                'partner_idp' => array_filter($set + [
                     'uri' => self::URI,
                     'http_client' => 'test.http_client',
                     'cache' => 'test.cache',
-                ],
+                ], static fn(mixed $value): bool => null !== $value),
             ],
             'consumers' => [
                 'partner' => $consumer + [

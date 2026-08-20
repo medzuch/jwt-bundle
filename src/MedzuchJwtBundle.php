@@ -95,7 +95,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $services = $container->services();
         $this->registerKeys($services, $keys);
-        $this->registerRemoteJwks($services, $config['remote_jwks'], $config['logger']);
+        $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger']);
         $this->registerIssuers($services, $keys, $config['issuers']);
         $this->registerConsumers($services, $keys, $config['consumers'], $config['remote_jwks'], $config['logger']);
         $this->registerJwks($services, $keys, $config['jwks']);
@@ -653,10 +653,10 @@ final class MedzuchJwtBundle extends AbstractBundle
      *
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}> $sets
      */
-    private function registerRemoteJwks(ServicesConfigurator $services, array $sets, ?string $logger): void
+    private function registerRemoteJwks(ServicesConfigurator $services, ContainerBuilder $builder, array $sets, ?string $logger): void
     {
         foreach ($sets as $name => $set) {
-            self::assertRemoteJwksIsUsable($name, $set);
+            self::assertRemoteJwksIsUsable($name, $set, $builder);
 
             $services->set('medzuch_jwt.remote_jwks.' . $name, RemoteJwksResolver::class)
                 ->args([
@@ -691,17 +691,26 @@ final class MedzuchJwtBundle extends AbstractBundle
     /**
      * @param array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int} $set
      */
-    private static function assertRemoteJwksIsUsable(string $name, array $set): void
+    private static function assertRemoteJwksIsUsable(string $name, array $set, ContainerBuilder $builder): void
     {
         if (null !== $set['cache'] && null !== $set['cache_pool']) {
             throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" names both a PSR-16 cache and a PSR-6 pool. Give one: "cache" is used as it is, "cache_pool" is wrapped.', $name));
         }
 
-        // Only a literal is judged here. A URI arriving through the
-        // environment is still a placeholder at build time, and the library
-        // refuses a plaintext one when the resolver is constructed.
-        if (str_starts_with($set['uri'], 'http://')) {
-            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" fetches keys over plaintext HTTP. Verification keys taken from a channel an attacker can rewrite are not verification keys (RFC 8725 §3.10).', $name));
+        // The same test the library makes, in the same direction: everything
+        // that is not https is refused, rather than the one spelling of
+        // plaintext that comes to mind. "HTTP://", "ftp://" and a bare host are
+        // all not-https, and a check that named only "http://" would let each
+        // of them reach the first token before failing.
+        //
+        // A URI assembled from the environment is exempt because there is
+        // nothing to read yet: it is a placeholder until the container is
+        // compiled, and the library refuses a plaintext one when the resolver
+        // is built.
+        $builder->resolveEnvPlaceholders($set['uri'], null, $fromEnvironment);
+
+        if ([] === ($fromEnvironment ?? []) && 0 !== stripos($set['uri'], 'https://')) {
+            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" has a jwks_uri that is not https. Verification keys taken from a channel an attacker can rewrite are not verification keys (RFC 8725 §3.10). Got "%s".', $name, $set['uri']));
         }
 
         if (null === $set['cache'] && !class_exists(Psr16Cache::class)) {
@@ -868,9 +877,15 @@ final class MedzuchJwtBundle extends AbstractBundle
         foreach ($consumers as $name => $consumer) {
             $this->assertConsumerCanVerify($name, $consumer, $keys, $sets);
 
-            $services->set('medzuch_jwt.jwk_set.' . $name, JwkSet::class)
-                ->factory([JwkSet::class, 'of'])
-                ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($consumer['keys'])));
+            // A consumer verifying only against a remote set has no local set:
+            // registering an empty one would leave a service nothing
+            // references, showing up in `debug:container` as a key set with no
+            // keys in it.
+            if ([] !== $consumer['keys']) {
+                $services->set('medzuch_jwt.jwk_set.' . $name, JwkSet::class)
+                    ->factory([JwkSet::class, 'of'])
+                    ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($consumer['keys'])));
+            }
 
             $services->set('medzuch_jwt.consumer.' . $name, AccessTokenConsumer::class)
                 ->factory([AccessTokenProfile::class, 'consumer'])

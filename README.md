@@ -488,6 +488,12 @@ while the issuer is unreachable. A token signed with a key they have rotated to 
 through to the fetched set. That is the whole of it: no failover mode to configure, and nothing
 that behaves differently on the day the identity provider is down.
 
+**What you pay for it:** a key configured here is outside the issuer's rotation. When they drop
+it from their JWK Set — because it expired, or because it leaked — tokens signed with it keep
+verifying against your copy until you delete the entry. That is the same property that makes an
+outage survivable, seen from the other side, so configure local keys for the keys you want to
+outlive an outage, and let the rest come from the endpoint.
+
 With a remote set configured, the build-time check that every allowed algorithm has a key
 behind it is not made — the issuer publishes their algorithms at runtime and may rotate to one
 this application has never seen, so the question has no answer while the container is built.

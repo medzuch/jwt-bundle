@@ -28,7 +28,10 @@ a class or method signature would be.
   first: a key already configured is never a round trip, and an unreachable issuer cannot
   stop tokens signed with keys this application holds. A key the issuer has rotated to
   falls through to the fetched set. There is no failover mode to configure and nothing
-  that behaves differently on the day the identity provider is down.
+  that behaves differently on the day the identity provider is down. The cost is the
+  same property seen from the other side: a key configured locally is outside the
+  issuer's rotation, so when they drop it — expired, or leaked — tokens signed with it
+  keep verifying against your copy until the entry is deleted.
 
 ### Changed
 
