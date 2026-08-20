@@ -335,6 +335,80 @@ container parameter and never appears in `debug:container` output. The flip side
 length cannot be checked when the container is built: too short a secret fails when the key is
 first used, not at deploy time.
 
+## Who the token turns out to be
+
+By default the bundle hands the identifier to the firewall's user provider and your store
+answers — roles included. Two other modes exist because that answer is not always available.
+
+```yaml
+medzuch_jwt:
+    keys:
+        default: { hmac: '%env(JWT_SECRET)%', algorithm: HS256 }
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: ['%env(APP_URL)%']
+            keys: [default]
+            allowed_algorithms: [HS256]
+            user:
+                mode: claims            # provider (default) | claims | custom
+                identity_claim: sub
+                roles:
+                    claim: scope        # scope | roles | groups | whatever your issuer sends
+                    separator: ' '      # a space is what `scope` uses; null takes the claim whole
+                    prefix: 'ROLE_'
+                    defaults: ['ROLE_USER']
+```
+
+**`claims`** builds the user from the token and consults no store. This is the mode for a
+resource server verifying a third party's tokens: there is nothing to look up, the issuer is
+the authority, and a local row keyed on `sub` would be a copy that goes stale. The user is a
+`JwtUser`, which keeps the whole claim set — so a controller asking which tenant this is asks
+`$this->getUser()->claims()` rather than parsing the token again.
+
+Role mapping reads a list claim (`["staff","billing"]`) or a delimited string (`scope`, which
+RFC 6749 §3.3 makes space-delimited); both are ordinary, and which one arrives is the issuer's
+choice, not yours. Anything else — a number, a nested object — contributes no roles, because a
+value under some key is not a grant.
+
+**`custom`** hands the claims to a service of yours:
+
+```php
+use Medzuch\Jwt\Jwt\ClaimsSet;
+use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
+use Symfony\Component\Security\Core\User\UserInterface;
+
+final class TenantUserFactory implements JwtUserFactoryInterface
+{
+    public function userFrom(ClaimsSet $claims): UserInterface
+    {
+        // the token is already verified here; what is left is the mapping
+    }
+}
+```
+
+The user it returns also names itself — its identifier is what the security layer records, and
+`identity_claim` is not consulted in this mode. An identity assembled from several claims is
+therefore fine, and so is refusing a token that carries none of them.
+
+```yaml
+user: { mode: custom, factory: 'App\Security\TenantUserFactory' }
+```
+
+Refusing there means "a valid token for nobody I know", so throw an `AuthenticationException`
+— it becomes a 401, not a 500.
+
+Each mode answers the question differently, so an option that names another mode's answer is
+refused at container build rather than ignored: a `factory` where nothing calls one, and a
+`roles.claim` or `roles.defaults` in a mode where the provider or your factory decides roles.
+`roles.separator` and `roles.prefix` are not checked that way — they carry defaults, so a value
+set outside `claims` mode is indistinguishable from one never written, and it is simply unread.
+
+`roles.defaults` is empty unless you set it, so `claims` mode grants exactly what the token
+carries. If your access rules lean on a baseline like `ROLE_USER`, say so — nothing invents it
+for you.
+
 ## Audience policy
 
 `audience` says which names this application answers to; a token is for it when `aud` names any

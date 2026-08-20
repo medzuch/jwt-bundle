@@ -6,6 +6,7 @@ namespace Medzuch\JwtBundle\Security;
 
 use Medzuch\Jwt\Exception\JwtException;
 use Medzuch\Jwt\Profile\ProfileConsumer;
+use Medzuch\JwtBundle\Security\Identity\UserResolverInterface;
 use Symfony\Component\Security\Core\Exception\BadCredentialsException;
 use Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface;
 use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
@@ -16,9 +17,10 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
  *
  * Every library failure becomes the same `BadCredentialsException`, carrying the
  * original as `previous`: the reason belongs in the log, not in the response.
- * Which claim identifies the user is configuration, because `sub` is only the
- * default answer — a token from a third-party issuer may carry the local
- * identity somewhere else entirely.
+ * Who the token names, and what that identity becomes, is a
+ * {@see UserResolverInterface}: a lookup in the application's store, a user
+ * built from the claims, or the application's own mapping — which may derive an
+ * identity the token carries in no single claim.
  *
  * The audience check the library makes is the one RFC 7519 §4.1.3 describes:
  * a token is for us if `aud` names us, whoever else it also names. An
@@ -34,7 +36,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
      */
     public function __construct(
         private readonly ProfileConsumer $consumer,
-        private readonly string $identityClaim,
+        private readonly UserResolverInterface $users,
         private readonly ?array $exclusiveTo = null,
     ) {}
 
@@ -42,20 +44,17 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
     {
         try {
             $claims = $this->consumer->parse($accessToken);
-            // Inside the try: getString() throws when the claim holds a
-            // non-string, which is a bad token, not a server error.
-            $identity = $claims->getString($this->identityClaim);
+
+            $this->assertAddressedToNobodyElse($claims->audience());
+
+            // Inside the try because naming the user reads claims, and
+            // getString() throws when one holds a non-string — a bad token,
+            // not a server error. A BadCredentialsException raised in there is
+            // not a JwtException and passes through with its own message.
+            return $this->users->badgeFor($claims);
         } catch (JwtException $e) {
             throw new BadCredentialsException('Invalid access token.', previous: $e);
         }
-
-        $this->assertAddressedToNobodyElse($claims->audience());
-
-        if (null === $identity || '' === $identity) {
-            throw new BadCredentialsException(sprintf('Access token carries no "%s" claim to identify the user.', $this->identityClaim));
-        }
-
-        return new UserBadge($identity);
     }
 
     /**
