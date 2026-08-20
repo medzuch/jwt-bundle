@@ -51,6 +51,14 @@ a class or method signature would be.
   checked: binding an ID token to an access token needs support the library does not have,
   and this bundle does not reimplement crypto its library is missing.
 
+- **Audience policy (C14).** `consumers.<name>.audience_policy: exclusive` refuses a token
+  that is addressed to anyone besides this consumer, which is what RFC 9068 §3 asks of an
+  access token: a token minted for several services is valid at each of them, so it only
+  has to leak from the least careful one to arrive here. The default, `any`, is unchanged
+  and is what RFC 7519 §4.1.3 describes — a token naming us is for us, whoever else it
+  names. Exclusivity is about audiences you did not configure, not about the token naming
+  all of yours: an application answering to two names is addressed by either.
+
 ### Changed
 
 - **`consumers.<name>.keys` is no longer required**, since a consumer may verify entirely

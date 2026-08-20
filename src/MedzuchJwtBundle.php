@@ -83,7 +83,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
-         *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
+         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          * } $config */
         $container->import('../config/services.yaml');
@@ -455,6 +455,12 @@ final class MedzuchJwtBundle extends AbstractBundle
         $audience->isRequired();
         $audience->requiresAtLeastOneElement();
         self::rejectMaps($audience, 'consumers.*.audience');
+
+        $consumer->enumNode('audience_policy')
+            ->values(['any', 'exclusive'])
+            ->defaultValue('any')
+            ->info('How much of the token\'s `aud` has to be ours. "any" is RFC 7519 §4.1.3: the token is for us if it names us, whoever else it names too. "exclusive" also refuses a token addressed to anyone else, which is what RFC 9068 §3 asks of an access token — a token minted for several services only has to leak from the least careful one.')
+            ->end();
 
         $keys = $consumer->arrayNode('keys');
         $keys->info('Names from the `keys` section. Verification tries the key the token names, or the one bound to its algorithm. Optional only when "remote_jwks" is given; with both, these are tried first and the network is never touched for a key already here.');
@@ -931,7 +937,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
-     * @param array<string, array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}> $consumers
+     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}> $consumers
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      */
     private function registerConsumers(ServicesConfigurator $services, array $keys, array $consumers, array $sets, ?string $logger): void
@@ -955,7 +961,11 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ]);
 
             $services->set('medzuch_jwt.handler.' . $name, AccessTokenHandler::class)
-                ->args([service('medzuch_jwt.consumer.' . $name), $consumer['user']['identity_claim']]);
+                ->args([
+                    service('medzuch_jwt.consumer.' . $name),
+                    $consumer['user']['identity_claim'],
+                    'exclusive' === $consumer['audience_policy'] ? array_values($consumer['audience']) : null,
+                ]);
         }
     }
 
