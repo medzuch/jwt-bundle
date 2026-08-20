@@ -14,15 +14,17 @@ Works for any of these roles, in any combination:
 
 > **Status: pre-1.0.** Issuing and verifying work end to end — mint a token on login, verify
 > it on a firewall, be authenticated — with HMAC, RSA, EC and Ed25519 keys from PEM or JWK
-> sources, key rotation, a JWK Set endpoint and a key-generation command. Nothing about it is
-> stable yet; see [`docs/plan.md`](docs/plan.md) for the full design and roadmap.
+> sources, key rotation, a JWK Set endpoint and a key-generation command. Federation works
+> too: keys fetched from an issuer's `jwks_uri`, with local fallback, and ID tokens verified
+> for an OIDC relying party. Nothing about it is stable yet; see
+> [`docs/plan.md`](docs/plan.md) for the full design and roadmap.
 
 Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
 
 ## Installation
 
 ```bash
-composer require medzuch/jwt-bundle:^0.2
+composer require medzuch/jwt-bundle:^0.3
 ```
 
 The constraint is worth pinning that tightly: pre-1.0, a minor release may move the
