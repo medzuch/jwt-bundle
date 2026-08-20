@@ -233,7 +233,7 @@ final class ConfigurationValidationTest extends KernelTestCase
     public function testHmacAlgorithmWithPem(): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessageMatches('/takes a shared secret, not a PEM/');
+        $this->expectExceptionMessageMatches('/takes a shared secret, not a key pair/');
 
         self::bootKernel(['medzuch_jwt' => [
             'keys' => ['default' => ['pem_public' => self::PEM, 'algorithm' => 'HS256']],
@@ -244,18 +244,18 @@ final class ConfigurationValidationTest extends KernelTestCase
     public function testRsaAlgorithmWithSecret(): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessageMatches('/needs a PEM, not a shared secret/');
+        $this->expectExceptionMessageMatches('/needs a key pair, not a shared secret/');
 
         self::bootKernel(['medzuch_jwt' => [
             'keys' => ['default' => ['hmac' => self::SECRET, 'algorithm' => 'RS256']],
         ]]);
     }
 
-    #[TestDox('EdDSA says which key source it is waiting for rather than failing obscurely')]
+    #[TestDox('EdDSA given a PEM says which source it takes instead')]
     public function testEdDsaHasNoPemSource(): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessageMatches('/JWK key source is planned/');
+        $this->expectExceptionMessageMatches('/is configured as a JWK/');
 
         self::bootKernel(['medzuch_jwt' => [
             'keys' => ['default' => ['pem_public' => self::PEM, 'algorithm' => 'EdDSA']],

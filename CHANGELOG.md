@@ -13,6 +13,25 @@ a class or method signature would be.
 
 ### Added
 
+- **JWK key sources, and with them EdDSA.** A key entry takes `jwk_private` and/or
+  `jwk_public` — a path to a JSON file or the JSON itself — beside the `pem_*` and
+  `hmac` sources it already had. `EdDSA` is configured this way and no other: RFC 8037
+  defines Ed25519 as a JWK and there is no PEM spelling of it to read, so a `pem_*`
+  source bound to `EdDSA` is refused at container build, saying which source it takes.
+  A JWK states its own `alg`, `kid` and `use` and so does the configuration pointing at
+  it; what the configuration states and the document omits is filled in, and a
+  disagreement is refused when the key is loaded, naming both readings. The two
+  refusals that would otherwise be silent: a document carrying `d` behind `jwk_public`,
+  which the JWKS endpoint would publish verbatim, and a JWK **Set** where a single key
+  belongs — the document people have on hand, since it is what a JWKS endpoint serves.
+- **`jwt:key:generate`.** Generates an HMAC secret, an RSA or EC keypair in PEM or JWK,
+  or an Ed25519 keypair, and prints the `medzuch_jwt` block that uses it — which source
+  the material belongs in, both halves, and the `kid` in place. `--out` writes the files
+  instead of printing them: the private half readable only by its owner, and neither half
+  ever overwritten, because a key file replaced in place invalidates every token still in
+  flight. A shared secret is printed as an environment line rather than written, since
+  that is where the `hmac` source reads it. The command is registered only when
+  `symfony/console` is installed, so a container without one still builds.
 - **A JWK Set endpoint.** `medzuch_jwt.jwks` names the keys to publish and
   `medzuch_jwt.jwks_controller` serves them as RFC 7517 `application/jwk-set+json`,
   cacheable for a configurable time. The bundle registers **no route**: where the

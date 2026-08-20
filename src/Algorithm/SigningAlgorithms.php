@@ -23,11 +23,13 @@ use Medzuch\Jwt\Algorithm\Signing\Rs512;
  * refuses it by construction, and a configuration key that could reintroduce it
  * would undo that.
  *
- * The list is deliberately wider than what can be configured today — only HMAC
- * keys have a source so far. Naming an algorithm with no key behind it fails at
- * container build with a message that says so, which beats an enum that grows
- * with each key source and gives "is not a supported value" for an algorithm
- * the library implements perfectly well.
+ * Every algorithm here has a key source: a shared secret for the HS family, a
+ * PEM or a JWK for the RSA and EC ones, and a JWK for EdDSA, which RFC 8037
+ * defines as a JWK and nothing else. The list is still allowed to run ahead of
+ * the sources — naming an algorithm with no key behind it fails at container
+ * build with a message that says so, which beats an enum that grows with each
+ * key source and gives "is not a supported value" for an algorithm the library
+ * implements perfectly well.
  *
  * @internal
  */

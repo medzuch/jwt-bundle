@@ -113,12 +113,12 @@ final class ReadmeExamplesTest extends KernelTestCase
                     continue;
                 }
 
-                if (isset($key['hmac']) || isset($key['pem_private'])) {
+                if (isset($key['hmac']) || isset($key['pem_private']) || isset($key['jwk_private'])) {
                     $ids[] = sprintf('medzuch_jwt.key.%s', $name);
                     $ids[] = sprintf('medzuch_jwt.key.%s.signing', $name);
                 }
 
-                if (isset($key['hmac']) || isset($key['pem_public'])) {
+                if (isset($key['hmac']) || isset($key['pem_public']) || isset($key['jwk_public'])) {
                     $ids[] = sprintf('medzuch_jwt.key.%s.verification', $name);
                 }
             }
