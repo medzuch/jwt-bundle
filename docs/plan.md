@@ -14,8 +14,9 @@
 > **Status.** v0.2.0 released. Phases 0, 1 and 2 of §7 are shipped: PEM and JWK
 > key sources, named keys and rotation, the JWKS publisher and
 > `jwt:key:generate`. EdDSA works end to end, since the JWK source is the only
-> one RFC 8037 gives it. Phase 3 is under way: K5, K6 and C6 — remote JWK Sets
-> with local fallback, and ID-token verification — are in; C14 remains.
+> one RFC 8037 gives it. Phase 3 is complete: remote JWK Sets with local
+> fallback (K5, K6), ID-token verification (C6) and the audience policy (C14).
+> v0.3.0 is next.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -207,7 +208,7 @@ default and adds no runtime cost when unconfigured.
 | C11 | Multi-issuer / multi-tenant: pick the consumer by the token's `iss` (or by host/tenant resolver) before validation, with a strict allowlist | `CompositeResolver`, bundle dispatcher | T3 |
 | C12 | Encrypted (JWE) and nested JWT support on the consumer side | `NestedJwtParser`, `Decrypter` | T3 |
 | C13 | `ScopeVoter` + `#[IsGranted('SCOPE_x')]`-style checks and an `is_granted_scope()` expression function | Symfony voters | T2 |
-| C14 | Audience policy: accept a list of audiences, or require exact match per consumer | library consumer | T2 |
+| C14 | Audience policy per consumer: `any` (RFC 7519 §4.1.3, the default) or `exclusive` — refuse a token addressed to anyone else, as RFC 9068 §3 asks. Not "exact match": a consumer answering to two names is addressed by either, so requiring the token to name *all* of them would refuse a legitimate one | library consumer + `AccessTokenHandler` | T2 |
 | C15 | Anonymous-friendly mode: verify a token if present, don't 401 when absent (public endpoints with optional identity) | custom authenticator or firewall config | T3 |
 
 ### 3.2 Issuer side — minting tokens
@@ -501,8 +502,7 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   deliberately not there — see the row — and Symfony Secrets need no source of
   their own, since a secret reaches `hmac` as an env reference either way.)*
 - **Phase 3 — Federation (v0.3).** K5–K6, C6, C14: remote JWKS with cache and
-  fallback, ID-token consumer, OIDC-RP quickstart, audience lists. *(K5, K6 and
-  C6 shipped; C14 remains. The build-time check that every allowed algorithm
+  fallback, ID-token consumer, OIDC-RP quickstart, audience lists. *(Shipped. The build-time check that every allowed algorithm
   has a key behind it is suspended for a consumer with a remote set — the issuer
   publishes its algorithms at runtime, which is the "own reading of satisfied"
   the K5 row always implied.)*

@@ -333,6 +333,37 @@ container parameter and never appears in `debug:container` output. The flip side
 length cannot be checked when the container is built: too short a secret fails when the key is
 first used, not at deploy time.
 
+## Audience policy
+
+`audience` says which names this application answers to; a token is for it when `aud` names any
+of them, which is what RFC 7519 §4.1.3 describes. A consumer can ask for more:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default: { hmac: '%env(JWT_SECRET)%', algorithm: HS256 }
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: ['%env(APP_URL)%']
+            audience_policy: exclusive     # any (default) | exclusive
+            keys: [default]
+            allowed_algorithms: [HS256]
+```
+
+**`exclusive` refuses a token that is also addressed to someone else.** A token minted for
+several services is valid at each of them, so it only has to leak from the least careful one —
+their logs, their error tracker, their proxy — to be presented here. RFC 9068 §3 asks access
+tokens to name one audience for exactly this reason.
+
+It is off by default because it is a posture rather than a correctness fix: a shared token *is*
+a valid token for you, and refusing it is a decision about blast radius that the issuer's
+practices have to justify. Turn it on when you can influence what the issuer mints.
+
+Exclusivity is about audiences you did not configure, not about the token naming all of yours:
+an application answering to two names is addressed by either.
+
 ## Rotating a key
 
 Rotation is a configuration move rather than a feature. An issuer signs with **one** key while a
