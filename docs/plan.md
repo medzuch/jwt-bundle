@@ -14,8 +14,8 @@
 > **Status.** v0.2.0 released. Phases 0, 1 and 2 of §7 are shipped: PEM and JWK
 > key sources, named keys and rotation, the JWKS publisher and
 > `jwt:key:generate`. EdDSA works end to end, since the JWK source is the only
-> one RFC 8037 gives it. Phase 3 is under way: K5 and K6 — remote JWK Sets with
-> local fallback — are in, C6 (ID tokens) and C14 remain.
+> one RFC 8037 gives it. Phase 3 is under way: K5, K6 and C6 — remote JWK Sets
+> with local fallback, and ID-token verification — are in; C14 remains.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -199,7 +199,7 @@ default and adds no runtime cost when unconfigured.
 | C3 | User resolution modes `provider` / `claims` / `custom` (§2.2) incl. a `JwtUser` value object | `ClaimsSet` | T1 (`provider`), T2 (rest) |
 | C4 | Claim → role mapping (`scope`, `roles`, `groups`, custom), configurable prefix and separator | `ClaimsSet::getList()/getString()` | T2 |
 | C5 | Token extractors: `header` (Bearer), `query`, `cookie`, `body`, custom service — cookie matters for browser SPAs | Native Symfony extractors + ours | T2 |
-| C6 | ID-token handler for OIDC relying-party flows (`nonce`, `azp`, `at_hash` checks) | `IdTokenProfile::consumer()` | T2 |
+| C6 | ID-token verifier for OIDC relying-party flows (`nonce`, `azp`). A service the application calls from its callback, **not** a firewall authenticator (DEC-8). `at_hash` is not checked: the library has no support for it, and the bundle does not reimplement crypto its library is missing | `IdTokenProfile::consumer()` | T2 |
 | C7 | Generic/custom-profile handler for app-defined `typ` values | `ValidatorBuilder`, `MediaType::custom()` | T2 |
 | C8 | Security Event Token consumer (receiving RISC/CAEP-style events) | `SetProfile::consumer()` | T3 |
 | C9 | Revocation: `TokenDenylistInterface` checked on `jti`, with `NullDenylist` (default), PSR-16 cache and Doctrine implementations | bundle | T2 |
@@ -501,8 +501,8 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   deliberately not there — see the row — and Symfony Secrets need no source of
   their own, since a secret reaches `hmac` as an env reference either way.)*
 - **Phase 3 — Federation (v0.3).** K5–K6, C6, C14: remote JWKS with cache and
-  fallback, ID-token consumer, OIDC-RP quickstart, audience lists. *(K5 and K6
-  shipped; C6 and C14 remain. The build-time check that every allowed algorithm
+  fallback, ID-token consumer, OIDC-RP quickstart, audience lists. *(K5, K6 and
+  C6 shipped; C14 remains. The build-time check that every allowed algorithm
   has a key behind it is suspended for a consumer with a remote set — the issuer
   publishes its algorithms at runtime, which is the "own reading of satisfied"
   the K5 row always implied.)*
@@ -660,6 +660,23 @@ build-time answer describe a key other than the one signing, and it would let a
 `kid` nobody configured appear in a published JWK Set. Reopen if a key source
 arrives whose documents cannot be re-stated in configuration — a remote JWKS
 (K5) is exactly that, and it is resolved at runtime for the same reason.
+
+**DEC-8 — an ID token gets a service, not a firewall authenticator.** C6 could
+have been a second `AccessTokenHandlerInterface`, and that is the shape a
+relying party asks for when they have not thought it through: point a firewall
+at the provider, accept ID tokens as bearer credentials, done. It is also
+exactly the confusion RFC 9068 exists to end — an ID token attests that someone
+authenticated *to the client that requested it*, on a schedule and with an
+audience that has nothing to do with an API call, so a token minted for a
+browser session would authorise a machine one. The bundle therefore registers
+`medzuch_jwt.id_token.<name>` (an `IdTokenVerifier`, public and injectable by
+argument name) and no handler: there is a service at the point where an ID
+token legitimately arrives, and nothing that fits into `access_token`. The
+`nonce` is an argument rather than configuration for the same class of reason —
+it belongs to one authentication request, and a value fixed at deploy is not a
+nonce. *Reopens if* a deployment appears where an ID token is the only
+credential available at an API boundary; the answer then is still not a handler
+but an explicit exchange, and the reasoning above is what it has to beat.
 
 ---
 

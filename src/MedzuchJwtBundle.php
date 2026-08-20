@@ -18,6 +18,7 @@ use Medzuch\JwtBundle\Command\GenerateKeyCommand;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
+use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
 use Symfony\Component\Cache\Psr16Cache;
@@ -63,6 +64,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->configureRemoteJwks($children);
         $this->configureIssuers($children);
         $this->configureConsumers($children);
+        $this->configureIdTokens($children);
         $this->configureJwks($children);
     }
 
@@ -82,6 +84,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
+         *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          * } $config */
         $container->import('../config/services.yaml');
 
@@ -98,6 +101,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger']);
         $this->registerIssuers($services, $keys, $config['issuers']);
         $this->registerConsumers($services, $keys, $config['consumers'], $config['remote_jwks'], $config['logger']);
+        $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger']);
         $this->registerJwks($services, $keys, $config['jwks']);
         $this->registerConsoleCommands($services);
     }
@@ -288,6 +292,64 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ->ifTrue(static fn(mixed $value): bool => is_string($value) && '' === trim($value))
                 ->thenInvalid('medzuch_jwt.' . $name . ' cannot be blank; omit it instead. Got %s')
             ->end()
+            ->end();
+    }
+
+    /**
+     * An OIDC relying-party registration: which provider, which client, and
+     * what to verify their ID tokens with.
+     *
+     * Separate from `consumers` rather than a mode of it, because the two
+     * produce different things. A consumer is wired into a firewall; an ID
+     * token is not a bearer credential and gets no handler, so putting them in
+     * one section would make the wrong wiring a one-word change.
+     */
+    private function configureIdTokens(NodeBuilder $children): void
+    {
+        $idToken = $children->arrayNode('id_tokens')
+            ->info('Named OIDC relying-party registrations. Each verifies ID tokens from one provider, for one client.')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $idToken->scalarNode('issuer')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('The only `iss` accepted, exactly as the provider publishes it.')
+            ->example('https://idp.example.com')
+            ->end();
+
+        $idToken->scalarNode('client_id')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('This application\'s client id at the provider. It is the audience an ID token must name, and the `azp` it must name when it names more than one (OIDC Core §3.1.3.7).')
+            ->example('%env(OIDC_CLIENT_ID)%')
+            ->end();
+
+        $keys = $idToken->arrayNode('keys');
+        $keys->info('Names from the `keys` section. Optional only when "remote_jwks" is given; with both, these are tried first.');
+        $keys->scalarPrototype()->cannotBeEmpty()->end();
+        self::rejectMaps($keys, 'id_tokens.*.keys');
+
+        self::declareOptionalName(
+            $idToken,
+            'remote_jwks',
+            'Name from the `remote_jwks` section. The ordinary way to verify a provider\'s ID tokens: they rotate their keys on their own schedule.',
+            'partner_idp',
+        );
+
+        $algorithms = $idToken->arrayNode('allowed_algorithms');
+        $algorithms->info('JOSE `alg` values accepted. Anything else is refused before a signature is checked.');
+        $algorithms->enumPrototype()->values(SigningAlgorithms::names())->end();
+        $algorithms->isRequired();
+        $algorithms->requiresAtLeastOneElement();
+        self::rejectMaps($algorithms, 'id_tokens.*.allowed_algorithms');
+
+        $idToken->integerNode('leeway')
+            ->defaultValue(0)
+            ->min(0)
+            ->max(ValidatorBuilder::LEEWAY_CEILING_SECONDS)
+            ->info('Clock-skew tolerance in seconds for exp/nbf/iat. The ceiling is the library\'s.')
             ->end();
     }
 
@@ -875,24 +937,16 @@ final class MedzuchJwtBundle extends AbstractBundle
     private function registerConsumers(ServicesConfigurator $services, array $keys, array $consumers, array $sets, ?string $logger): void
     {
         foreach ($consumers as $name => $consumer) {
-            $this->assertConsumerCanVerify($name, $consumer, $keys, $sets);
+            $this->assertCanVerify(sprintf('Consumer "%s"', $name), $consumer, $keys, $sets);
 
-            // A consumer verifying only against a remote set has no local set:
-            // registering an empty one would leave a service nothing
-            // references, showing up in `debug:container` as a key set with no
-            // keys in it.
-            if ([] !== $consumer['keys']) {
-                $services->set('medzuch_jwt.jwk_set.' . $name, JwkSet::class)
-                    ->factory([JwkSet::class, 'of'])
-                    ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($consumer['keys'])));
-            }
+            self::registerLocalKeySet($services, 'medzuch_jwt.jwk_set.' . $name, $consumer);
 
             $services->set('medzuch_jwt.consumer.' . $name, AccessTokenConsumer::class)
                 ->factory([AccessTokenProfile::class, 'consumer'])
                 ->args([
                     $consumer['issuer'],
                     array_values($consumer['audience']),
-                    self::keySource($services, $name, $consumer),
+                    self::keySource($services, 'medzuch_jwt.jwk_set.' . $name, 'medzuch_jwt.resolver.' . $name, $consumer),
                     array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), array_values($consumer['allowed_algorithms'])),
                     service('medzuch_jwt.clock'),
                     null === $logger ? null : service($logger),
@@ -902,6 +956,40 @@ final class MedzuchJwtBundle extends AbstractBundle
 
             $services->set('medzuch_jwt.handler.' . $name, AccessTokenHandler::class)
                 ->args([service('medzuch_jwt.consumer.' . $name), $consumer['user']['identity_claim']]);
+        }
+    }
+
+    /**
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
+     * @param array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>                                                                                                                                         $registrations
+     * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>                                                                                                     $sets
+     */
+    private function registerIdTokens(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $registrations, array $sets, ?string $logger): void
+    {
+        foreach ($registrations as $name => $registration) {
+            $this->assertCanVerify(sprintf('ID token registration "%s"', $name), $registration, $keys, $sets);
+
+            $id = 'medzuch_jwt.id_token.' . $name;
+            self::registerLocalKeySet($services, $id . '.jwk_set', $registration);
+
+            $services->set($id, IdTokenVerifier::class)
+                ->args([
+                    $registration['issuer'],
+                    $registration['client_id'],
+                    self::keySource($services, $id . '.jwk_set', $id . '.resolver', $registration),
+                    array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), array_values($registration['allowed_algorithms'])),
+                    service('medzuch_jwt.clock'),
+                    null === $logger ? null : service($logger),
+                    0 === $registration['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $registration['leeway'])]),
+                ])
+                // Public because the application calls it directly, from its
+                // OIDC callback: there is no firewall to inject it into.
+                ->public();
+
+            // …and injectable by name, so a controller can ask for
+            // `IdTokenVerifier $partner` and get the registration called
+            // "partner" rather than a container lookup by string.
+            $builder->registerAliasForArgument($id, IdTokenVerifier::class, $name);
         }
     }
 
@@ -916,44 +1004,63 @@ final class MedzuchJwtBundle extends AbstractBundle
      * profile as a set, which is what it does when no remote is configured at
      * all.
      *
-     * @param array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}} $consumer
+     * @param array{keys: list<string>, remote_jwks: string|null, ...} $entry
      */
-    private static function keySource(ServicesConfigurator $services, string $name, array $consumer): mixed
+    private static function keySource(ServicesConfigurator $services, string $setId, string $resolverId, array $entry): mixed
     {
-        if (null === $consumer['remote_jwks']) {
-            return service('medzuch_jwt.jwk_set.' . $name);
+        if (null === $entry['remote_jwks']) {
+            return service($setId);
         }
 
-        $remote = service('medzuch_jwt.remote_jwks.' . $consumer['remote_jwks']);
+        $remote = service('medzuch_jwt.remote_jwks.' . $entry['remote_jwks']);
 
-        if ([] === $consumer['keys']) {
+        if ([] === $entry['keys']) {
             return $remote;
         }
 
-        $services->set('medzuch_jwt.resolver.' . $name, CompositeResolver::class)
+        $services->set($resolverId, CompositeResolver::class)
             ->args([
-                inline_service(StaticJwkSetResolver::class)->args([service('medzuch_jwt.jwk_set.' . $name)]),
+                inline_service(StaticJwkSetResolver::class)->args([service($setId)]),
                 $remote,
             ]);
 
-        return service('medzuch_jwt.resolver.' . $name);
+        return service($resolverId);
     }
 
     /**
-     * @param array{issuer: string, audience: list<string>, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}                                                                                                             $consumer
+     * The local half of a verification set, registered only when there is one:
+     * an entry verifying against a remote set alone would otherwise leave a
+     * service nothing references, showing up in `debug:container` as a key set
+     * with no keys in it.
+     *
+     * @param array{keys: list<string>, ...}                                                                                                                                                                 $entry
+     */
+    private static function registerLocalKeySet(ServicesConfigurator $services, string $setId, array $entry): void
+    {
+        if ([] === $entry['keys']) {
+            return;
+        }
+
+        $services->set($setId, JwkSet::class)
+            ->factory([JwkSet::class, 'of'])
+            ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($entry['keys'])));
+    }
+
+    /**
+     * @param array{keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, ...}                                                                                                                                                                                              $consumer
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>                                                                                                     $sets
      */
-    private function assertConsumerCanVerify(string $name, array $consumer, array $keys, array $sets): void
+    private function assertCanVerify(string $context, array $consumer, array $keys, array $sets): void
     {
         if ([] === $consumer['keys'] && null === $consumer['remote_jwks']) {
-            throw new InvalidConfigurationException(sprintf('Consumer "%s" has nothing to verify with: give it "keys", "remote_jwks", or both.', $name));
+            throw new InvalidConfigurationException(sprintf('%s has nothing to verify with: give it "keys", "remote_jwks", or both.', $context));
         }
 
         if (null !== $consumer['remote_jwks'] && !isset($sets[$consumer['remote_jwks']])) {
             throw new InvalidConfigurationException(sprintf(
-                'Consumer "%s" verifies against remote JWK Set "%s", which is not defined under medzuch_jwt.remote_jwks. Defined: %s.',
-                $name,
+                '%s verifies against remote JWK Set "%s", which is not defined under medzuch_jwt.remote_jwks. Defined: %s.',
+                $context,
                 $consumer['remote_jwks'],
                 [] === $sets ? 'none' : '"' . implode('", "', array_keys($sets)) . '"',
             ));
@@ -964,8 +1071,8 @@ final class MedzuchJwtBundle extends AbstractBundle
         foreach ($consumer['keys'] as $key) {
             if (!isset($keys[$key])) {
                 throw new InvalidConfigurationException(sprintf(
-                    'Consumer "%s" names key "%s", which is not defined under medzuch_jwt.keys. Defined: %s.',
-                    $name,
+                    '%s names key "%s", which is not defined under medzuch_jwt.keys. Defined: %s.',
+                    $context,
                     $key,
                     [] === $keys ? 'none' : '"' . implode('", "', array_keys($keys)) . '"',
                 ));
@@ -973,8 +1080,8 @@ final class MedzuchJwtBundle extends AbstractBundle
 
             if (!self::hasPublicHalf($keys[$key])) {
                 throw new InvalidConfigurationException(sprintf(
-                    'Consumer "%s" verifies with key "%s", which has only a private half. Verification needs the public one — a private key cannot stand in for it.',
-                    $name,
+                    '%s verifies with key "%s", which has only a private half. Verification needs the public one — a private key cannot stand in for it.',
+                    $context,
                     $key,
                 ));
             }
@@ -982,8 +1089,8 @@ final class MedzuchJwtBundle extends AbstractBundle
             $bound[] = $keys[$key]['algorithm'];
         }
 
-        self::assertNamesAreUnique(sprintf('Consumer "%s"', $name), $consumer['keys']);
-        $this->assertKeysAreDistinguishable(sprintf('Consumer "%s"', $name), array_intersect_key($keys, array_flip($consumer['keys'])));
+        self::assertNamesAreUnique($context, $consumer['keys']);
+        $this->assertKeysAreDistinguishable($context, array_intersect_key($keys, array_flip($consumer['keys'])));
 
         // Every allowed algorithm must have a key behind it, not merely one of
         // them: an algorithm on the allowlist that no key can verify is a
@@ -1000,8 +1107,8 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         if ([] !== $unsatisfied) {
             throw new InvalidConfigurationException(sprintf(
-                'Consumer "%s" allows %s, but none of its keys is bound to %s, so a token using it could never be verified. Its keys are bound to: %s.',
-                $name,
+                '%s allows %s, but none of its keys is bound to %s, so a token using it could never be verified. Its keys are bound to: %s.',
+                $context,
                 implode('/', $unsatisfied),
                 1 === count($unsatisfied) ? 'it' : 'them',
                 implode('/', array_unique($bound)),

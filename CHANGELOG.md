@@ -33,6 +33,24 @@ a class or method signature would be.
   issuer's rotation, so when they drop it — expired, or leaked — tokens signed with it
   keep verifying against your copy until the entry is deleted.
 
+- **ID tokens for OIDC relying parties (C6).** `id_tokens.<name>` registers a provider
+  and the client you are registered as, and `medzuch_jwt.id_token.<name>` — injectable as
+  `IdTokenVerifier $<name>` — verifies a token the provider handed you: signature and
+  algorithm, `iss`, `aud` against your `client_id`, `azp` when the token names more than
+  one audience, `exp`/`iat`, the claims OIDC requires, and the `nonce` you pass. Keys come
+  from the same sources a consumer uses, local or remote.
+
+  **There is no firewall authenticator for it, deliberately.** An ID token says who
+  authenticated to the client that asked for it; it is not a bearer credential for an API,
+  and accepting one as such is the confusion RFC 9068 exists to end. The bundle gives a
+  service to call where an ID token legitimately arrives — the OIDC callback — and nothing
+  that can be wired into `access_token`.
+
+  The `nonce` is passed per call rather than configured, because it belongs to one
+  authentication request; a value fixed at deploy is not a nonce. `at_hash` is **not**
+  checked: binding an ID token to an access token needs support the library does not have,
+  and this bundle does not reimplement crypto its library is missing.
+
 ### Changed
 
 - **`consumers.<name>.keys` is no longer required**, since a consumer may verify entirely

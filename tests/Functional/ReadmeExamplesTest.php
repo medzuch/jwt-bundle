@@ -84,6 +84,35 @@ final class ReadmeExamplesTest extends KernelTestCase
         }
     }
 
+    #[TestDox('an autowired argument in a PHP example names a registration the README declares')]
+    public function testAutowiredArgumentNamesMatchRegistrations(): void
+    {
+        // The YAML blocks are compiled; the PHP beside them is not, so an
+        // argument name that matches no registration reads as working code and
+        // is a container error on first boot. This is the narrow invariant that
+        // catches it: the name in `IdTokenVerifier $x` is the registration
+        // name, so `x` has to be one the README configures.
+        $declared = [];
+
+        foreach (self::readmeConfigurations() as [, $configuration]) {
+            $registrations = $configuration['id_tokens'] ?? [];
+
+            if (is_array($registrations)) {
+                $declared = [...$declared, ...array_keys($registrations)];
+            }
+        }
+
+        self::assertNotSame([], $declared, 'the README should configure at least one id_tokens registration');
+
+        preg_match_all('/IdTokenVerifier \$(\w+)/', self::readme(), $matches);
+
+        self::assertNotSame([], $matches[1], 'the README should show the verifier being injected');
+
+        foreach (array_unique($matches[1]) as $argument) {
+            self::assertContains($argument, $declared, sprintf('the README injects "IdTokenVerifier $%s", which no example registers', $argument));
+        }
+    }
+
     /**
      * Service ids an example promises by declaring the sections it declares.
      *
@@ -106,6 +135,14 @@ final class ReadmeExamplesTest extends KernelTestCase
                 foreach ($prefixes as $prefix) {
                     $ids[] = sprintf('medzuch_jwt.%s.%s', $prefix, $name);
                 }
+            }
+        }
+
+        $registrations = $configuration['id_tokens'] ?? [];
+
+        if (is_array($registrations)) {
+            foreach (array_keys($registrations) as $registration) {
+                $ids[] = sprintf('medzuch_jwt.id_token.%s', $registration);
             }
         }
 

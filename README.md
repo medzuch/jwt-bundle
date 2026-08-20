@@ -498,6 +498,64 @@ With a remote set configured, the build-time check that every allowed algorithm 
 behind it is not made — the issuer publishes their algorithms at runtime and may rotate to one
 this application has never seen, so the question has no answer while the container is built.
 
+## Verifying an ID token (OIDC relying party)
+
+An ID token is what an identity provider hands your application at the end of a login, saying
+who just authenticated. Register the provider and the client you are registered as:
+
+```yaml
+medzuch_jwt:
+    remote_jwks:
+        partner_idp:
+            uri: 'https://idp.example.com/.well-known/jwks.json'
+
+    id_tokens:
+        partner:
+            issuer: 'https://idp.example.com'
+            client_id: '%env(OIDC_CLIENT_ID)%'
+            remote_jwks: partner_idp
+            allowed_algorithms: [RS256]
+```
+
+Then verify it where you already are — in the callback that received it:
+
+```php
+use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
+
+public function callback(Request $request, IdTokenVerifier $partner): Response
+{
+    $claims = $partner->verify(
+        $idToken,
+        $request->getSession()->remove('oidc_nonce'),   // the value you sent with the authentication request
+    );
+
+    $subject = $claims->getString('sub');   // who the provider says this is
+    // …find or create your own user for that subject, then log them in
+}
+```
+
+The argument name is the registration name: `IdTokenVerifier $partner` gets the `partner`
+registration, because the bundle registers an alias for it. The service id is
+`medzuch_jwt.id_token.partner` if you would rather fetch it.
+
+**There is no firewall authenticator for ID tokens, deliberately.** An ID token says who
+authenticated *to the client that asked for it*; it is not a bearer credential for an API, and
+accepting one as such is exactly the confusion RFC 9068 exists to end — a token minted for a
+browser session would authorise a machine call. The bundle therefore gives you a service to call
+at the point where an ID token legitimately arrives, and nothing that can be wired into
+`access_token`.
+
+**Pass the nonce you sent.** It is per-authentication-request, so it cannot live in
+configuration; keep it in the session between the authentication request and the callback. An
+authorization-code flow that sent a nonce and then does not check it has no replay defence (OIDC
+Core §3.1.3.7). Omitting the argument skips the check, which is right only for a flow that sent
+none.
+
+What is checked: signature and algorithm, `iss`, `aud` against your `client_id`, `azp` when the
+token names more than one audience, `exp`/`iat`, the claims OIDC requires, and the `nonce` when
+you pass one. **`at_hash` is not** — binding an ID token to an access token needs support the
+library does not have yet, and this bundle does not reimplement crypto its library is missing.
+
 ## Configuration reference
 
 The complete tree, with every option, default and explanation, is generated from the bundle
