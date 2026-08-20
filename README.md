@@ -522,9 +522,9 @@ Then verify it where you already are — in the callback that received it:
 ```php
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
 
-public function callback(Request $request, IdTokenVerifier $partnerIdToken): Response
+public function callback(Request $request, IdTokenVerifier $partner): Response
 {
-    $claims = $partnerIdToken->verify(
+    $claims = $partner->verify(
         $idToken,
         $request->getSession()->remove('oidc_nonce'),   // the value you sent with the authentication request
     );
