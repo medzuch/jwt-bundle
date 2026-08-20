@@ -11,8 +11,8 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** v0.1.0 released. Phases 0 and 1 of §7 are shipped, and so is
-> Phase 2: PEM and JWK key sources, rotation, the JWKS publisher and
+> **Status.** v0.2.0 released. Phases 0, 1 and 2 of §7 are shipped: PEM and JWK
+> key sources, named keys and rotation, the JWKS publisher and
 > `jwt:key:generate`. EdDSA works end to end, since the JWK source is the only
 > one RFC 8037 gives it. Next is Phase 3 (remote JWKS).
 >
@@ -494,7 +494,7 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   `max_token_age` are the T2 half and stay in Phase 4.)*
 - **Phase 2 — Keys & rotation (v0.2).** K1–K4, K9: PEM/JWK sources, named keys,
   `kid` selection, active/accepted split, JWKS publisher, `jwt:key:generate`,
-  RS256/ES256/EdDSA support end to end. *(Shipped. The active/accepted split
+  RS256/ES256/EdDSA support end to end. *(Shipped in v0.2.0. The active/accepted split
   needed no `active` flag: an issuer names one key and a consumer names several,
   which is the same thing said once instead of twice. K1's JWKS-file source is
   deliberately not there — see the row — and Symfony Secrets need no source of
@@ -576,6 +576,14 @@ PHP 8.3 with lowest dependencies, 7.4 on 8.3 and 8.4, 8.x on 8.4 (Symfony 8
 requires PHP 8.4, and the library's ceiling is 8.4). If a version-conditional
 branch ever becomes necessary in `src/`, that is the signal to raise the floor
 rather than to add the branch.
+
+*Reviewed 2026-08-20:* 6.4 stays until **November 2026**, when it leaves active
+support, and the floor rises to `^7.4` in the release after that. It is no
+consumer's requirement — the only application on this library pins `7.4.*` — so
+what holds it here is reach, and reach is what expires with the support window.
+Two things to know before doing it: `treatPhpDocTypesAsCertain` stays off either
+way, since that conflict is Symfony 8 against 7.4 as well, and the 6.4 leg is
+also the `--prefer-lowest` one, which has to move rather than disappear.
 
 **DEC-3 — Revocation: `TokenDenylistInterface`, a `NullDenylist` default and a
 PSR-16 implementation in-tree; no Doctrine entity, now or later.** A denylist

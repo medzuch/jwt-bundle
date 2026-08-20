@@ -11,6 +11,21 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-20
+
+Phase 2 of the roadmap in [`docs/plan.md`](docs/plan.md): keys stop being one
+shared secret. RSA, EC and Ed25519 keys, from PEM or JWK documents, named and
+rotatable without downtime; a JWK Set endpoint for the relying parties that
+verify your tokens; and a command that generates any of it and prints the
+configuration to paste.
+
+**Still pre-1.0.** Configuration keys are public API and changes to them are
+recorded with a deprecation path, but the surface is young enough that it
+should be expected to move. No configuration key from 0.1.0 was removed or
+renamed, so an application on HMAC keys upgrades by changing the constraint —
+unless it named one key twice in a consumer's `keys`, which is now refused;
+see **Changed**.
+
 ### Added
 
 - **JWK key sources, and with them EdDSA.** A key entry takes `jwk_private` and/or
@@ -70,6 +85,13 @@ a class or method signature would be.
 
 ### Changed
 
+- **A consumer naming the same key twice is refused at container build.** It
+  booted in 0.1.0: the key went into the verification set twice, and since
+  resolution is first-match-wins the second copy was simply unreachable. It is
+  now an error for the same reason the other key checks are — the second
+  mention cannot change what verifies, so it was either a typo or a
+  misunderstanding of what listing a key twice would do. The only affected
+  configuration is one that already carried a redundant entry.
 - **Key services answer by role**: `medzuch_jwt.key.<name>.signing` and
   `medzuch_jwt.key.<name>.verification`, so both sides read the same at the call
   site. For a shared secret both are aliases to `medzuch_jwt.key.<name>`, which
@@ -164,5 +186,6 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.2.0
 [0.1.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.1.0
