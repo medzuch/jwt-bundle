@@ -7,13 +7,14 @@ namespace Medzuch\JwtBundle\Tests\Functional\App;
 use LogicException;
 
 /**
- * Stands behind the `json_login` check path, which the firewall handles before
- * routing. Reaching this means the firewall did not.
+ * Stands behind paths security is meant to settle on its own: the `json_login`
+ * check path, which the firewall handles before routing, and a path an
+ * `access_control` rule denies. Reaching this means security did neither.
  */
 final class NeverReachedController
 {
     public function __invoke(): never
     {
-        throw new LogicException('The json_login listener should have handled this request.');
+        throw new LogicException('Security should have handled this request before the controller.');
     }
 }

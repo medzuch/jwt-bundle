@@ -12,6 +12,7 @@ use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
+use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
@@ -55,6 +56,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->configureKeys($children);
         $this->configureIssuers($children);
         $this->configureConsumers($children);
+        $this->configureJwks($children);
     }
 
     /**
@@ -70,6 +72,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     logger: string|null,
          *     keys: array<string, array{hmac?: string, pem_private?: string, pem_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}>,
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
+         *     jwks: array{keys: list<string>, cache_max_age: int},
          *     consumers: array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}>,
          * } $config */
         $container->import('../config/services.yaml');
@@ -86,6 +89,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerKeys($services, $keys);
         $this->registerIssuers($services, $keys, $config['issuers']);
         $this->registerConsumers($services, $keys, $config['consumers'], $config['logger']);
+        $this->registerJwks($services, $keys, $config['jwks']);
     }
 
     private function configureGlobals(NodeBuilder $children): void
@@ -199,7 +203,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $audience->scalarPrototype()->cannotBeEmpty()->end();
         $audience->isRequired();
         $audience->requiresAtLeastOneElement();
-        self::rejectMaps($audience, 'audience');
+        self::rejectMaps($audience, 'issuers.*.audience');
 
         $claims = $issuer->arrayNode('claims');
         $claims->info('Static claims added to every token. A caller can override one; the profile\'s own claims cannot be overridden by either.');
@@ -215,6 +219,27 @@ final class MedzuchJwtBundle extends AbstractBundle
                 'Static claims cannot include the registered claims %s — they are set from configuration (`issuer`, `audience`, `ttl`) or by the profile. Got %%s',
                 '"' . implode('", "', self::REGISTERED_CLAIMS) . '"',
             ))
+            ->end();
+    }
+
+    private function configureJwks(NodeBuilder $children): void
+    {
+        $jwks = $children->arrayNode('jwks')
+            ->info('Public keys to publish as a JWK Set. The application routes to medzuch_jwt.jwks_controller itself; where the document lives is its decision.')
+            ->addDefaultsIfNotSet();
+
+        $jwksChildren = $jwks->children();
+
+        $keys = $jwksChildren->arrayNode('keys');
+        $keys->info('Names from the `keys` section. Only verification halves are published, and never a shared secret.');
+        $keys->scalarPrototype()->cannotBeEmpty()->end();
+        $keys->defaultValue([]);
+        self::rejectMaps($keys, 'jwks.keys');
+
+        $jwksChildren->integerNode('cache_max_age')
+            ->defaultValue(300)
+            ->min(0)
+            ->info('Seconds a relying party may cache the document. The response carries an ETag, so zero means revalidate — a conditional request gets 304 — rather than refetch. A rotation needs neither: an accepted key stays accepted for as long as it is configured.')
             ->end();
     }
 
@@ -241,21 +266,21 @@ final class MedzuchJwtBundle extends AbstractBundle
         $audience->scalarPrototype()->cannotBeEmpty()->end();
         $audience->isRequired();
         $audience->requiresAtLeastOneElement();
-        self::rejectMaps($audience, 'audience');
+        self::rejectMaps($audience, 'consumers.*.audience');
 
         $keys = $consumer->arrayNode('keys');
         $keys->info('Names from the `keys` section. Verification tries the key the token names, or the one bound to its algorithm.');
         $keys->scalarPrototype()->cannotBeEmpty()->end();
         $keys->isRequired();
         $keys->requiresAtLeastOneElement();
-        self::rejectMaps($keys, 'keys');
+        self::rejectMaps($keys, 'consumers.*.keys');
 
         $algorithms = $consumer->arrayNode('allowed_algorithms');
         $algorithms->info('JOSE `alg` values accepted. Anything else is refused before a signature is checked.');
         $algorithms->enumPrototype()->values(SigningAlgorithms::names())->end();
         $algorithms->isRequired();
         $algorithms->requiresAtLeastOneElement();
-        self::rejectMaps($algorithms, 'allowed_algorithms');
+        self::rejectMaps($algorithms, 'consumers.*.allowed_algorithms');
 
         $consumer->integerNode('leeway')
             ->defaultValue(0)
@@ -317,6 +342,25 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
+     * The same name twice is always a mistake and never a rotation: it puts one
+     * key in a set twice, which no resolver anywhere benefits from.
+     *
+     * @param list<string> $names
+     */
+    private static function assertNamesAreUnique(string $context, array $names): void
+    {
+        $duplicates = array_keys(array_filter(array_count_values($names), static fn(int $count): bool => $count > 1));
+
+        if ([] !== $duplicates) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s names key "%s" more than once.',
+                $context,
+                implode('", "', $duplicates),
+            ));
+        }
+    }
+
+    /**
      * A list-shaped node must not be given a YAML map. Symfony's prototyped
      * array nodes accept arbitrary keys, and the library refuses an associative
      * array — but it refuses it inside a lazily built service, which makes a
@@ -327,7 +371,7 @@ final class MedzuchJwtBundle extends AbstractBundle
     {
         $node->validate()
             ->ifTrue(static fn(mixed $value): bool => is_array($value) && !array_is_list($value))
-            ->thenInvalid(sprintf('medzuch_jwt consumer "%s" must be a sequence, not a map. Got %%s', $name))
+            ->thenInvalid(sprintf('medzuch_jwt.%s must be a sequence, not a map. Got %%s', $name))
             ->end();
     }
 
@@ -349,7 +393,7 @@ final class MedzuchJwtBundle extends AbstractBundle
      *
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
      */
-    private function assertKeysAreDistinguishable(string $consumer, array $keys): void
+    private function assertKeysAreDistinguishable(string $context, array $keys): void
     {
         $anonymousByAlgorithm = [];
         $namesByKid = [];
@@ -367,8 +411,8 @@ final class MedzuchJwtBundle extends AbstractBundle
         foreach ($anonymousByAlgorithm as $algorithm => $names) {
             if (count($names) > 1) {
                 throw new InvalidConfigurationException(sprintf(
-                    'Consumer "%s" verifies with keys "%s", all bound to %s with no "kid", so a token cannot say which one signed it. Give each of them a kid.',
-                    $consumer,
+                    '%s uses keys "%s", all bound to %s with no "kid", so a token cannot say which one signed it. Give each of them a kid.',
+                    $context,
                     implode('", "', $names),
                     $algorithm,
                 ));
@@ -378,8 +422,8 @@ final class MedzuchJwtBundle extends AbstractBundle
         foreach ($namesByKid as $kid => $names) {
             if (count($names) > 1) {
                 throw new InvalidConfigurationException(sprintf(
-                    'Consumer "%s" verifies with keys "%s", which share the kid "%s". A token naming it is verified against the first of them and never the others.',
-                    $consumer,
+                    '%s uses keys "%s", which share the kid "%s". Selection by kid reaches the first of them and never the others.',
+                    $context,
                     implode('", "', $names),
                     $kid,
                 ));
@@ -524,6 +568,58 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
+     * @param array{keys: list<string>, cache_max_age: int}                                                                                                              $jwks
+     */
+    private function registerJwks(ServicesConfigurator $services, array $keys, array $jwks): void
+    {
+        if ([] === $jwks['keys']) {
+            return;
+        }
+
+        foreach ($jwks['keys'] as $name) {
+            if (!isset($keys[$name])) {
+                throw new InvalidConfigurationException(sprintf(
+                    'medzuch_jwt.jwks publishes key "%s", which is not defined under medzuch_jwt.keys.',
+                    $name,
+                ));
+            }
+
+            // The one refusal this endpoint exists to make. A symmetric key's
+            // JWK carries `k`, so publishing it hands every reader the key that
+            // signs — and it would be a fully valid JWK Set, served with a 200.
+            if (null !== $keys[$name]['hmac']) {
+                throw new InvalidConfigurationException(sprintf(
+                    'medzuch_jwt.jwks would publish key "%s", which is a shared secret. Its JWK carries the secret itself, so publishing it gives away the key that signs.',
+                    $name,
+                ));
+            }
+
+            if (null === $keys[$name]['pem_public']) {
+                throw new InvalidConfigurationException(sprintf(
+                    'medzuch_jwt.jwks publishes key "%s", which has no public half to publish.',
+                    $name,
+                ));
+            }
+        }
+
+        self::assertNamesAreUnique('medzuch_jwt.jwks', $jwks['keys']);
+        $this->assertKeysAreDistinguishable('medzuch_jwt.jwks', array_intersect_key($keys, array_flip($jwks['keys'])));
+
+        $services->set('medzuch_jwt.jwks.key_set', JwkSet::class)
+            ->factory([JwkSet::class, 'of'])
+            ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.key.' . $key . '.verification'), array_values($jwks['keys'])));
+
+        $services->set('medzuch_jwt.jwks_controller', JwksController::class)
+            ->args([service('medzuch_jwt.jwks.key_set'), $jwks['cache_max_age']])
+            // Public is what makes `controller: medzuch_jwt.jwks_controller`
+            // resolvable. No `controller.service_arguments` tag: the action
+            // takes a Request, which the standard resolver provides, and no
+            // services at all.
+            ->public();
+    }
+
+    /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
      * @param array<string, array{issuer: string, audience: list<string>, keys: list<string>, allowed_algorithms: list<string>, leeway: int, user: array{identity_claim: string}}> $consumers
      */
@@ -583,7 +679,8 @@ final class MedzuchJwtBundle extends AbstractBundle
             $bound[] = $keys[$key]['algorithm'];
         }
 
-        $this->assertKeysAreDistinguishable($name, array_intersect_key($keys, array_flip($consumer['keys'])));
+        self::assertNamesAreUnique(sprintf('Consumer "%s"', $name), $consumer['keys']);
+        $this->assertKeysAreDistinguishable(sprintf('Consumer "%s"', $name), array_intersect_key($keys, array_flip($consumer['keys'])));
 
         // Every allowed algorithm must have a key behind it, not merely one of
         // them: an algorithm on the allowlist that no key can verify is a

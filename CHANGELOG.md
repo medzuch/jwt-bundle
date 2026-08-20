@@ -13,6 +13,25 @@ a class or method signature would be.
 
 ### Added
 
+- **A JWK Set endpoint.** `medzuch_jwt.jwks` names the keys to publish and
+  `medzuch_jwt.jwks_controller` serves them as RFC 7517 `application/jwk-set+json`,
+  cacheable for a configurable time. The bundle registers **no route**: where the
+  document lives is a routing decision and routing belongs to the application
+  (DEC-6 in the plan). Publishing a shared secret is refused at container build —
+  a symmetric key's JWK carries the secret itself, so it would hand every reader
+  the key that signs, in a document that parses and returns 200. So is a key with
+  no public half, one that does not exist, one named twice, and a set whose keys
+  a relying party could not tell apart — the same `kid` rules a consumer's keys
+  already answer to, for the same reason: the published document is the only
+  thing a relying party has to resolve against. Published keys state
+  `use: "sig"`, and the response carries an `ETag`, so a conditional request
+  gets a 304 and `cache_max_age: 0` means revalidate rather than refetch.
+- **Key rotation works without a rotation feature.** An issuer signs with one key
+  while a consumer accepts several, so adding a key, accepting it, then signing
+  with it rotates with no downtime — and the `kid` requirement that makes the
+  overlap resolvable is already enforced. Documented as a procedure in the
+  README, with a functional test that mints from the retired key and verifies it
+  alongside the current one.
 - **RSA and EC keys.** A key entry takes `pem_private` and/or `pem_public`
   instead of `hmac`, each of them either a path to a PEM file or the PEM
   itself — told apart by the armour, since no path begins with `-----BEGIN`.

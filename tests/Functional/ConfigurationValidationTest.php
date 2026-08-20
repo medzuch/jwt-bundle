@@ -297,6 +297,107 @@ final class ConfigurationValidationTest extends KernelTestCase
         ]]);
     }
 
+    #[TestDox('publishing a shared secret as JWKS fails at container build')]
+    public function testJwksRefusesASharedSecret(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/gives away the key that signs/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'jwks' => ['keys' => ['default']],
+        ]]);
+    }
+
+    #[TestDox('publishing a key with no public half fails at container build')]
+    public function testJwksRefusesAPrivateOnlyKey(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/no public half to publish/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_private' => self::PEM, 'algorithm' => 'RS256']],
+            'jwks' => ['keys' => ['default']],
+        ]]);
+    }
+
+    #[TestDox('publishing a key that does not exist fails at container build')]
+    public function testJwksRefusesAnUnknownKey(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/publishes key "typo"/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['pem_public' => self::PEM, 'algorithm' => 'RS256']],
+            'jwks' => ['keys' => ['typo']],
+        ]]);
+    }
+
+    #[TestDox('publishing the same key twice fails at container build')]
+    public function testJwksRefusesADuplicateName(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/medzuch_jwt\.jwks names key "verify" more than once/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['verify' => ['pem_public' => self::PEM, 'algorithm' => 'RS256', 'kid' => '2026-01']],
+            'jwks' => ['keys' => ['verify', 'verify']],
+        ]]);
+    }
+
+    #[TestDox('publishing two keys that share a kid fails at container build (DEC-5)')]
+    public function testJwksRefusesKeysSharingAKid(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        // The context matters as much as the message: the consumer check has
+        // its own case, and one that named neither would pass with the jwks
+        // call site deleted.
+        $this->expectExceptionMessageMatches('/medzuch_jwt\.jwks uses keys .*share the kid "2026-01"/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => [
+                'current' => ['pem_public' => self::PEM, 'algorithm' => 'RS256', 'kid' => '2026-01'],
+                'previous' => ['pem_public' => self::PEM, 'algorithm' => 'RS256', 'kid' => '2026-01'],
+            ],
+            'jwks' => ['keys' => ['current', 'previous']],
+        ]]);
+    }
+
+    #[TestDox('publishing two kid-less keys on one algorithm fails at container build (DEC-5)')]
+    public function testJwksRefusesKidLessKeysOnOneAlgorithm(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/medzuch_jwt\.jwks uses keys .*with no "kid"/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => [
+                'current' => ['pem_public' => self::PEM, 'algorithm' => 'RS256'],
+                'previous' => ['pem_public' => self::PEM, 'algorithm' => 'RS256'],
+            ],
+            'jwks' => ['keys' => ['current', 'previous']],
+        ]]);
+    }
+
+    #[TestDox('a consumer naming one key twice fails at container build')]
+    public function testConsumerRefusesADuplicateName(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/Consumer "api" names key "default" more than once/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'consumers' => ['api' => self::consumer(['keys' => ['default', 'default']])],
+        ]]);
+    }
+
+    #[TestDox('no jwks section means no publisher, not an empty one')]
+    public function testNoJwksMeansNoController(): void
+    {
+        self::bootKernel(['medzuch_jwt' => ['keys' => ['default' => ['hmac' => self::SECRET]]]]);
+
+        self::assertFalse(self::getContainer()->has('medzuch_jwt.jwks_controller'));
+    }
+
     /**
      * @param array<string, mixed> $overrides
      *
