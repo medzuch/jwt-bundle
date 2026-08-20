@@ -109,6 +109,14 @@ final class ReadmeExamplesTest extends KernelTestCase
             }
         }
 
+        $registrations = $configuration['id_tokens'] ?? [];
+
+        if (is_array($registrations)) {
+            foreach (array_keys($registrations) as $registration) {
+                $ids[] = sprintf('medzuch_jwt.id_token.%s', $registration);
+            }
+        }
+
         $sets = $configuration['remote_jwks'] ?? [];
 
         if (is_array($sets)) {

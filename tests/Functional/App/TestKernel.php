@@ -59,6 +59,17 @@ final class TestKernel extends Kernel
             $container->register('test.cache', ArrayCache::class)->setPublic(true);
             $container->register('test.cache_pool', ArrayAdapter::class)->setPublic(true);
 
+            // Registered only where it can be satisfied: it asks for an ID
+            // token verifier by argument name, which is the whole of what it
+            // is here to prove.
+            $registrations = $this->bundleConfig['id_tokens'] ?? null;
+
+            if (is_array($registrations) && isset($registrations['partner'])) {
+                $container->register('test.oidc_callback', OidcCallback::class)
+                    ->setAutowired(true)
+                    ->setPublic(true);
+            }
+
             foreach ($this->aliases as $id => $target) {
                 $container->setAlias($id, $target);
             }
