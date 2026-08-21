@@ -409,6 +409,55 @@ set outside `claims` mode is indistinguishable from one never written, and it is
 carries. If your access rules lean on a baseline like `ROLE_USER`, say so — nothing invents it
 for you.
 
+## Where the token comes from
+
+Symfony reads the `Authorization` header by default, and ships extractors for the query string
+and a form-encoded body — `security.access_token_extractor.header`, `.query_string`,
+`.request_body`. The one it does not ship is the one a browser needs:
+
+```yaml
+medzuch_jwt:
+    token_extractors:
+        spa:
+            cookie: '__Host-jwt'
+            same_site_only: true
+```
+
+```yaml
+security:
+    firewalls:
+        api:
+            access_token:
+                token_handler: medzuch_jwt.handler.api
+                token_extractors:
+                    - security.access_token_extractor.header
+                    - medzuch_jwt.token_extractor.spa
+```
+
+A single-page application that keeps its token in JavaScript keeps it where any injected script
+can read it. An `HttpOnly` cookie is the safer place for it — and then something has to read the
+token back off the request, which the header extractor cannot.
+
+**Read the trade before taking it.** A token in an `Authorization` header is immune to CSRF by
+construction: nothing attaches one for you. A cookie is attached by the browser to requests your
+application did not initiate, which is precisely what CSRF is. Moving the token into a cookie
+buys protection from script access and takes on cross-site request forgery in exchange.
+
+Neither this extractor nor anything else in the bundle closes that on its own. What you need
+beside it:
+
+- `SameSite=Lax` at least, `Strict` where the flow allows, set on the cookie by whatever issues
+  it — this bundle does not set cookies;
+- the `__Host-` prefix, which makes the browser refuse the cookie unless it is `Secure`,
+  path-wide and unscoped to a domain, so a subdomain cannot set one for you;
+- CSRF protection on state-changing routes, the same as any cookie-authenticated application.
+
+`same_site_only: true` adds defence in depth: when the browser says the request came from
+another site (`Sec-Fetch-Site: cross-site`), the cookie is ignored. It is not a CSRF defence —
+a request without that header, from an API client or an older browser, is not judged at all —
+and it is off by default because it silently drops legitimate cross-site calls in a flow that
+means them.
+
 ## Revoking a token
 
 A JWT is valid because it verifies, not because anyone is still willing to accept it — that is

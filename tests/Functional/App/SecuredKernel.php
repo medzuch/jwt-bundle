@@ -98,11 +98,23 @@ final class SecuredKernel extends Kernel
         }
 
         if (self::configures($this->bundleConfig, 'consumers', 'api')) {
+            $accessToken = ['token_handler' => 'medzuch_jwt.handler.api'];
+
+            // The firewall names the extractors, as an application's would:
+            // the bundle registers them, security.yaml chooses them, and the
+            // header one stays first so the ordinary client is unaffected.
+            if (self::configures($this->bundleConfig, 'token_extractors', 'cookie')) {
+                $accessToken['token_extractors'] = [
+                    'security.access_token_extractor.header',
+                    'medzuch_jwt.token_extractor.cookie',
+                ];
+            }
+
             $firewalls['api'] = [
                 'pattern' => '^/api',
                 'stateless' => true,
                 'provider' => 'users',
-                'access_token' => ['token_handler' => 'medzuch_jwt.handler.api'],
+                'access_token' => $accessToken,
             ];
         }
 

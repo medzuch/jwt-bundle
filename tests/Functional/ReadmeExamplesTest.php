@@ -150,6 +150,14 @@ final class ReadmeExamplesTest extends KernelTestCase
             }
         }
 
+        $extractors = $configuration['token_extractors'] ?? [];
+
+        if (is_array($extractors)) {
+            foreach (array_keys($extractors) as $extractor) {
+                $ids[] = sprintf('medzuch_jwt.token_extractor.%s', $extractor);
+            }
+        }
+
         $registrations = $configuration['id_tokens'] ?? [];
 
         if (is_array($registrations)) {

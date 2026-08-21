@@ -16,7 +16,7 @@
 > and federation — remote JWK Sets with local fallback (K5, K6), ID-token
 > verification (C6) and the audience policy (C14). EdDSA works end to end, since
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
-> the road to 1.0 — is under way: C3's remaining modes, C4 and C9 are in.
+> the road to 1.0 — is under way: C3's remaining modes, C4, C5 and C9 are in.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -199,7 +199,7 @@ default and adds no runtime cost when unconfigured.
 | C2 | Named consumers bindable to different firewalls (public API vs. admin vs. internal) | DI, config tree §4 | T1 |
 | C3 | User resolution modes `provider` / `claims` / `custom` (§2.2) incl. a `JwtUser` value object carrying the claim set. One resolver per mode, so the handler holds a collaborator rather than nullable options encoding three behaviours | `ClaimsSet` | T1 (`provider`), T2 (rest) |
 | C4 | Claim → role mapping (`scope`, `roles`, `groups`, custom), configurable prefix, separator and baseline. Only mode `claims` reads it: elsewhere the provider or the factory decides, and a mapping nothing reads is refused at build | `ClaimsSet::get()` | T2 |
-| C5 | Token extractors: `header` (Bearer), `query`, `cookie`, `body`, custom service — cookie matters for browser SPAs | Native Symfony extractors + ours | T2 |
+| C5 | Token extractors: the cookie one, which Symfony does not ship; `header`, `query_string` and `request_body` are native and re-spelling them would be names to learn for nothing. Ships with the CSRF trade documented, and an opt-in `Sec-Fetch-Site` check that is defence in depth rather than a defence | `CookieTokenExtractor` + native | T2 |
 | C6 | ID-token verifier for OIDC relying-party flows (`nonce`, `azp`). A service the application calls from its callback, **not** a firewall authenticator (DEC-8). `at_hash` is not checked: the library has no support for it, and the bundle does not reimplement crypto its library is missing | `IdTokenProfile::consumer()` | T2 |
 | C7 | Generic/custom-profile handler for app-defined `typ` values | `ValidatorBuilder`, `MediaType::custom()` | T2 |
 | C8 | Security Event Token consumer (receiving RISC/CAEP-style events) | `SetProfile::consumer()` | T3 |
