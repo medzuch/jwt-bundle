@@ -141,6 +141,18 @@ final class RevocationTest extends KernelTestCase
         self::bootKernel(['medzuch_jwt' => self::configuration(denylist: ['cache' => 'test.cache', 'prefix' => 'app:jwt:revoked:'])]);
     }
 
+    #[TestDox('a backslash in the prefix is refused too, which a character class quietly let through')]
+    public function testBackslashInPrefix(): void
+    {
+        // The colon case passes under either spelling of the check; only this
+        // one distinguishes a pattern that covers the reserved set from one
+        // that reads as if it does.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/PSR-16 §6 reserves/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(denylist: ['cache' => 'test.cache', 'prefix' => 'ns\\revoked.'])]);
+    }
+
     #[TestDox('a prefix beside a denylist of your own fails at container build')]
     public function testPrefixWithACustomService(): void
     {

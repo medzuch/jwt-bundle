@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Revocation;
 
 use DateTimeImmutable;
+use InvalidArgumentException;
 
 /**
  * Tokens refused before their own expiry says so.
@@ -25,6 +26,9 @@ use DateTimeImmutable;
 interface TokenDenylistInterface
 {
     /**
+     * @throws InvalidArgumentException when `$jti` is empty: there would be nothing to refuse,
+     *                                   and a store holding such an entry answers a question nobody can ask
+     *
      * @param DateTimeImmutable $until the token's own expiry. An implementation that
      *                                 expires its entries must keep this one until the consumer stops accepting
      *                                 the token, which is `$until` plus the consumer's leeway — the shipped one

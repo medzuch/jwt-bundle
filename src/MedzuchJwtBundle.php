@@ -535,8 +535,11 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ->thenInvalid('A denylist prefix over 32 characters can push the key past the 64 PSR-16 guarantees, once the hash of the jti is appended. Got %s')
             ->end()
             ->validate()
-                ->ifTrue(static fn(mixed $value): bool => is_string($value) && 1 === preg_match('/[{}()\/\\@:]/', $value))
-                ->thenInvalid('A denylist prefix cannot contain {}()/\@:, which PSR-16 §6 reserves. A store rejects such a key on every request that checks one, which is a 500 rather than a configuration error. Got %s')
+                // strpbrk over the reserved set rather than a character class:
+                // the backslash in one is a question about two escaping layers,
+                // and the pattern that reads as covering it does not.
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && false !== strpbrk($value, '{}()/\\@:'))
+                ->thenInvalid('A denylist prefix cannot contain {}()/\@:, which PSR-16 §6 reserves and Symfony\'s cache refuses. A store rejects such a key on every request that checks one, which is a 500 rather than a configuration error. Got %s')
             ->end()
             ->end();
 
