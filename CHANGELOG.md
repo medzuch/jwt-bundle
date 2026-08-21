@@ -13,6 +13,23 @@ a class or method signature would be.
 
 ### Added
 
+- **A cookie token extractor (C5).** `token_extractors.<name>.cookie` registers
+  `medzuch_jwt.token_extractor.<name>`, to be named in a firewall's
+  `access_token.token_extractors` beside Symfony's own `.header`, `.query_string` and
+  `.request_body`. The cookie is the one Symfony does not ship and the one a browser
+  needs: a single-page application keeping its token in JavaScript keeps it where any
+  injected script can read it.
+
+  The trade is stated in the README rather than left to be discovered: a token in an
+  `Authorization` header is immune to CSRF by construction, a cookie is attached by the
+  browser to requests your application did not initiate, and moving the token buys
+  protection from script access in exchange for cross-site request forgery. `SameSite`,
+  the `__Host-` prefix and CSRF protection on state-changing routes are the application's
+  to add — as is the extractor order, since Symfony's chain stops at the first extractor
+  that finds anything: with the header listed first, a browser sending any `Authorization`
+  header at all gets a 401 while its cookie sits unread. `same_site_only: true` ignores the cookie when the browser reports a cross-site
+  request — defence in depth, off by default, and explicitly not a CSRF defence, since a
+  request without `Sec-Fetch-Site` is not judged at all.
 - **Token revocation (C9).** `consumers.<name>.denylist` gives a consumer somewhere to ask
   whether a token has been withdrawn since it was issued — a logout, a leak, an account
   suspended mid-session. Keyed on `jti`, which RFC 9068 §2.2 makes required, so every

@@ -23,6 +23,7 @@ use Medzuch\JwtBundle\Revocation\CacheTokenDenylist;
 use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
+use Medzuch\JwtBundle\Security\Extractor\CookieTokenExtractor;
 use Medzuch\JwtBundle\Security\Identity\ClaimsUserResolver;
 use Medzuch\JwtBundle\Security\Identity\CustomUserResolver;
 use Medzuch\JwtBundle\Security\Identity\ProviderUserResolver;
@@ -76,6 +77,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->configureRemoteJwks($children);
         $this->configureIssuers($children);
         $this->configureConsumers($children);
+        $this->configureTokenExtractors($children);
         $this->configureIdTokens($children);
         $this->configureJwks($children);
     }
@@ -97,6 +99,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
+         *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
          * } $config */
         $container->import('../config/services.yaml');
 
@@ -113,7 +116,9 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger']);
         $this->registerIssuers($services, $keys, $config['issuers']);
         $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['remote_jwks'], $config['logger']);
+        $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger']);
+
         $this->registerJwks($services, $keys, $config['jwks']);
         $this->registerConsoleCommands($services);
     }
@@ -304,6 +309,45 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ->ifTrue(static fn(mixed $value): bool => is_string($value) && '' === trim($value))
                 ->thenInvalid('medzuch_jwt.' . $name . ' cannot be blank; omit it instead. Got %s')
             ->end()
+            ->end();
+    }
+
+    /**
+     * Named token extractors, for the firewall to reference by service id.
+     *
+     * Only the cookie one lives here: Symfony ships extractors for the
+     * `Authorization` header, the query string and a form-encoded body, and a
+     * fourth spelling of those would be a name to learn for no gain. What it
+     * does not ship is the one a browser needs, which is why this exists.
+     */
+    private function configureTokenExtractors(NodeBuilder $children): void
+    {
+        $extractor = $children->arrayNode('token_extractors')
+            ->info('Named token extractors. Reference them from a firewall\'s `access_token.token_extractors`, beside Symfony\'s own security.access_token_extractor.header, .query_string and .request_body.')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $extractor->scalarNode('cookie')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('Name of the cookie carrying the token. A `__Host-` prefix is worth having: it makes the browser refuse the cookie unless it is Secure, path-wide and unscoped to a domain, which stops a subdomain from setting one.')
+            ->example('__Host-jwt')
+            ->validate()
+                // A name outside the RFC 6265 §4.1.1 token set is one no
+                // browser will ever send under, so the extractor would sit
+                // there matching nothing — a build error says that now instead
+                // of leaving an authentication that never fires.
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && 1 !== preg_match('/^[!#$%&\'*+\-.^_`|~0-9A-Za-z]+$/', $value))
+                // The character list is escaped for sprintf, which thenInvalid()
+                // runs the message through: a bare %& is a format specifier.
+                ->thenInvalid('A cookie name must be an RFC 6265 §4.1.1 token: letters, digits and !#$%%&\'*+-.^_`|~, with no spaces or separators. A name outside that set is never sent by a browser. Got %s')
+            ->end()
+            ->end();
+
+        $extractor->booleanNode('same_site_only')
+            ->defaultFalse()
+            ->info('Ignore the cookie when the browser reports the request as cross-site (`Sec-Fetch-Site`). Defence in depth against CSRF, not a defence: a request without the header — an API client, an older browser — is not judged, so state-changing routes still need their own protection.')
             ->end();
     }
 
@@ -1101,6 +1145,17 @@ final class MedzuchJwtBundle extends AbstractBundle
             // `IdTokenVerifier $partner` and get the registration called
             // "partner" rather than a container lookup by string.
             $builder->registerAliasForArgument($id, IdTokenVerifier::class, $name);
+        }
+    }
+
+    /**
+     * @param array<string, array{cookie: string, same_site_only: bool}> $extractors
+     */
+    private function registerTokenExtractors(ServicesConfigurator $services, array $extractors): void
+    {
+        foreach ($extractors as $name => $extractor) {
+            $services->set('medzuch_jwt.token_extractor.' . $name, CookieTokenExtractor::class)
+                ->args([$extractor['cookie'], $extractor['same_site_only']]);
         }
     }
 
