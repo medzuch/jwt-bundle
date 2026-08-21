@@ -69,13 +69,20 @@ final class JwtUser implements ProvidesScopes, UserInterface
      * somewhere else is one whose grants the role mapping can pick up, and two
      * configurable spellings of the same idea would be one too many.
      *
+     * Read with `get()` rather than `getString()`, which throws on a claim that
+     * is present and not a string. This runs during authorization, outside the
+     * handler's try — so an issuer sending `"scope": ["reports.read"]`, which
+     * happens, would turn a 403 into a 500. A claim that is not a
+     * space-delimited string grants nothing, the same reading the role mapping
+     * takes one file over.
+     *
      * @return list<string>
      */
     public function scopes(): array
     {
-        $scope = $this->claims->getString('scope');
+        $scope = $this->claims->get('scope');
 
-        if (null === $scope) {
+        if (!is_string($scope)) {
             return [];
         }
 

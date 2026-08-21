@@ -128,21 +128,25 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
-     * The voter is registered unconditionally: it answers only `SCOPE_*`, it
-     * can grant and never deny anything another voter would have allowed, and
-     * an application with no scopes in its tokens simply never asks. There is
-     * nothing here to switch off.
+     * The voter is registered unconditionally: it answers only `SCOPE_*`, and
+     * an application with no scopes in its tokens simply never asks. Under the
+     * default affirmative strategy its denial cannot override another voter's
+     * grant, so there is nothing here to switch off — under `unanimous` or
+     * `consensus` it votes like any other voter, which is what those strategies
+     * are for.
      *
      * The expression function is another matter — `symfony/expression-language`
-     * is optional, and a provider referencing a class that is not installed is
-     * a container that fails to build over a convenience.
+     * is optional, and a provider registered where Symfony has dropped the
+     * expression language is a tag nobody collects. `willBeAvailable()` is the
+     * same question SecurityBundle asks before removing it, rather than
+     * `class_exists()`, which answers a narrower one.
      */
     private function registerAuthorization(ServicesConfigurator $services): void
     {
         $services->set('medzuch_jwt.scope_voter', ScopeVoter::class)
             ->tag('security.voter');
 
-        if (!class_exists(ExpressionFunction::class)) {
+        if (!ContainerBuilder::willBeAvailable('symfony/expression-language', ExpressionFunction::class, ['medzuch/jwt-bundle'])) {
             return;
         }
 

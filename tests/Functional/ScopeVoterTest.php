@@ -7,6 +7,8 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Security\Authorization\ScopeExpressionProvider;
 use Medzuch\JwtBundle\Security\Authorization\ScopeVoter;
+use Medzuch\JwtBundle\Security\User\JwtUser;
+use Medzuch\JwtBundle\Tests\Functional\App\RecordsTaggedServicesPass;
 use Medzuch\JwtBundle\Tests\Functional\App\SecuredKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
@@ -26,6 +28,8 @@ use Symfony\Component\HttpKernel\KernelInterface;
  * why they keep their own namespace.
  */
 #[CoversClass(ScopeVoter::class)]
+#[CoversClass(ScopeExpressionProvider::class)]
+#[CoversClass(JwtUser::class)]
 final class ScopeVoterTest extends WebTestCase
 {
     use RestoresExceptionHandler;
@@ -111,19 +115,45 @@ final class ScopeVoterTest extends WebTestCase
         );
     }
 
-    #[TestDox('the expression function is registered for the security expression language')]
-    public function testExpressionProviderIsTagged(): void
+    #[TestDox('both services carry the tag that makes them reachable')]
+    public function testTags(): void
     {
         self::createClient();
 
-        $definition = self::getContainer()->getRemovedIds();
+        $tagged = self::getContainer()->getParameter(RecordsTaggedServicesPass::PARAMETER);
+        self::assertIsArray($tagged);
 
-        // The tag is what makes it reachable from an expression at all, and a
-        // provider nothing registers is a function nobody can call.
-        self::assertTrue(
-            self::getContainer()->has('medzuch_jwt.scope_expression_provider') || isset($definition['medzuch_jwt.scope_expression_provider']),
-            'the provider should be registered when symfony/expression-language is installed',
-        );
+        // A voter nothing collects is a class, not a voter, and a provider
+        // without its tag is a function no expression can call. Tags are gone
+        // once the container is compiled, so they are recorded during the build.
+        self::assertContains('medzuch_jwt.scope_voter', $tagged['security.voter'] ?? []);
+        self::assertContains('medzuch_jwt.scope_expression_provider', $tagged['security.expression_language_provider'] ?? []);
+    }
+
+    #[TestDox('a scope claim that is not a delimited string grants nothing, and does not blow up')]
+    public function testMalformedScopeClaim(): void
+    {
+        // Scopes are read during authorization, outside the handler's try, so a
+        // claim that cannot be read as scopes has to grant nothing rather than
+        // throw: an issuer sending "scope": ["reports.read"] would otherwise
+        // turn a 403 into a 500.
+        $client = self::createClient();
+
+        self::requestWithClaims($client, '/api/scoped', ['scope' => ['reports.read']]);
+        self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
+
+        self::requestWithClaims($client, '/api/scoped', ['scope' => 42]);
+        self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
+    }
+
+    #[TestDox('extra spacing in the scope claim is not a scope of its own')]
+    public function testMessyScopeClaim(): void
+    {
+        $client = self::createClient();
+
+        self::requestWithClaims($client, '/api/scoped', ['scope' => '  reports.read   profile ']);
+
+        self::assertResponseIsSuccessful();
     }
 
     #[TestDox('a user from the application\'s own store carries no scopes, and is refused')]
@@ -154,12 +184,27 @@ final class ScopeVoterTest extends WebTestCase
      */
     private static function request(KernelBrowser $client, string $path, array $scopes): void
     {
+        $client->request('GET', $path, server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::issuer()->issue('alice', $scopes)->value,
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $claims
+     */
+    private static function requestWithClaims(KernelBrowser $client, string $path, array $claims): void
+    {
+        $client->request('GET', $path, server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::issuer()->issue('alice', claims: $claims)->value,
+        ]);
+    }
+
+    private static function issuer(): AccessTokenIssuer
+    {
         $issuer = self::getContainer()->get('medzuch_jwt.issuer.default');
         self::assertInstanceOf(AccessTokenIssuer::class, $issuer);
 
-        $client->request('GET', $path, server: [
-            'HTTP_AUTHORIZATION' => 'Bearer ' . $issuer->issue('alice', $scopes)->value,
-        ]);
+        return $issuer;
     }
 
     /**

@@ -70,6 +70,7 @@ final class SecuredKernel extends Kernel
     protected function build(ContainerBuilder $container): void
     {
         $container->addCompilerPass(new PublicForTestsPass(), PassConfig::TYPE_BEFORE_REMOVING);
+        $container->addCompilerPass(new RecordsTaggedServicesPass(), PassConfig::TYPE_BEFORE_REMOVING);
     }
 
     protected function configureContainer(ContainerConfigurator $container): void

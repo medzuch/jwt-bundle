@@ -21,8 +21,11 @@ use Symfony\Component\Security\Core\Authorization\Voter\Voter;
  * A user that carries no scopes is denied rather than passed over: "this user
  * has no such scope" is an answer, and under the default affirmative strategy a
  * voter of the application's own can still grant.
- */
-/**
+ *
+ * The bare `SCOPE_` is answered too, and denied: no token grants the empty
+ * scope, and an attribute nothing else will answer is better refused than left
+ * to the access decision manager's default.
+ *
  * @extends Voter<string, mixed>
  */
 final class ScopeVoter extends Voter
@@ -45,6 +48,10 @@ final class ScopeVoter extends Voter
      * arrived in 7.3. Typed `mixed` so one signature satisfies all three: a
      * wider parameter type is what overriding allows, and naming the class
      * would be a type that does not exist on the oldest supported line.
+     *
+     * The wider type closes nothing: `$vote instanceof Vote` is false rather
+     * than fatal where the class is absent, so a reason for the denial can be
+     * added later without a version-conditional branch.
      */
     protected function voteOnAttribute(string $attribute, mixed $subject, TokenInterface $token, mixed $vote = null): bool
     {
