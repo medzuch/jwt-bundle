@@ -123,6 +123,9 @@ final class SecuredKernel extends Kernel
             // Before the catch-all below, and narrower: an attribute only the
             // scope voter answers.
             ['path' => '^/api/scoped', 'roles' => 'SCOPE_reports.read'],
+            // The prefix with nothing after it, which the voter answers and
+            // denies: no token grants the empty scope.
+            ['path' => '^/api/bare-scope', 'roles' => 'SCOPE_'],
             ['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY'],
         ];
 
@@ -159,7 +162,12 @@ final class SecuredKernel extends Kernel
             // decision to stderr, which PHPUnit reports as unexpected output.
             // Collecting rather than discarding: a silenced kernel also
             // silences the deprecations and errors a round trip would report.
-            ->set('logger', TestLogger::class)->public();
+            ->set('logger', TestLogger::class)->public()
+
+            // A factory an application would own, for the custom user mode. It
+            // costs the tests that ignore it nothing, and a mode this kernel
+            // could not exercise would be a mode no firewall test can reach.
+            ->set('test.user_factory', TenantUserFactory::class)->public();
     }
 
     /**
@@ -186,6 +194,7 @@ final class SecuredKernel extends Kernel
     {
         $routes->add('whoami', '/api/whoami')->controller(WhoAmIController::class);
         $routes->add('scoped', '/api/scoped')->controller(WhoAmIController::class);
+        $routes->add('bare_scope', '/api/bare-scope')->controller(WhoAmIController::class);
 
         // Where a JWK Set lives is the application's decision, and this
         // application makes it the way any other would: it routes to the

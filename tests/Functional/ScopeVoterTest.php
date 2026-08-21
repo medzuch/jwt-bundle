@@ -67,6 +67,53 @@ final class ScopeVoterTest extends WebTestCase
         self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
     }
 
+    #[TestDox('the required scope among others is still the required scope')]
+    public function testExtraScopesDoNotInterfere(): void
+    {
+        $client = self::createClient();
+
+        self::request($client, '/api/scoped', ['profile', 'reports.read', 'reports.write']);
+
+        self::assertResponseIsSuccessful();
+    }
+
+    #[TestDox('a scope claim sent as a list is read too, though no RFC asks for one')]
+    public function testListValuedScopeClaim(): void
+    {
+        // Issuers send it, the intent is not ambiguous, and refusing it would
+        // deny every scope check for a token that authenticates perfectly.
+        $client = self::createClient();
+
+        self::requestWithClaims($client, '/api/scoped', ['scope' => ['profile', 'reports.read']]);
+
+        self::assertResponseIsSuccessful();
+    }
+
+    #[TestDox('the bare prefix is answered and denied: nothing grants the empty scope')]
+    public function testBarePrefix(): void
+    {
+        $client = self::createClient();
+
+        self::request($client, '/api/bare-scope', ['reports.read']);
+
+        self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
+    }
+
+    #[TestDox('a custom factory\'s user answers SCOPE_ checks through the firewall')]
+    public function testCustomModeThroughTheVoter(): void
+    {
+        // The README promises this, and asserting the mapping on the user
+        // object only proves half of it: what matters is that an access rule
+        // reads it.
+        $client = self::createClient(['mode' => 'custom']);
+
+        self::requestWithClaims($client, '/api/scoped', ['tenant' => 'tenant-7', 'groups' => ['reports.read']]);
+        self::assertResponseIsSuccessful();
+
+        self::requestWithClaims($client, '/api/scoped', ['tenant' => 'tenant-7', 'groups' => ['profile']]);
+        self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
+    }
+
     #[TestDox('a scope is matched whole, not by prefix')]
     public function testScopesMatchWhole(): void
     {
@@ -139,10 +186,12 @@ final class ScopeVoterTest extends WebTestCase
         // turn a 403 into a 500.
         $client = self::createClient();
 
-        self::requestWithClaims($client, '/api/scoped', ['scope' => ['reports.read']]);
+        self::requestWithClaims($client, '/api/scoped', ['scope' => 42]);
         self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
 
-        self::requestWithClaims($client, '/api/scoped', ['scope' => 42]);
+        // An object, not a list: a value under some key is not a grant, which
+        // is the same reading the role mapping takes.
+        self::requestWithClaims($client, '/api/scoped', ['scope' => ['granted' => 'reports.read']]);
         self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
     }
 
@@ -225,7 +274,11 @@ final class ScopeVoterTest extends WebTestCase
                 'audience' => 'https://api.test',
                 'keys' => ['default'],
                 'allowed_algorithms' => ['HS256'],
-                'user' => 'claims' === $mode ? ['mode' => 'claims'] : ['identity_claim' => 'sub'],
+                'user' => match ($mode) {
+                    'claims' => ['mode' => 'claims'],
+                    'custom' => ['mode' => 'custom', 'factory' => 'test.user_factory'],
+                    default => ['identity_claim' => 'sub'],
+                },
             ]],
         ];
     }

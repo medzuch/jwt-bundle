@@ -22,9 +22,20 @@ a class or method signature would be.
   Scopes stay their own namespace rather than being mapped into roles, because they are not
   the same statement: a role says what someone is and outlives any one token, a scope says
   what the client holding this token was allowed to ask for on their behalf. It needs a user
-  that carries them — `user.mode: claims` builds one, a `custom` factory can implement
-  `ProvidesScopes` — and in `provider` mode every `SCOPE_*` check is refused, since there the
-  store is the authority on what may be done.
+  implementing `ProvidesScopes` — `user.mode: claims` builds one, a `custom` factory can, and
+  so can a user loaded from your own store — and what the voter looks at is the user, not the
+  mode, so a `provider`-mode check is refused for as long as your user class says nothing
+  about scopes.
+
+  A `scope` claim sent as a JSON list of strings is read as well as the space-delimited
+  string the RFCs describe: issuers send it, the intent is unambiguous, and refusing it would
+  deny every scope check for a token that authenticates perfectly. The claim name itself is
+  not configurable — an issuer keeping scopes elsewhere, such as Entra ID's `scp`, is read by
+  a `custom` factory, which gets the whole claim set.
+
+  Denial matters under a non-default access decision strategy: with `affirmative` this voter
+  cannot override another's grant, while under `unanimous` or `consensus` it votes like any
+  other.
 
   With `symfony/expression-language` installed, `is_granted_scope('reports.read')` says the
   same thing in an expression, with the prefix kept out of the string.
