@@ -573,8 +573,16 @@ final class MedzuchJwtBundle extends AbstractBundle
         $consumer->scalarNode('realm')
             ->defaultNull()
             ->cannotBeEmpty()
-            ->info('Protection space named in the `WWW-Authenticate` header of this consumer\'s entry point and scope denials (RFC 6750 §3). Null uses the consumer\'s name.')
+            ->info('Protection space named in the `WWW-Authenticate` header of this consumer\'s entry point and scope denials (RFC 6750 §3). Null uses the consumer\'s name. Symfony has its own `access_token.realm` for the header it sends itself; keep the two equal.')
             ->example('api')
+            ->validate()
+                // A quote would close the quoted-string it is interpolated
+                // into and let the rest read as further auth-params. Escaped
+                // on the way out as well, but a realm nobody can read is a
+                // configuration mistake worth naming here.
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && false !== strpbrk($value, "\"\\"))
+                ->thenInvalid('A realm cannot contain a quote or a backslash: it is interpolated into a quoted-string in WWW-Authenticate (RFC 9110 §5.6.4). Got %s')
+            ->end()
             ->end();
 
         $consumer->integerNode('leeway')

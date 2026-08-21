@@ -66,12 +66,18 @@ final class BearerChallengeTest extends WebTestCase
 
         self::assertResponseStatusCodeSame(Response::HTTP_UNAUTHORIZED);
 
-        $challenge = self::challenge($client);
-        self::assertStringContainsString('error="invalid_token"', $challenge);
+        // The whole header, not a fragment of it: the realm on this row comes
+        // from Symfony's own `access_token.realm`, not from the bundle's
+        // consumer, and a test asserting only the error code let the README
+        // claim a realm this wiring never set.
+        self::assertSame(
+            'Bearer realm="reports-api",error="invalid_token",error_description="Invalid credentials."',
+            self::challenge($client),
+        );
 
         // The handler's own message names the reason — revoked, wrong
         // audience, no identity claim — and none of it belongs on the wire.
-        self::assertStringNotContainsString('revoked', $challenge);
+        self::assertStringNotContainsString('revoked', self::challenge($client));
     }
 
     #[TestDox('a missing scope is insufficient_scope, and names the scope that would have done')]
@@ -92,6 +98,37 @@ final class BearerChallengeTest extends WebTestCase
             'Bearer realm="reports-api", error="insufficient_scope", scope="reports.read"',
             self::challenge($client),
         );
+    }
+
+    #[TestDox('#[IsGranted] reaches the same answer as an access rule')]
+    public function testAttributeDenialIsAlsoInsufficientScope(): void
+    {
+        // A different listener sets the attributes on the exception, and the
+        // attribute is what the feature is actually for.
+        $client = self::createClient();
+
+        $client->request('GET', '/api/attribute-scoped', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::issuer()->issue('alice', ['profile'])->value,
+        ]);
+
+        self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
+        self::assertSame(
+            'Bearer realm="reports-api", error="insufficient_scope", scope="reports.read"',
+            self::challenge($client),
+        );
+    }
+
+    #[TestDox('the bare prefix names no scope, so there is no bearer challenge to send')]
+    public function testBarePrefixHasNothingToName(): void
+    {
+        $client = self::createClient();
+
+        $client->request('GET', '/api/bare-scope', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::issuer()->issue('alice', ['reports.read'])->value,
+        ]);
+
+        self::assertResponseStatusCodeSame(Response::HTTP_FORBIDDEN);
+        self::assertNull($client->getResponse()->headers->get('WWW-Authenticate'));
     }
 
     #[TestDox('a denial that is not about scope is left to Symfony')]

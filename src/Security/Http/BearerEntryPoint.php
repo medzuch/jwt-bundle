@@ -32,7 +32,7 @@ final class BearerEntryPoint implements AuthenticationEntryPointInterface
     public function start(Request $request, ?AuthenticationException $authException = null): Response
     {
         return new Response('', Response::HTTP_UNAUTHORIZED, [
-            'WWW-Authenticate' => sprintf('Bearer realm="%s"', $this->realm),
+            'WWW-Authenticate' => sprintf('Bearer realm="%s"', Challenge::quote($this->realm)),
         ]);
     }
 }

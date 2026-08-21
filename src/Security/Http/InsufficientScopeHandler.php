@@ -21,7 +21,16 @@ use Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface;
  *
  * A denial over anything else — a role, an expression, a voter of the
  * application's own — is left alone: this answers `SCOPE_*` and returns null
- * otherwise, which lets Symfony produce its usual 403.
+ * otherwise, which lets Symfony produce its usual 403. An `allow_if` calling
+ * `is_granted_scope()` is one of those: what reaches the exception is an
+ * `Expression`, not the attribute it asked about, so a rule that wants this
+ * header names `SCOPE_*` directly.
+ *
+ * Several `SCOPE_*` on one rule are listed together. Symfony reads them as
+ * alternatives — any one of them grants — while RFC 6750's `scope` parameter
+ * reads as what was required, so a rule carrying more than one says something
+ * slightly stronger in the header than it means. One scope per rule keeps the
+ * two readings the same.
  */
 final class InsufficientScopeHandler implements AccessDeniedHandlerInterface
 {
@@ -46,8 +55,8 @@ final class InsufficientScopeHandler implements AccessDeniedHandlerInterface
         return new Response('', Response::HTTP_FORBIDDEN, [
             'WWW-Authenticate' => sprintf(
                 'Bearer realm="%s", error="insufficient_scope", scope="%s"',
-                $this->realm,
-                implode(' ', $scopes),
+                Challenge::quote($this->realm),
+                Challenge::quote(implode(' ', $scopes)),
             ),
         ]);
     }

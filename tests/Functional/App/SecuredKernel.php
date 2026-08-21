@@ -99,7 +99,11 @@ final class SecuredKernel extends Kernel
         }
 
         if (self::configures($this->bundleConfig, 'consumers', 'api')) {
-            $accessToken = ['token_handler' => 'medzuch_jwt.handler.api'];
+            // Symfony's realm, which its own rejected-token header carries.
+            // It is a second knob beside the consumer's, and the two are worth
+            // keeping equal — the README says so, and this is what proves the
+            // README right.
+            $accessToken = ['token_handler' => 'medzuch_jwt.handler.api', 'realm' => 'reports-api'];
 
             // The firewall names the extractors, as an application's would:
             // the bundle registers them, security.yaml chooses them, and the
@@ -175,7 +179,9 @@ final class SecuredKernel extends Kernel
             ->set('test.user_factory', TenantUserFactory::class)->public()
 
             // A denylist store the tests can revoke through.
-            ->set('test.cache', ArrayCache::class)->public();
+            ->set('test.cache', ArrayCache::class)->public()
+
+            ->set(ScopedController::class)->public();
     }
 
     /**
@@ -204,6 +210,9 @@ final class SecuredKernel extends Kernel
         $routes->add('scoped', '/api/scoped')->controller(WhoAmIController::class);
         $routes->add('bare_scope', '/api/bare-scope')->controller(WhoAmIController::class);
         $routes->add('role_only', '/api/role')->controller(WhoAmIController::class);
+        // Guarded by an attribute rather than an access rule: a different
+        // listener, the same voter.
+        $routes->add('attribute_scoped', '/api/attribute-scoped')->controller(ScopedController::class);
 
         // Where a JWK Set lives is the application's decision, and this
         // application makes it the way any other would: it routes to the

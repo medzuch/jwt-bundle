@@ -25,8 +25,15 @@ a class or method signature would be.
   A token Symfony rejects keeps its existing answer, `error="invalid_token"` and nothing
   about why: expired, wrong audience or revoked all read the same on the wire, and the
   reason stays in the log. A denial over a role, an expression or a voter of your own is
-  left alone. `consumers.<name>.realm` names the protection space, defaulting to the
-  consumer's name.
+  left alone — including a denial through an `allow_if` expression, which carries the
+  expression rather than the attribute it asked about, so a rule wanting the header names
+  `SCOPE_*` directly.
+
+  `consumers.<name>.realm` names the protection space, defaulting to the consumer's name,
+  and is refused at container build if it carries a quote or a backslash — both would close
+  the quoted-string they are interpolated into. Symfony has its own `access_token.realm` for
+  the header it sends itself; the two are one string written twice, because a bundle setting
+  Symfony's would be deciding which firewall a consumer belongs to (DEC-1).
 - **A scope voter (C13).** `SCOPE_*` attributes — `#[IsGranted('SCOPE_reports.read')]`,
   `access_control` rules, `is_granted()` — are answered from the token's `scope` claim,
   space-delimited per RFC 6749 §3.3. Registered unconditionally and with nothing to
