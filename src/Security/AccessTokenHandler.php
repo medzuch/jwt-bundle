@@ -6,6 +6,7 @@ namespace Medzuch\JwtBundle\Security;
 
 use Medzuch\Jwt\Exception\JwtException;
 use Medzuch\Jwt\Profile\ProfileConsumer;
+use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\Identity\UserResolverInterface;
 use Symfony\Component\Security\Core\Exception\BadCredentialsException;
 use Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface;
@@ -38,6 +39,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
         private readonly ProfileConsumer $consumer,
         private readonly UserResolverInterface $users,
         private readonly ?array $exclusiveTo = null,
+        private readonly ?TokenDenylistInterface $denylist = null,
     ) {}
 
     public function getUserBadgeFrom(string $accessToken): UserBadge
@@ -46,6 +48,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
             $claims = $this->consumer->parse($accessToken);
 
             $this->assertAddressedToNobodyElse($claims->audience());
+            $this->assertNotRevoked($claims->jwtId());
 
             // Inside the try because naming the user reads claims, and
             // getString() throws when one holds a non-string — a bad token,
@@ -54,6 +57,31 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
             return $this->users->badgeFor($claims);
         } catch (JwtException $e) {
             throw new BadCredentialsException('Invalid access token.', previous: $e);
+        }
+    }
+
+    /**
+     * A verified token is one nobody has withdrawn since. Only asked when a
+     * denylist is configured, because the alternative — a lookup that always
+     * answers "not revoked" — is a cache round trip per request buying nothing.
+     */
+    private function assertNotRevoked(?string $jti): void
+    {
+        if (null === $this->denylist) {
+            return;
+        }
+
+        // RFC 9068 §2.2 makes `jti` required and the profile enforces it, so
+        // this is unreachable through the access-token path. It is here because
+        // "no id" and "not revoked" are different answers, and a denylist that
+        // silently accepted the first would be a revocation list that lets
+        // through exactly the tokens nobody can name.
+        if (null === $jti) {
+            throw new BadCredentialsException('Access token carries no "jti", so it cannot be checked against the denylist.');
+        }
+
+        if ($this->denylist->isRevoked($jti)) {
+            throw new BadCredentialsException('Access token has been revoked.');
         }
     }
 

@@ -138,6 +138,18 @@ final class ReadmeExamplesTest extends KernelTestCase
             }
         }
 
+        // A consumer promises a denylist service only when it configures one:
+        // unconfigured, there is nothing in the container to name.
+        $consumers = $configuration['consumers'] ?? [];
+
+        if (is_array($consumers)) {
+            foreach ($consumers as $consumer => $entry) {
+                if (is_array($entry) && [] !== ($entry['denylist'] ?? [])) {
+                    $ids[] = sprintf('medzuch_jwt.denylist.%s', $consumer);
+                }
+            }
+        }
+
         $registrations = $configuration['id_tokens'] ?? [];
 
         if (is_array($registrations)) {
