@@ -46,6 +46,7 @@
         "symfony/cache": "^6.4 || ^7.4 || ^8.0",
         "symfony/console": "^6.4 || ^7.4 || ^8.0",
         "symfony/error-handler": "^6.4 || ^7.4 || ^8.0",
+        "symfony/expression-language": "^6.4 || ^7.4 || ^8.0",
         "symfony/framework-bundle": "^6.4 || ^7.4 || ^8.0",
         "symfony/routing": "^6.4 || ^7.4 || ^8.0"
     },
@@ -54,7 +55,8 @@
         "psr/http-factory": "To point a remote JWK Set at a PSR-17 request factory, when the PSR-18 client is not one itself",
         "psr/simple-cache": "To cache a remote JWK Set through a PSR-16 service of your own",
         "symfony/cache": "To cache a remote JWK Set through a PSR-6 pool such as cache.app, which the default wiring wraps",
-        "symfony/console": "To run jwt:key:generate, which creates a key and prints the configuration for it"
+        "symfony/console": "To run jwt:key:generate, which creates a key and prints the configuration for it",
+        "symfony/expression-language": "To write is_granted_scope() in access_control or #[IsGranted] expressions"
     },
     "autoload": {
         "psr-4": {

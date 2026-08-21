@@ -20,7 +20,7 @@ use Symfony\Component\Security\Core\User\UserInterface;
  * needs, because a controller asking "which tenant is this" is asking the token
  * and would otherwise have to parse it a second time.
  */
-final class JwtUser implements UserInterface
+final class JwtUser implements ProvidesScopes, UserInterface
 {
     /** @var non-empty-string */
     private readonly string $identifier;
@@ -60,6 +60,26 @@ final class JwtUser implements UserInterface
     public function claims(): ClaimsSet
     {
         return $this->claims;
+    }
+
+    /**
+     * The `scope` claim, which RFC 6749 §3.3 makes a space-delimited string and
+     * RFC 9068 §2.2.3 carries into an access token under that name. Read
+     * directly rather than through configuration: an issuer sending scopes
+     * somewhere else is one whose grants the role mapping can pick up, and two
+     * configurable spellings of the same idea would be one too many.
+     *
+     * @return list<string>
+     */
+    public function scopes(): array
+    {
+        $scope = $this->claims->getString('scope');
+
+        if (null === $scope) {
+            return [];
+        }
+
+        return array_values(array_filter(explode(' ', $scope), static fn(string $one): bool => '' !== $one));
     }
 
     /**

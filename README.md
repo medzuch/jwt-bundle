@@ -464,6 +464,43 @@ a request without that header, from an API client or an older browser, is not ju
 and it is off by default because it silently drops legitimate cross-site calls in a flow that
 means them.
 
+## Scopes
+
+A role says what someone *is*; a scope says what the client holding this token was allowed to
+ask for on their behalf. Two tokens naming the same person can carry different ones, so the
+bundle keeps them in their own namespace rather than folding them into roles:
+
+```php
+#[IsGranted('SCOPE_reports.read')]
+public function reports(): Response { … }
+```
+
+```yaml
+security:
+    access_control:
+        - { path: ^/api/reports, roles: SCOPE_reports.read }
+```
+
+The scopes come from the token's `scope` claim, space-delimited as RFC 6749 §3.3 and RFC 9068
+§2.2.3 have it. Nothing to configure and nothing to switch on — the voter answers `SCOPE_*` and
+only that.
+
+**It needs a user that carries the scopes.** `user.mode: claims` gives you one; a `custom`
+factory can implement `ProvidesScopes` on whatever it builds. In `provider` mode the user comes
+from your store, carries no scopes, and every `SCOPE_*` check is refused — which is the honest
+answer rather than a gap: there the store is the authority on what may be done, and a scope from
+the token would be a second answer to a question already settled.
+
+With `symfony/expression-language` installed, the same check reads as a scope in an expression:
+
+```yaml
+security:
+    access_control:
+        - { path: ^/api/reports, allow_if: "is_granted_scope('reports.read')" }
+```
+
+which is `is_granted('SCOPE_reports.read')` with the prefix kept out of the string.
+
 ## Revoking a token
 
 A JWT is valid because it verifies, not because anyone is still willing to accept it — that is

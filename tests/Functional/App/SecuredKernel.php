@@ -118,7 +118,12 @@ final class SecuredKernel extends Kernel
             ];
         }
 
-        $accessControl = [['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY']];
+        $accessControl = [
+            // Before the catch-all below, and narrower: an attribute only the
+            // scope voter answers.
+            ['path' => '^/api/scoped', 'roles' => 'SCOPE_reports.read'],
+            ['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY'],
+        ];
 
         // The shape the README warns about: everything behind a firewall, a
         // catch-all access rule, and the JWK Set exempted ahead of it. Served
@@ -179,6 +184,7 @@ final class SecuredKernel extends Kernel
     protected function configureRoutes(RoutingConfigurator $routes): void
     {
         $routes->add('whoami', '/api/whoami')->controller(WhoAmIController::class);
+        $routes->add('scoped', '/api/scoped')->controller(WhoAmIController::class);
 
         // Where a JWK Set lives is the application's decision, and this
         // application makes it the way any other would: it routes to the

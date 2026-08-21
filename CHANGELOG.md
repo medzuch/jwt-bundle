@@ -13,6 +13,21 @@ a class or method signature would be.
 
 ### Added
 
+- **A scope voter (C13).** `SCOPE_*` attributes — `#[IsGranted('SCOPE_reports.read')]`,
+  `access_control` rules, `is_granted()` — are answered from the token's `scope` claim,
+  space-delimited per RFC 6749 §3.3. Registered unconditionally and with nothing to
+  configure: it answers `SCOPE_*` and only that, so an application whose tokens carry no
+  scopes never asks.
+
+  Scopes stay their own namespace rather than being mapped into roles, because they are not
+  the same statement: a role says what someone is and outlives any one token, a scope says
+  what the client holding this token was allowed to ask for on their behalf. It needs a user
+  that carries them — `user.mode: claims` builds one, a `custom` factory can implement
+  `ProvidesScopes` — and in `provider` mode every `SCOPE_*` check is refused, since there the
+  store is the authority on what may be done.
+
+  With `symfony/expression-language` installed, `is_granted_scope('reports.read')` says the
+  same thing in an expression, with the prefix kept out of the string.
 - **A cookie token extractor (C5).** `token_extractors.<name>.cookie` registers
   `medzuch_jwt.token_extractor.<name>`, to be named in a firewall's
   `access_token.token_extractors` beside Symfony's own `.header`, `.query_string` and
