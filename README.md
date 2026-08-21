@@ -409,6 +409,74 @@ set outside `claims` mode is indistinguishable from one never written, and it is
 carries. If your access rules lean on a baseline like `ROLE_USER`, say so — nothing invents it
 for you.
 
+## Revoking a token
+
+A JWT is valid because it verifies, not because anyone is still willing to accept it — that is
+the trade that makes it stateless. When you need the willingness back, give the consumer a
+denylist:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default: { hmac: '%env(JWT_SECRET)%', algorithm: HS256 }
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: ['%env(APP_URL)%']
+            keys: [default]
+            allowed_algorithms: [HS256]
+            denylist:
+                cache_pool: cache.app       # or `cache:` for a PSR-16 service, or `service:` for one of yours
+```
+
+Every accepted token has a `jti` — RFC 9068 §2.2 requires it — so it can be named:
+
+```php
+use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
+
+public function logout(TokenDenylistInterface $api, JwtUser $user): Response
+{
+    $jti = $user->claims()->jwtId();
+    $expiresAt = $user->claims()->expiresAt();
+
+    // Both are required of an access token and the consumer refuses one that
+    // lacks them, so this is a type guard rather than a real branch.
+    if (null !== $jti && null !== $expiresAt) {
+        $api->revoke($jti, $expiresAt);
+    }
+}
+```
+
+The argument name is the consumer's name, and `medzuch_jwt.denylist.api` is the service id. A
+token you minted carries its id back to you, so a token can also be revoked at the point it was
+issued:
+
+```php
+$token = $issuer->issue('user-42');
+$denylist->revoke($token->jti, new DateTimeImmutable('+' . $token->expiresIn . ' seconds'));
+```
+
+**An entry only outlives the token it refuses.** After `exp` the token is refused on its own
+terms, so a revocation kept beyond that is a row nobody will ever read — which is why revoking
+takes the moment to hold until, and why the shipped implementation is a cache rather than a
+table with a schema, a migration and something to sweep it.
+
+Pass the token's own `exp`: the shipped denylist knows the consumer's `leeway` and keeps the
+entry that much longer, because a token is accepted until `exp` plus that tolerance and an entry
+expiring on the dot would let a revoked token back in for exactly that window.
+
+What that costs is twofold. **A cache flush forgets every revocation** while the tokens they
+refused are still valid. And **authentication now depends on the cache being reachable**: a
+store that throws takes the request with it, as a 500 rather than a 401. That is the right way
+for a revocation check to fail — the alternative is accepting tokens nobody can vouch for while
+the store is down — but it is a coupling worth knowing before an outage teaches it. If neither
+is acceptable, implement `TokenDenylistInterface` over a store that survives and name it under
+`denylist.service`; the rest of the wiring is unchanged.
+
+Configure no denylist and nothing is asked and nothing is registered: revocation is a lookup per
+request, and a consumer that does not need it should not pay for it.
+
 ## Audience policy
 
 `audience` says which names this application answers to; a token is for it when `aud` names any

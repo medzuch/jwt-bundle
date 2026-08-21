@@ -13,6 +13,27 @@ a class or method signature would be.
 
 ### Added
 
+- **Token revocation (C9).** `consumers.<name>.denylist` gives a consumer somewhere to ask
+  whether a token has been withdrawn since it was issued — a logout, a leak, an account
+  suspended mid-session. Keyed on `jti`, which RFC 9068 §2.2 makes required, so every
+  accepted token can be named. `cache_pool` (a PSR-6 pool, wrapped) or `cache` (a PSR-16
+  service) builds the shipped `CacheTokenDenylist`; `service` takes an implementation of
+  `TokenDenylistInterface` of your own, for a store that survives a cache flush.
+
+  The denylist is registered as `medzuch_jwt.denylist.<name>`, public and injectable as
+  `TokenDenylistInterface $<name>`, because revocation is half a feature if nothing can
+  revoke. An entry outlives only the token it refuses: after `exp` the token is refused on
+  its own terms, so `revoke()` takes the moment to hold until rather than a duration.
+
+  Configured, it costs a lookup per request. Unconfigured, nothing is asked and no service
+  exists — where DEC-3 called for a `NullDenylist`, there is simply nothing, since a
+  service that always answers "not revoked" would tell `debug:container` that revocation is
+  configured when it is not.
+- **`IssuedToken::$jti`.** A token you minted carries the id it can later be revoked by, for
+  the same reason it already carried its lifetime: reading it back means parsing what was
+  just built. Its constructor takes a third argument — a signature change, though the class
+  is a return value nothing outside the bundle constructs.
+
 - **User modes `claims` and `custom` (C3), and claim-to-role mapping (C4).**
   `consumers.<name>.user.mode` decides where the user comes from. `provider` is the
   default and unchanged: the identifier goes to the firewall's user provider. `claims`

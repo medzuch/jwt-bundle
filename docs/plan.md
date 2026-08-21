@@ -16,7 +16,7 @@
 > and federation — remote JWK Sets with local fallback (K5, K6), ID-token
 > verification (C6) and the audience policy (C14). EdDSA works end to end, since
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
-> the road to 1.0 — is under way: C3's remaining modes and C4 are in.
+> the road to 1.0 — is under way: C3's remaining modes, C4 and C9 are in.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -203,7 +203,7 @@ default and adds no runtime cost when unconfigured.
 | C6 | ID-token verifier for OIDC relying-party flows (`nonce`, `azp`). A service the application calls from its callback, **not** a firewall authenticator (DEC-8). `at_hash` is not checked: the library has no support for it, and the bundle does not reimplement crypto its library is missing | `IdTokenProfile::consumer()` | T2 |
 | C7 | Generic/custom-profile handler for app-defined `typ` values | `ValidatorBuilder`, `MediaType::custom()` | T2 |
 | C8 | Security Event Token consumer (receiving RISC/CAEP-style events) | `SetProfile::consumer()` | T3 |
-| C9 | Revocation: `TokenDenylistInterface` checked on `jti`, with `NullDenylist` (default), PSR-16 cache and Doctrine implementations | bundle | T2 |
+| C9 | Revocation: `TokenDenylistInterface` checked on `jti`, PSR-16 cache implementation, and the denylist registered as a service the application can revoke through. No `NullDenylist`: unconfigured means no service and no lookup, which is the same default said with less | bundle | T2 |
 | C10 | Freshness policy: `max_token_age` (reject old `iat` even if `exp` is generous), configurable `leeway`, injectable PSR-20 clock | library validator + handler | T1 (leeway/clock), T2 (max age) |
 | C11 | Multi-issuer / multi-tenant: pick the consumer by the token's `iss` (or by host/tenant resolver) before validation, with a strict allowlist | `CompositeResolver`, bundle dispatcher | T3 |
 | C12 | Encrypted (JWE) and nested JWT support on the consumer side | `NestedJwtParser`, `Decrypter` | T3 |
@@ -603,6 +603,12 @@ registered only when a `denylist` is configured. *Reopens if* an application
 needs revocation to survive a cache flush — but that is a durability
 requirement, and it belongs in an app-owned implementation of the interface (or
 a separate `medzuch/jwt-bundle-doctrine`), not on the default path.
+
+*Shipped without the `NullDenylist` this called for.* An unconfigured consumer
+holds no denylist and asks nothing, which is the same default with one fewer
+moving part: a service that always answered "not revoked" would be a lookup per
+request buying nothing, and would appear in `debug:container` as revocation an
+application never asked for.
 
 **DEC-4 — Upstream gaps: closed. The bundle requires `medzuch/jwt-php ^1.2`.** All
 four blockers v0.4 recorded were fixed upstream, backward compatibly, in 1.1.0:

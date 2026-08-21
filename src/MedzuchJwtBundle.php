@@ -19,6 +19,8 @@ use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
+use Medzuch\JwtBundle\Revocation\CacheTokenDenylist;
+use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
 use Medzuch\JwtBundle\Security\Identity\ClaimsUserResolver;
@@ -35,6 +37,7 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\InlineServiceConfigurator;
+use Symfony\Component\DependencyInjection\Loader\Configurator\ReferenceConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ServicesConfigurator;
 use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
@@ -57,6 +60,9 @@ final class MedzuchJwtBundle extends AbstractBundle
      * each has a typed setter that enforces its shape.
      */
     private const REGISTERED_CLAIMS = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti'];
+
+    /** Named because the registration compares against it to catch a prefix nothing would read. */
+    private const DEFAULT_DENYLIST_PREFIX = 'medzuch_jwt.revoked.';
 
     public function configure(DefinitionConfigurator $definition): void
     {
@@ -89,7 +95,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
-         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
+         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          * } $config */
         $container->import('../config/services.yaml');
@@ -106,7 +112,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerKeys($services, $keys);
         $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger']);
         $this->registerIssuers($services, $keys, $config['issuers']);
-        $this->registerConsumers($services, $keys, $config['consumers'], $config['remote_jwks'], $config['logger']);
+        $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['remote_jwks'], $config['logger']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger']);
         $this->registerJwks($services, $keys, $config['jwks']);
         $this->registerConsoleCommands($services);
@@ -492,6 +498,49 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->min(0)
             ->max(ValidatorBuilder::LEEWAY_CEILING_SECONDS)
             ->info('Clock-skew tolerance in seconds for exp/nbf/iat. The ceiling is the library\'s.')
+            ->end();
+
+        $denylist = $consumer->arrayNode('denylist')
+            ->addDefaultsIfNotSet()
+            ->info('Where this consumer asks whether a token has been withdrawn since it was issued. Configured, it costs a lookup per request; unconfigured, nothing is asked and nothing is registered.')
+            ->children();
+
+        self::declareOptionalName(
+            $denylist,
+            'service',
+            'Service id implementing TokenDenylistInterface. For a store of your own — the shipped one is a cache, and a cache flush forgets every revocation.',
+            'app.token_denylist',
+        );
+
+        self::declareOptionalName(
+            $denylist,
+            'cache_pool',
+            'Service id of a PSR-6 cache pool, wrapped for the PSR-16 interface the shipped denylist takes. `cache.app` is a pool.',
+            'cache.app',
+        );
+
+        self::declareOptionalName(
+            $denylist,
+            'cache',
+            'Service id of a PSR-16 cache, used as it is.',
+            'app.simple_cache',
+        );
+
+        $denylist->scalarNode('prefix')
+            ->defaultValue(self::DEFAULT_DENYLIST_PREFIX)
+            ->cannotBeEmpty()
+            ->info('Prefix for the cache keys, so revocations do not collide with the rest of the pool. The rest of the key is a hash of the `jti`. PSR-16 §6 reserves {}()/\@: in keys, so those are refused here rather than by the store on every request.')
+            ->validate()
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && strlen($value) > 32)
+                ->thenInvalid('A denylist prefix over 32 characters can push the key past the 64 PSR-16 guarantees, once the hash of the jti is appended. Got %s')
+            ->end()
+            ->validate()
+                // strpbrk over the reserved set rather than a character class:
+                // the backslash in one is a question about two escaping layers,
+                // and the pattern that reads as covering it does not.
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && false !== strpbrk($value, '{}()/\\@:'))
+                ->thenInvalid('A denylist prefix cannot contain {}()/\@:, which PSR-16 §6 reserves and Symfony\'s cache refuses. A store rejects such a key on every request that checks one, which is a 500 rather than a configuration error. Got %s')
+            ->end()
             ->end();
 
         $user = $consumer->arrayNode('user')
@@ -988,10 +1037,10 @@ final class MedzuchJwtBundle extends AbstractBundle
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
-     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
+     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      */
-    private function registerConsumers(ServicesConfigurator $services, array $keys, array $consumers, array $sets, ?string $logger): void
+    private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $sets, ?string $logger): void
     {
         foreach ($consumers as $name => $consumer) {
             $this->assertCanVerify(sprintf('Consumer "%s"', $name), $consumer, $keys, $sets);
@@ -1016,6 +1065,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                     service('medzuch_jwt.consumer.' . $name),
                     self::userResolver($name, $consumer['user']),
                     'exclusive' === $consumer['audience_policy'] ? array_values($consumer['audience']) : null,
+                    self::registerDenylist($services, $builder, $name, $consumer['denylist'], $consumer['leeway']),
                 ]);
         }
     }
@@ -1052,6 +1102,66 @@ final class MedzuchJwtBundle extends AbstractBundle
             // "partner" rather than a container lookup by string.
             $builder->registerAliasForArgument($id, IdTokenVerifier::class, $name);
         }
+    }
+
+    /**
+     * The denylist this consumer asks, or nothing at all.
+     *
+     * Nothing, rather than a null object that always answers "not revoked":
+     * the check is one branch either way, and a service in the container would
+     * say revocation is configured when it is not — `debug:container` would
+     * show a denylist to an application that never asked for one (DEC-3 called
+     * for a NullDenylist; this is the same default said with less).
+     *
+     * @param array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string} $denylist
+     */
+    private static function registerDenylist(ServicesConfigurator $services, ContainerBuilder $builder, string $name, array $denylist, int $leeway): ?ReferenceConfigurator
+    {
+        $named = array_filter([
+            'service' => $denylist['service'],
+            'cache_pool' => $denylist['cache_pool'],
+            'cache' => $denylist['cache'],
+        ], static fn(?string $id): bool => null !== $id);
+
+        if (count($named) > 1) {
+            throw new InvalidConfigurationException(sprintf('Consumer "%s" gives its denylist %s. Give one: a service of your own, or a cache for the one this bundle ships.', $name, '"' . implode('" and "', array_keys($named)) . '"'));
+        }
+
+        if ([] === $named) {
+            return null;
+        }
+
+        $id = 'medzuch_jwt.denylist.' . $name;
+
+        // A named service, not an argument built in place: revocation is only
+        // half a feature if nothing can revoke. The application needs to reach
+        // this from a logout controller, so it is public and injectable by
+        // argument name, exactly like the consumer it belongs to.
+        if (null !== $denylist['service']) {
+            // A prefix beside a service of your own is a setting nothing will
+            // read: the prefix belongs to the cache implementation this bundle
+            // ships, and yours keys its own store however it likes.
+            if (self::DEFAULT_DENYLIST_PREFIX !== $denylist['prefix']) {
+                throw new InvalidConfigurationException(sprintf('Consumer "%s" sets a denylist "prefix" beside its own "service". The prefix belongs to the cache this bundle ships; a service of yours keys its store itself.', $name));
+            }
+
+            $services->alias($id, $denylist['service'])->public();
+        } else {
+            $services->set($id, CacheTokenDenylist::class)
+                ->args([
+                    null !== $denylist['cache']
+                        ? service($denylist['cache'])
+                        : inline_service(Psr16Cache::class)->args([service((string) $denylist['cache_pool'])]),
+                    service('medzuch_jwt.clock'),
+                    $denylist['prefix'],
+                    $leeway,
+                ])
+                ->public();
+        }
+
+        $builder->registerAliasForArgument($id, TokenDenylistInterface::class, $name);
+
+        return service($id);
     }
 
     /**

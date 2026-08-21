@@ -51,10 +51,16 @@ final class AccessTokenIssuer
     ): IssuedToken {
         $lifetime = $ttl ?? $this->ttl;
 
+        // The profile mints a `jti` of its own, and keeps it: what comes back
+        // is a compact string. Naming it here is what lets the caller revoke
+        // this token later without parsing it open again.
+        $jti = bin2hex(random_bytes(16));
+
         $builder = $this->profile->issue()
             ->subject($subject)
             ->audience($audience ?? $this->audience)
             ->clientId($this->clientId)
+            ->jwtId($jti)
             ->expiresIn(new DateInterval(sprintf('PT%dS', $lifetime)));
 
         if ([] !== $scopes) {
@@ -70,6 +76,6 @@ final class AccessTokenIssuer
             $builder = $builder->withClaim($name, $value);
         }
 
-        return new IssuedToken((string) $builder->build(), $lifetime);
+        return new IssuedToken((string) $builder->build(), $lifetime, $jti);
     }
 }
