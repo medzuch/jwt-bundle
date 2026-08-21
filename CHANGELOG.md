@@ -31,7 +31,8 @@ a class or method signature would be.
   configured when it is not.
 - **`IssuedToken::$jti`.** A token you minted carries the id it can later be revoked by, for
   the same reason it already carried its lifetime: reading it back means parsing what was
-  just built.
+  just built. Its constructor takes a third argument — a signature change, though the class
+  is a return value nothing outside the bundle constructs.
 
 - **User modes `claims` and `custom` (C3), and claim-to-role mapping (C4).**
   `consumers.<name>.user.mode` decides where the user comes from. `provider` is the

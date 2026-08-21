@@ -76,7 +76,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
         // "no id" and "not revoked" are different answers, and a denylist that
         // silently accepted the first would be a revocation list that lets
         // through exactly the tokens nobody can name.
-        if (null === $jti) {
+        if (null === $jti || '' === $jti) {
             throw new BadCredentialsException('Access token carries no "jti", so it cannot be checked against the denylist.');
         }
 

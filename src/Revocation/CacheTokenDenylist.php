@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Revocation;
 
 use DateTimeImmutable;
+use InvalidArgumentException;
 use Psr\Clock\ClockInterface;
 use Psr\SimpleCache\CacheInterface;
 
@@ -22,21 +23,39 @@ use Psr\SimpleCache\CacheInterface;
  * that cannot accept that, the interface is the extension point — an
  * application-owned implementation over its own store, named under
  * `denylist.service`.
+ *
+ * It also couples authentication to the cache being reachable: a store that
+ * throws takes the request with it, as a 500 rather than a 401. That is the
+ * right way for a revocation check to fail — the alternative is accepting
+ * tokens nobody can vouch for while the store is down — but it is a coupling
+ * worth knowing about before an outage teaches it.
  */
 final class CacheTokenDenylist implements TokenDenylistInterface
 {
+    /**
+     * @param int $leeway the consumer's clock-skew tolerance, in seconds
+     */
     public function __construct(
         private readonly CacheInterface $cache,
         private readonly ClockInterface $clock,
         private readonly string $prefix,
+        private readonly int $leeway = 0,
     ) {}
 
     public function revoke(string $jti, DateTimeImmutable $until): void
     {
-        $ttl = $until->getTimestamp() - $this->clock->now()->getTimestamp();
+        if ('' === $jti) {
+            throw new InvalidArgumentException('A token id cannot be the empty string; there would be nothing to refuse.');
+        }
 
-        // Already expired: the token is refused on its own `exp`, and an entry
-        // with a non-positive TTL is one PSR-16 deletes or refuses outright.
+        // Padded by the leeway, because the consumer accepts a token until
+        // `exp` *plus* its tolerance: an entry expiring at `exp` on the dot
+        // would leave the revoked token working for exactly the interval
+        // leeway exists to forgive.
+        $ttl = $until->getTimestamp() - $this->clock->now()->getTimestamp() + $this->leeway;
+
+        // Already past accepting: the token is refused on its own terms, and an
+        // entry with a non-positive TTL is one PSR-16 deletes or refuses.
         if ($ttl < 1) {
             return;
         }
@@ -53,6 +72,12 @@ final class CacheTokenDenylist implements TokenDenylistInterface
      * A `jti` is whatever the issuer chose to put there, and PSR-16 §6 reserves
      * `{}()/\@:` in keys and allows a store to cap their length. Hashing takes
      * both questions away, and a denylist has no use for a readable key.
+     *
+     * `xxh128` is fast rather than collision-resistant, which is the right
+     * trade here because of which way a collision fails: two ids landing on one
+     * key would refuse an unrelated token, never let a revoked one through. A
+     * denylist that is occasionally too strict is a denylist; one that can be
+     * steered into letting a token through is not.
      */
     private function key(string $jti): string
     {

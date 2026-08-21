@@ -37,6 +37,7 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\InlineServiceConfigurator;
+use Symfony\Component\DependencyInjection\Loader\Configurator\ReferenceConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ServicesConfigurator;
 use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
@@ -59,6 +60,9 @@ final class MedzuchJwtBundle extends AbstractBundle
      * each has a typed setter that enforces its shape.
      */
     private const REGISTERED_CLAIMS = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti'];
+
+    /** Named because the registration compares against it to catch a prefix nothing would read. */
+    private const DEFAULT_DENYLIST_PREFIX = 'medzuch_jwt.revoked.';
 
     public function configure(DefinitionConfigurator $definition): void
     {
@@ -523,12 +527,16 @@ final class MedzuchJwtBundle extends AbstractBundle
         );
 
         $denylist->scalarNode('prefix')
-            ->defaultValue('medzuch_jwt.revoked.')
+            ->defaultValue(self::DEFAULT_DENYLIST_PREFIX)
             ->cannotBeEmpty()
-            ->info('Prefix for the cache keys, so revocations do not collide with the rest of the pool. The rest of the key is a hash of the `jti`.')
+            ->info('Prefix for the cache keys, so revocations do not collide with the rest of the pool. The rest of the key is a hash of the `jti`. PSR-16 §6 reserves {}()/\@: in keys, so those are refused here rather than by the store on every request.')
             ->validate()
                 ->ifTrue(static fn(mixed $value): bool => is_string($value) && strlen($value) > 32)
                 ->thenInvalid('A denylist prefix over 32 characters can push the key past the 64 PSR-16 guarantees, once the hash of the jti is appended. Got %s')
+            ->end()
+            ->validate()
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && 1 === preg_match('/[{}()\/\\@:]/', $value))
+                ->thenInvalid('A denylist prefix cannot contain {}()/\@:, which PSR-16 §6 reserves. A store rejects such a key on every request that checks one, which is a 500 rather than a configuration error. Got %s')
             ->end()
             ->end();
 
@@ -1054,7 +1062,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                     service('medzuch_jwt.consumer.' . $name),
                     self::userResolver($name, $consumer['user']),
                     'exclusive' === $consumer['audience_policy'] ? array_values($consumer['audience']) : null,
-                    self::registerDenylist($services, $builder, $name, $consumer['denylist']),
+                    self::registerDenylist($services, $builder, $name, $consumer['denylist'], $consumer['leeway']),
                 ]);
         }
     }
@@ -1104,7 +1112,7 @@ final class MedzuchJwtBundle extends AbstractBundle
      *
      * @param array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string} $denylist
      */
-    private static function registerDenylist(ServicesConfigurator $services, ContainerBuilder $builder, string $name, array $denylist): mixed
+    private static function registerDenylist(ServicesConfigurator $services, ContainerBuilder $builder, string $name, array $denylist, int $leeway): ?ReferenceConfigurator
     {
         $named = array_filter([
             'service' => $denylist['service'],
@@ -1127,6 +1135,13 @@ final class MedzuchJwtBundle extends AbstractBundle
         // this from a logout controller, so it is public and injectable by
         // argument name, exactly like the consumer it belongs to.
         if (null !== $denylist['service']) {
+            // A prefix beside a service of your own is a setting nothing will
+            // read: the prefix belongs to the cache implementation this bundle
+            // ships, and yours keys its own store however it likes.
+            if (self::DEFAULT_DENYLIST_PREFIX !== $denylist['prefix']) {
+                throw new InvalidConfigurationException(sprintf('Consumer "%s" sets a denylist "prefix" beside its own "service". The prefix belongs to the cache this bundle ships; a service of yours keys its store itself.', $name));
+            }
+
             $services->alias($id, $denylist['service'])->public();
         } else {
             $services->set($id, CacheTokenDenylist::class)
@@ -1136,6 +1151,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                         : inline_service(Psr16Cache::class)->args([service((string) $denylist['cache_pool'])]),
                     service('medzuch_jwt.clock'),
                     $denylist['prefix'],
+                    $leeway,
                 ])
                 ->public();
         }

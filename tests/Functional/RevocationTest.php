@@ -15,6 +15,7 @@ use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\Security\Core\Exception\BadCredentialsException;
@@ -89,6 +90,74 @@ final class RevocationTest extends KernelTestCase
         // An entry that outlived the token would be a row nobody can ever read
         // again: after `exp` the token is refused on its own terms (DEC-3).
         self::assertSame([300], array_values(array_filter(self::cache()->ttls, static fn(mixed $ttl): bool => null !== $ttl)));
+    }
+
+    #[TestDox('the entry outlives the leeway the consumer forgives, not just the token')]
+    public function testEntryCoversTheLeewayWindow(): void
+    {
+        // The consumer accepts a token until `exp` plus its tolerance, so an
+        // entry expiring at `exp` on the dot would let a revoked token back in
+        // for exactly the interval leeway exists to forgive.
+        $config = self::configuration(leeway: 45);
+        $config['clock'] = 'test.frozen_clock';
+
+        self::bootKernel(['medzuch_jwt' => $config]);
+
+        self::denylist()->revoke('some-jti', self::clock()->now()->modify('+300 seconds'));
+
+        self::assertSame([345], array_values(array_filter(self::cache()->ttls, static fn(mixed $ttl): bool => null !== $ttl)));
+    }
+
+    #[TestDox('a PSR-6 pool is wrapped, prefix and all')]
+    public function testPoolBackedDenylist(): void
+    {
+        // Every other case names a PSR-16 service directly, so without this the
+        // wrapping — and whether the configured prefix survives it — is
+        // compiled but never run.
+        self::bootKernel(['medzuch_jwt' => self::configuration(denylist: ['cache_pool' => 'test.cache_pool', 'prefix' => 'revoked.'])]);
+
+        $token = self::issuer()->issue('user-42');
+        self::denylist()->revoke($token->jti, new DateTimeImmutable('+1 hour'));
+
+        self::assertNotSame([], array_filter(
+            array_keys(self::pool()->getValues()),
+            static fn(string $key): bool => str_starts_with($key, 'revoked.'),
+        ), 'the configured prefix should reach the pool');
+
+        $this->expectException(BadCredentialsException::class);
+
+        self::handler()->getUserBadgeFrom($token->value);
+    }
+
+    #[TestDox('a prefix a PSR-16 store would reject fails at container build')]
+    public function testReservedCharactersInPrefix(): void
+    {
+        // `app:jwt:revoked:` is the natural thing to write, and it would throw
+        // from the store on every authenticated request — a 500, not a
+        // configuration error.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/PSR-16 §6 reserves/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(denylist: ['cache' => 'test.cache', 'prefix' => 'app:jwt:revoked:'])]);
+    }
+
+    #[TestDox('a prefix beside a denylist of your own fails at container build')]
+    public function testPrefixWithACustomService(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/prefix belongs to the cache this bundle ships/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(denylist: ['service' => 'test.denylist', 'prefix' => 'mine.'])]);
+    }
+
+    #[TestDox('revoking nothing is refused rather than written')]
+    public function testEmptyJti(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration()]);
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        self::denylist()->revoke('', new DateTimeImmutable('+1 hour'));
     }
 
     #[TestDox('revoking a token that has already expired writes nothing')]
@@ -179,6 +248,14 @@ final class RevocationTest extends KernelTestCase
         return $denylist;
     }
 
+    private static function pool(): ArrayAdapter
+    {
+        $pool = self::getContainer()->get('test.cache_pool');
+        self::assertInstanceOf(ArrayAdapter::class, $pool);
+
+        return $pool;
+    }
+
     private static function cache(): ArrayCache
     {
         $cache = self::getContainer()->get('test.cache');
@@ -197,10 +274,11 @@ final class RevocationTest extends KernelTestCase
 
     /**
      * @param array<string, mixed> $denylist an empty array configures none
+     * @param int                  $leeway   clock-skew tolerance the entry has to outlive
      *
      * @return array<string, mixed>
      */
-    private static function configuration(array $denylist = ['cache' => 'test.cache']): array
+    private static function configuration(array $denylist = ['cache' => 'test.cache'], int $leeway = 0): array
     {
         return [
             'keys' => ['default' => ['hmac' => self::SECRET]],
@@ -215,6 +293,7 @@ final class RevocationTest extends KernelTestCase
                 'audience' => 'https://api.test',
                 'keys' => ['default'],
                 'allowed_algorithms' => ['HS256'],
+                'leeway' => $leeway,
                 'denylist' => $denylist,
             ]],
         ];

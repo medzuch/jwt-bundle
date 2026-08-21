@@ -25,7 +25,10 @@ use DateTimeImmutable;
 interface TokenDenylistInterface
 {
     /**
-     * @param DateTimeImmutable $until the token's own expiry — the entry need not outlive it
+     * @param DateTimeImmutable $until the token's own expiry. An implementation that
+     *                                 expires its entries must keep this one until the consumer stops accepting
+     *                                 the token, which is `$until` plus the consumer's leeway — the shipped one
+     *                                 is told that tolerance and adds it, so callers pass the plain `exp`
      */
     public function revoke(string $jti, DateTimeImmutable $until): void;
 
