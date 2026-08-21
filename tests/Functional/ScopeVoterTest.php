@@ -15,8 +15,6 @@ use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Symfony\Component\ExpressionLanguage\ExpressionLanguage;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\KernelInterface;
-use Symfony\Component\Security\Core\Authorization\AccessDecision;
-use Symfony\Component\Security\Core\Authorization\AuthorizationCheckerInterface;
 
 /**
  * `SCOPE_*` checks answered from the token, through the access rules that ask
@@ -86,11 +84,16 @@ final class ScopeVoterTest extends WebTestCase
         $language = new ExpressionLanguage();
         $language->registerProvider(new ScopeExpressionProvider());
 
-        $checker = new class implements AuthorizationCheckerInterface {
+        // Not an AuthorizationCheckerInterface: its signature moves across the
+        // supported Symfony lines — 6.4 has no AccessDecision class at all —
+        // and the expression only ever calls isGranted() on whatever it is
+        // handed. A double that implements the interface would be pinning a
+        // version rather than testing the function.
+        $checker = new class {
             /** @var list<string> */
             public array $asked = [];
 
-            public function isGranted(mixed $attribute, mixed $subject = null, ?AccessDecision $accessDecision = null): bool
+            public function isGranted(mixed $attribute): bool
             {
                 $this->asked[] = is_string($attribute) ? $attribute : get_debug_type($attribute);
 

@@ -39,7 +39,14 @@ final class ScopeVoter extends Voter
         return $this->supportsAttribute($attribute);
     }
 
-    protected function voteOnAttribute(string $attribute, mixed $subject, TokenInterface $token): bool
+    /**
+     * The fourth parameter is Symfony 8's `?Vote $vote = null`, which 7.4
+     * carries commented out and 6.4 does not have at all — the class itself
+     * arrived in 7.3. Typed `mixed` so one signature satisfies all three: a
+     * wider parameter type is what overriding allows, and naming the class
+     * would be a type that does not exist on the oldest supported line.
+     */
+    protected function voteOnAttribute(string $attribute, mixed $subject, TokenInterface $token, mixed $vote = null): bool
     {
         $user = $token->getUser();
 
