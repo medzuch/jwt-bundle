@@ -16,7 +16,8 @@
 > and federation — remote JWK Sets with local fallback (K5, K6), ID-token
 > verification (C6) and the audience policy (C14). EdDSA works end to end, since
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
-> the road to 1.0 — is under way: C3's remaining modes, C4, C5 and C9 are in.
+> the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
+> in.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -207,7 +208,7 @@ default and adds no runtime cost when unconfigured.
 | C10 | Freshness policy: `max_token_age` (reject old `iat` even if `exp` is generous), configurable `leeway`, injectable PSR-20 clock | library validator + handler | T1 (leeway/clock), T2 (max age) |
 | C11 | Multi-issuer / multi-tenant: pick the consumer by the token's `iss` (or by host/tenant resolver) before validation, with a strict allowlist | `CompositeResolver`, bundle dispatcher | T3 |
 | C12 | Encrypted (JWE) and nested JWT support on the consumer side | `NestedJwtParser`, `Decrypter` | T3 |
-| C13 | `ScopeVoter` + `#[IsGranted('SCOPE_x')]`-style checks and an `is_granted_scope()` expression function | Symfony voters | T2 |
+| C13 | `ScopeVoter` + `#[IsGranted('SCOPE_x')]`-style checks and an `is_granted_scope()` expression function. Scopes are read from the `scope` claim — the RFC's delimited string or a JSON list — through a `ProvidesScopes` user, so what decides is the user rather than the mode: `claims` builds one, a `custom` factory can, and so can a store-loaded user. The claim name is not configurable; `scp` and its like belong to a custom factory | Symfony voters | T2 |
 | C14 | Audience policy per consumer: `any` (RFC 7519 §4.1.3, the default) or `exclusive` — refuse a token addressed to anyone else, as RFC 9068 §3 asks. Not "exact match": a consumer answering to two names is addressed by either, so requiring the token to name *all* of them would refuse a legitimate one | library consumer + `AccessTokenHandler` | T2 |
 | C15 | Anonymous-friendly mode: verify a token if present, don't 401 when absent (public endpoints with optional identity) | custom authenticator or firewall config | T3 |
 

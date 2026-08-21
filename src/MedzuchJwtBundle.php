@@ -23,6 +23,8 @@ use Medzuch\JwtBundle\Revocation\CacheTokenDenylist;
 use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
+use Medzuch\JwtBundle\Security\Authorization\ScopeExpressionProvider;
+use Medzuch\JwtBundle\Security\Authorization\ScopeVoter;
 use Medzuch\JwtBundle\Security\Extractor\CookieTokenExtractor;
 use Medzuch\JwtBundle\Security\Identity\ClaimsUserResolver;
 use Medzuch\JwtBundle\Security\Identity\CustomUserResolver;
@@ -40,6 +42,7 @@ use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigura
 use Symfony\Component\DependencyInjection\Loader\Configurator\InlineServiceConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ReferenceConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ServicesConfigurator;
+use Symfony\Component\ExpressionLanguage\ExpressionFunction;
 use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
 use function Symfony\Component\DependencyInjection\Loader\Configurator\inline_service;
@@ -121,6 +124,34 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $this->registerJwks($services, $keys, $config['jwks']);
         $this->registerConsoleCommands($services);
+        $this->registerAuthorization($services);
+    }
+
+    /**
+     * The voter is registered unconditionally: it answers only `SCOPE_*`, and
+     * an application with no scopes in its tokens simply never asks. Under the
+     * default affirmative strategy its denial cannot override another voter's
+     * grant, so there is nothing here to switch off — under `unanimous` or
+     * `consensus` it votes like any other voter, which is what those strategies
+     * are for.
+     *
+     * The expression function is another matter — `symfony/expression-language`
+     * is optional, and a provider registered where Symfony has dropped the
+     * expression language is a tag nobody collects. `willBeAvailable()` is the
+     * same question SecurityBundle asks before removing it, rather than
+     * `class_exists()`, which answers a narrower one.
+     */
+    private function registerAuthorization(ServicesConfigurator $services): void
+    {
+        $services->set('medzuch_jwt.scope_voter', ScopeVoter::class)
+            ->tag('security.voter');
+
+        if (!ContainerBuilder::willBeAvailable('symfony/expression-language', ExpressionFunction::class, ['medzuch/jwt-bundle'])) {
+            return;
+        }
+
+        $services->set('medzuch_jwt.scope_expression_provider', ScopeExpressionProvider::class)
+            ->tag('security.expression_language_provider');
     }
 
     /**

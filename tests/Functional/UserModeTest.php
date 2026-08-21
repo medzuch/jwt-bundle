@@ -7,6 +7,8 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\User\JwtUser;
+use Medzuch\JwtBundle\Security\User\ProvidesScopes;
+use Medzuch\JwtBundle\Tests\Functional\App\TenantUser;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -14,6 +16,7 @@ use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\HttpKernel\KernelInterface;
+use Symfony\Component\Security\Core\User\UserInterface;
 
 /**
  * Who a verified token turns out to be.
@@ -108,15 +111,30 @@ final class UserModeTest extends KernelTestCase
         self::assertSame('user-42@tenant-7', $badge->getUserIdentifier());
     }
 
-    #[TestDox('custom mode asks the application, and its refusal is an authentication failure')]
+    #[TestDox('custom mode asks the application, and gets back the application\'s own user')]
     public function testCustomMode(): void
     {
         self::bootKernel(['medzuch_jwt' => self::configuration(['mode' => 'custom', 'factory' => 'test.user_factory'])]);
 
-        $user = self::userFor(self::token());
+        $user = self::customUserFor(self::token());
 
+        self::assertInstanceOf(TenantUser::class, $user);
         self::assertSame('user-42@tenant-7', $user->getUserIdentifier());
         self::assertSame(['ROLE_TENANT'], $user->getRoles());
+    }
+
+    #[TestDox('a custom factory can carry scopes, from wherever it keeps them')]
+    public function testCustomFactoryProvidesScopes(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(['mode' => 'custom', 'factory' => 'test.user_factory'])]);
+
+        $user = self::customUserFor(self::token());
+
+        // The README promises `SCOPE_*` works in custom mode when the user
+        // implements ProvidesScopes. This factory reads `groups`, not `scope`,
+        // which is the point: the mapping is the application's.
+        self::assertInstanceOf(ProvidesScopes::class, $user);
+        self::assertSame(['staff', 'billing'], $user->scopes());
     }
 
     #[TestDox('custom mode without a factory fails at container build')]
@@ -182,6 +200,19 @@ final class UserModeTest extends KernelTestCase
         self::assertInstanceOf(AccessTokenHandler::class, $handler);
 
         return $handler->getUserBadgeFrom($token);
+    }
+
+    private static function customUserFor(string $token): UserInterface
+    {
+        $badge = self::badgeFor($token);
+        $loader = $badge->getUserLoader();
+
+        self::assertIsCallable($loader);
+
+        $user = $loader($badge->getUserIdentifier());
+        self::assertInstanceOf(UserInterface::class, $user);
+
+        return $user;
     }
 
     private static function userFor(string $token): JwtUser

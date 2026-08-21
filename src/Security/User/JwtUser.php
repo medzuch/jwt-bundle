@@ -20,7 +20,7 @@ use Symfony\Component\Security\Core\User\UserInterface;
  * needs, because a controller asking "which tenant is this" is asking the token
  * and would otherwise have to parse it a second time.
  */
-final class JwtUser implements UserInterface
+final class JwtUser implements ProvidesScopes, UserInterface
 {
     /** @var non-empty-string */
     private readonly string $identifier;
@@ -60,6 +60,44 @@ final class JwtUser implements UserInterface
     public function claims(): ClaimsSet
     {
         return $this->claims;
+    }
+
+    /**
+     * The `scope` claim, which RFC 6749 §3.3 makes a space-delimited string and
+     * RFC 9068 §2.2.3 carries into an access token under that name. Read
+     * directly rather than through configuration: an issuer sending scopes
+     * somewhere else is one whose grants the role mapping can pick up, and two
+     * configurable spellings of the same idea would be one too many.
+     *
+     * A list of strings is read too, though no RFC asks for one: issuers send
+     * it, the intent is not ambiguous, and refusing it would deny every scope
+     * check for a token that authenticates perfectly — a failure mode with
+     * nothing to learn from. It is also what the role mapping does one file
+     * over, and two readings of "the claim holds several things" would be one
+     * too many.
+     *
+     * Read with `get()` rather than `getString()`, which throws on a claim that
+     * is present and not a string. This runs during authorization, outside the
+     * handler's try, so a claim of any other shape has to grant nothing rather
+     * than turn a 403 into a 500.
+     *
+     * @return list<string>
+     */
+    public function scopes(): array
+    {
+        $scope = $this->claims->get('scope');
+
+        if (is_array($scope)) {
+            return array_is_list($scope)
+                ? array_values(array_filter($scope, static fn(mixed $one): bool => is_string($one) && '' !== $one))
+                : [];
+        }
+
+        if (!is_string($scope)) {
+            return [];
+        }
+
+        return array_values(array_filter(explode(' ', $scope), static fn(string $one): bool => '' !== $one));
     }
 
     /**

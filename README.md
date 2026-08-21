@@ -464,6 +464,58 @@ a request without that header, from an API client or an older browser, is not ju
 and it is off by default because it silently drops legitimate cross-site calls in a flow that
 means them.
 
+## Scopes
+
+A role says what someone *is*; a scope says what the client holding this token was allowed to
+ask for on their behalf. Two tokens naming the same person can carry different ones, so the
+bundle keeps them in their own namespace rather than folding them into roles:
+
+```php
+#[IsGranted('SCOPE_reports.read')]
+public function reports(): Response { … }
+```
+
+```yaml
+security:
+    access_control:
+        - { path: ^/api/reports, roles: SCOPE_reports.read }
+```
+
+The scopes come from the token's `scope` claim: space-delimited as RFC 6749 §3.3 and RFC 9068
+§2.2.3 have it, or a JSON list of strings, which some issuers send instead. Nothing to configure
+— the voter answers `SCOPE_*` and only that.
+
+The claim name is `scope` and is not configurable. An issuer that puts scopes somewhere else —
+Entra ID's `scp`, say — is read by a `custom` factory, which gets the whole claim set and
+decides for itself; that is the same seam the user modes already provide, and one claim name in
+configuration would invite a second.
+
+**It needs a user that carries the scopes** — one implementing `ProvidesScopes`. `user.mode:
+claims` gives you that; a `custom` factory can implement it on whatever it builds; and a user
+loaded from your own store can implement it too, which is the escape hatch if you keep scopes
+there.
+
+What the voter looks at is the user, not the mode. So in `provider` mode a `SCOPE_*` check is
+refused as long as your user class says nothing about scopes — which is the usual case and the
+honest answer rather than a gap: there the store is the authority on what may be done, and a
+scope from the token would be a second answer to a question already settled.
+
+**One caveat about strategies.** A user with no scopes is *denied*, not passed over. Under the
+default `affirmative` strategy that cannot override another voter's grant, so there is nothing
+to switch off. Under `unanimous` or `consensus` this voter votes like any other, and a `SCOPE_*`
+check against a user that carries no scopes will veto — which is what those strategies are for,
+but worth knowing before you change one.
+
+With `symfony/expression-language` installed, the same check reads as a scope in an expression:
+
+```yaml
+security:
+    access_control:
+        - { path: ^/api/reports, allow_if: "is_granted_scope('reports.read')" }
+```
+
+which is `is_granted('SCOPE_reports.read')` with the prefix kept out of the string.
+
 ## Revoking a token
 
 A JWT is valid because it verifies, not because anyone is still willing to accept it — that is
