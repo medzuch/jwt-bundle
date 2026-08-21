@@ -116,8 +116,9 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger']);
         $this->registerIssuers($services, $keys, $config['issuers']);
         $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['remote_jwks'], $config['logger']);
+        $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger']);
-        self::registerTokenExtractors($services, $config['token_extractors']);
+
         $this->registerJwks($services, $keys, $config['jwks']);
         $this->registerConsoleCommands($services);
     }
@@ -312,15 +313,6 @@ final class MedzuchJwtBundle extends AbstractBundle
     }
 
     /**
-     * An OIDC relying-party registration: which provider, which client, and
-     * what to verify their ID tokens with.
-     *
-     * Separate from `consumers` rather than a mode of it, because the two
-     * produce different things. A consumer is wired into a firewall; an ID
-     * token is not a bearer credential and gets no handler, so putting them in
-     * one section would make the wrong wiring a one-word change.
-     */
-    /**
      * Named token extractors, for the firewall to reference by service id.
      *
      * Only the cookie one lives here: Symfony ships extractors for the
@@ -341,6 +333,16 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->cannotBeEmpty()
             ->info('Name of the cookie carrying the token. A `__Host-` prefix is worth having: it makes the browser refuse the cookie unless it is Secure, path-wide and unscoped to a domain, which stops a subdomain from setting one.')
             ->example('__Host-jwt')
+            ->validate()
+                // A name outside the RFC 6265 §4.1.1 token set is one no
+                // browser will ever send under, so the extractor would sit
+                // there matching nothing — a build error says that now instead
+                // of leaving an authentication that never fires.
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && 1 !== preg_match('/^[!#$%&\'*+\-.^_`|~0-9A-Za-z]+$/', $value))
+                // The character list is escaped for sprintf, which thenInvalid()
+                // runs the message through: a bare %& is a format specifier.
+                ->thenInvalid('A cookie name must be an RFC 6265 §4.1.1 token: letters, digits and !#$%%&\'*+-.^_`|~, with no spaces or separators. A name outside that set is never sent by a browser. Got %s')
+            ->end()
             ->end();
 
         $extractor->booleanNode('same_site_only')
@@ -349,6 +351,15 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->end();
     }
 
+    /**
+     * An OIDC relying-party registration: which provider, which client, and
+     * what to verify their ID tokens with.
+     *
+     * Separate from `consumers` rather than a mode of it, because the two
+     * produce different things. A consumer is wired into a firewall; an ID
+     * token is not a bearer credential and gets no handler, so putting them in
+     * one section would make the wrong wiring a one-word change.
+     */
     private function configureIdTokens(NodeBuilder $children): void
     {
         $idToken = $children->arrayNode('id_tokens')
@@ -1140,7 +1151,7 @@ final class MedzuchJwtBundle extends AbstractBundle
     /**
      * @param array<string, array{cookie: string, same_site_only: bool}> $extractors
      */
-    private static function registerTokenExtractors(ServicesConfigurator $services, array $extractors): void
+    private function registerTokenExtractors(ServicesConfigurator $services, array $extractors): void
     {
         foreach ($extractors as $name => $extractor) {
             $services->set('medzuch_jwt.token_extractor.' . $name, CookieTokenExtractor::class)

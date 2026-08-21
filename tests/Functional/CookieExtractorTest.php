@@ -12,6 +12,8 @@ use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Symfony\Component\BrowserKit\Cookie;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\KernelInterface;
 
@@ -54,7 +56,7 @@ final class CookieExtractorTest extends WebTestCase
         self::assertResponseIsSuccessful();
     }
 
-    #[TestDox('the header still works beside it, and takes precedence')]
+    #[TestDox('the header still works beside it, and is consulted first')]
     public function testHeaderStillWorks(): void
     {
         $client = self::createClient();
@@ -63,6 +65,56 @@ final class CookieExtractorTest extends WebTestCase
         $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . self::token()]);
 
         self::assertResponseIsSuccessful();
+    }
+
+    #[TestDox('the cookie is not a fallback: any Authorization header at all ends the search')]
+    public function testTheCookieIsNotAFallback(): void
+    {
+        // Symfony's chain returns the first non-empty extraction and stops, so
+        // a browser carrying a stale token, or a Basic credential a proxy put
+        // there, is answered 401 while a perfectly good cookie sits unread.
+        // Pinned here so a later reordering cannot change it quietly.
+        $client = self::createClient();
+        self::presentCookie($client, self::token());
+
+        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer stale-and-invalid']);
+
+        self::assertResponseStatusCodeSame(Response::HTTP_UNAUTHORIZED);
+    }
+
+    #[TestDox('a cookie holding nothing, or holding an array, is no token rather than a bad request')]
+    public function testMalformedCookie(): void
+    {
+        // Through the extractor directly: neither value reaches the handler, so
+        // over HTTP both are indistinguishable from no cookie at all — which is
+        // the point. The array case is the one that matters: `name[]=x` is
+        // something anyone able to set a cookie can send, and reading it with
+        // InputBag::get() throws, answering 400 where the honest answer is that
+        // this request carries no token.
+        $extractor = new CookieTokenExtractor(self::COOKIE);
+
+        $blank = Request::create('/api/whoami');
+        $blank->cookies->set(self::COOKIE, '');
+        self::assertNull($extractor->extractAccessToken($blank));
+
+        $arrayValued = Request::create('/api/whoami');
+        $arrayValued->cookies->set(self::COOKIE, ['nested' => 'value']);
+        self::assertNull($extractor->extractAccessToken($arrayValued));
+
+        $present = Request::create('/api/whoami');
+        $present->cookies->set(self::COOKIE, 'a-token');
+        self::assertSame('a-token', $extractor->extractAccessToken($present));
+    }
+
+    #[TestDox('a cookie name a browser could never send fails at container build')]
+    public function testInvalidCookieName(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/RFC 6265/');
+
+        (new SecuredKernel([
+            'token_extractors' => ['cookie' => ['cookie' => 'jwt token;']],
+        ]))->boot();
     }
 
     #[TestDox('another cookie is not the one configured')]

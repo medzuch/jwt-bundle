@@ -49,7 +49,11 @@ final class CookieTokenExtractor implements AccessTokenExtractorInterface
             return null;
         }
 
-        $token = $request->cookies->get($this->cookie);
+        // Read through all(), not get(): an array-valued cookie — `name[]=x`,
+        // which anyone able to set a cookie can send — makes InputBag::get()
+        // throw, and a malformed cookie would answer 400 where it should answer
+        // "no token here" and let the request be refused as unauthenticated.
+        $token = $request->cookies->all()[$this->cookie] ?? null;
 
         return is_string($token) && '' !== $token ? $token : null;
     }

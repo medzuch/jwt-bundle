@@ -416,7 +416,9 @@ Registered from `loadExtension()` into `config/services.php`:
 - `medzuch_jwt.role_mapper.<name>`, `medzuch_jwt.user_resolver.<name>` — only
   registered when the corresponding config branch is present.
 - Autoconfiguration tags: `medzuch_jwt.claim_provider` (I3),
-  `medzuch_jwt.token_extractor` (C5), `medzuch_jwt.denylist` (C9).
+  `medzuch_jwt.denylist` (C9). No tag for token extractors: a custom one is a
+  service the firewall names in `token_extractors`, and a tag would add a
+  second way to do what Symfony already does.
 - Compiler pass validating cross-references (unknown key name, key/alg
   mismatch, consumer referenced by no firewall, JWKS publish listing a key with
   no public half).

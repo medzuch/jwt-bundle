@@ -434,6 +434,12 @@ security:
                     - medzuch_jwt.token_extractor.spa
 ```
 
+**The order is a decision, not a preference.** Symfony's chain returns the first extractor that
+finds anything and stops — so with the header listed first, a browser sending *any*
+`Authorization` header, including a stale token or a `Basic` credential from a proxy, gets a 401
+while its cookie sits unread. The cookie is an alternative, not a fallback. Put the cookie
+extractor first if browser requests are the ones that must work.
+
 A single-page application that keeps its token in JavaScript keeps it where any injected script
 can read it. An `HttpOnly` cookie is the safer place for it — and then something has to read the
 token back off the request, which the header extractor cannot.

@@ -25,7 +25,9 @@ a class or method signature would be.
   browser to requests your application did not initiate, and moving the token buys
   protection from script access in exchange for cross-site request forgery. `SameSite`,
   the `__Host-` prefix and CSRF protection on state-changing routes are the application's
-  to add. `same_site_only: true` ignores the cookie when the browser reports a cross-site
+  to add — as is the extractor order, since Symfony's chain stops at the first extractor
+  that finds anything: with the header listed first, a browser sending any `Authorization`
+  header at all gets a 401 while its cookie sits unread. `same_site_only: true` ignores the cookie when the browser reports a cross-site
   request — defence in depth, off by default, and explicitly not a CSRF defence, since a
   request without `Sec-Fetch-Site` is not judged at all.
 - **Token revocation (C9).** `consumers.<name>.denylist` gives a consumer somewhere to ask
