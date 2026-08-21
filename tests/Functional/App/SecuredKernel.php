@@ -115,6 +115,8 @@ final class SecuredKernel extends Kernel
                 'pattern' => '^/api',
                 'stateless' => true,
                 'provider' => 'users',
+                'entry_point' => 'medzuch_jwt.entry_point.api',
+                'access_denied_handler' => 'medzuch_jwt.access_denied.api',
                 'access_token' => $accessToken,
             ];
         }
@@ -126,6 +128,9 @@ final class SecuredKernel extends Kernel
             // The prefix with nothing after it, which the voter answers and
             // denies: no token grants the empty scope.
             ['path' => '^/api/bare-scope', 'roles' => 'SCOPE_'],
+            // A denial with no scope in it, so the bearer challenge has
+            // nothing to add and Symfony's own 403 stands.
+            ['path' => '^/api/role', 'roles' => 'ROLE_NOBODY_HAS_THIS'],
             ['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY'],
         ];
 
@@ -167,7 +172,10 @@ final class SecuredKernel extends Kernel
             // A factory an application would own, for the custom user mode. It
             // costs the tests that ignore it nothing, and a mode this kernel
             // could not exercise would be a mode no firewall test can reach.
-            ->set('test.user_factory', TenantUserFactory::class)->public();
+            ->set('test.user_factory', TenantUserFactory::class)->public()
+
+            // A denylist store the tests can revoke through.
+            ->set('test.cache', ArrayCache::class)->public();
     }
 
     /**
@@ -195,6 +203,7 @@ final class SecuredKernel extends Kernel
         $routes->add('whoami', '/api/whoami')->controller(WhoAmIController::class);
         $routes->add('scoped', '/api/scoped')->controller(WhoAmIController::class);
         $routes->add('bare_scope', '/api/bare-scope')->controller(WhoAmIController::class);
+        $routes->add('role_only', '/api/role')->controller(WhoAmIController::class);
 
         // Where a JWK Set lives is the application's decision, and this
         // application makes it the way any other would: it routes to the

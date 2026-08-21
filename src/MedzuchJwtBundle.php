@@ -26,6 +26,8 @@ use Medzuch\JwtBundle\Security\AccessTokenSuccessHandler;
 use Medzuch\JwtBundle\Security\Authorization\ScopeExpressionProvider;
 use Medzuch\JwtBundle\Security\Authorization\ScopeVoter;
 use Medzuch\JwtBundle\Security\Extractor\CookieTokenExtractor;
+use Medzuch\JwtBundle\Security\Http\BearerEntryPoint;
+use Medzuch\JwtBundle\Security\Http\InsufficientScopeHandler;
 use Medzuch\JwtBundle\Security\Identity\ClaimsUserResolver;
 use Medzuch\JwtBundle\Security\Identity\CustomUserResolver;
 use Medzuch\JwtBundle\Security\Identity\ProviderUserResolver;
@@ -100,7 +102,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
-         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
+         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
          * } $config */
@@ -567,6 +569,13 @@ final class MedzuchJwtBundle extends AbstractBundle
         $algorithms->isRequired();
         $algorithms->requiresAtLeastOneElement();
         self::rejectMaps($algorithms, 'consumers.*.allowed_algorithms');
+
+        $consumer->scalarNode('realm')
+            ->defaultNull()
+            ->cannotBeEmpty()
+            ->info('Protection space named in the `WWW-Authenticate` header of this consumer\'s entry point and scope denials (RFC 6750 §3). Null uses the consumer\'s name.')
+            ->example('api')
+            ->end();
 
         $consumer->integerNode('leeway')
             ->defaultValue(0)
@@ -1112,7 +1121,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
-     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
+     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      */
     private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $sets, ?string $logger): void
@@ -1134,6 +1143,20 @@ final class MedzuchJwtBundle extends AbstractBundle
                     null,
                     0 === $consumer['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $consumer['leeway'])]),
                 ]);
+
+            // The two answers RFC 6750 asks for that Symfony has none of: the
+            // challenge for a request carrying no credentials, and the 403 that
+            // names the scope which would have been enough. Both are the
+            // application's to wire into its firewall, like every other service
+            // here — a bundle that reached into `security.yaml` would be
+            // deciding which firewall this consumer belongs to (DEC-1).
+            $realm = $consumer['realm'] ?? $name;
+
+            $services->set('medzuch_jwt.entry_point.' . $name, BearerEntryPoint::class)
+                ->args([$realm]);
+
+            $services->set('medzuch_jwt.access_denied.' . $name, InsufficientScopeHandler::class)
+                ->args([$realm]);
 
             $services->set('medzuch_jwt.handler.' . $name, AccessTokenHandler::class)
                 ->args([

@@ -17,7 +17,7 @@
 > verification (C6) and the audience policy (C14). EdDSA works end to end, since
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
-> in.
+> in, and so is O4.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -247,7 +247,7 @@ default and adds no runtime cost when unconfigured.
 | O1 | PSR-3 logging on a dedicated `jwt` Monolog channel, with the library's redacting `SecurityLog` and configurable levels | `SecurityLog`, `LogLevels` | T1 |
 | O2 | Profiler / web-debug-toolbar panel: tokens seen this request, decoded header + claims (redacted), validation verdict and reason, key/kid used, verification timing | `DataCollector` | T2 |
 | O3 | Events for authentication success/failure carrying the *reason* (expired vs. bad signature vs. wrong audience) for metrics and alerting | EventDispatcher | T2 |
-| O4 | RFC 6750 `WWW-Authenticate` response headers with correct `error`/`error_description` on 401 — without leaking why validation failed beyond the standard codes | entry point | T2 |
+| O4 | RFC 6750 `WWW-Authenticate` on refusals. Symfony already answers a rejected token with `error="invalid_token"` and a generic description, so what the bundle adds is the challenge for a request carrying no credentials — no `error`, per §3 — and the `insufficient_scope` 403 naming the scope that would have sufficed (§3.1) | entry point + access denied handler | T2 |
 | O5 | Health/self-check: a command that validates configuration (keys parse, algorithms match key types, JWKS reachable) — CI- and deploy-gate friendly | Command | T2 |
 
 ### 3.5 Developer experience

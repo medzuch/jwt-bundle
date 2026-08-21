@@ -13,6 +13,20 @@ a class or method signature would be.
 
 ### Added
 
+- **RFC 6750 refusals (O4).** `medzuch_jwt.entry_point.<name>` and
+  `medzuch_jwt.access_denied.<name>` supply the two answers Symfony has none of. A request
+  carrying no token is challenged with `WWW-Authenticate: Bearer realm="…"` and **no
+  `error`**, which RFC 6750 §3 asks for: naming `invalid_token` to a caller who sent no
+  token describes a failure that did not happen. A request denied for want of a scope gets
+  `403` with `error="insufficient_scope"` and the scope that would have sufficed — not a
+  leak, since the caller is authenticated and could ask their authorization server for it,
+  while withholding it leaves them retrying something that can never succeed.
+
+  A token Symfony rejects keeps its existing answer, `error="invalid_token"` and nothing
+  about why: expired, wrong audience or revoked all read the same on the wire, and the
+  reason stays in the log. A denial over a role, an expression or a voter of your own is
+  left alone. `consumers.<name>.realm` names the protection space, defaulting to the
+  consumer's name.
 - **A scope voter (C13).** `SCOPE_*` attributes — `#[IsGranted('SCOPE_reports.read')]`,
   `access_control` rules, `is_granted()` — are answered from the token's `scope` claim,
   space-delimited per RFC 6749 §3.3. Registered unconditionally and with nothing to

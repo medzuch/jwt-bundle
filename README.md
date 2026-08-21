@@ -516,6 +516,44 @@ security:
 
 which is `is_granted('SCOPE_reports.read')` with the prefix kept out of the string.
 
+## What a refusal tells the caller
+
+RFC 6750 §3 asks a resource server to answer refusals in a way a client can act on. Symfony
+answers one of the three cases on its own — a token it rejects — and the bundle supplies the
+other two:
+
+```yaml
+security:
+    firewalls:
+        api:
+            entry_point: medzuch_jwt.entry_point.api
+            access_denied_handler: medzuch_jwt.access_denied.api
+            access_token:
+                token_handler: medzuch_jwt.handler.api
+```
+
+| The request | Answer | `WWW-Authenticate` |
+|---|---|---|
+| carried no token | `401` | `Bearer realm="api"` |
+| carried one that was not accepted | `401` | `Bearer realm="api", error="invalid_token", …` |
+| was authenticated but lacked a scope | `403` | `Bearer realm="api", error="insufficient_scope", scope="reports.read"` |
+
+**No `error` on the first row**, which RFC 6750 §3 asks for and is worth the exactness:
+`error="invalid_token"` for a request that sent no token describes a failure that did not
+happen, and sends the reader looking for a bad token they never had.
+
+**Nothing on the second row says why.** Expired, wrong audience, revoked, signed by a key this
+consumer does not accept — all of it is `invalid_token`. The reason is in your log, where it
+helps you, rather than on the wire, where it helps someone else.
+
+**The third row names the scope**, and that is not a leak: the caller is already authenticated,
+and the scope is one they could ask their authorization server for. Withholding it leaves a
+client retrying a request that can never succeed.
+
+A denial over anything else — a role, an expression, a voter of your own — is left alone, so
+Symfony's usual 403 stands. `realm` defaults to the consumer's name; set
+`consumers.<name>.realm` for something a client would recognise.
+
 ## Revoking a token
 
 A JWT is valid because it verifies, not because anyone is still willing to accept it — that is
