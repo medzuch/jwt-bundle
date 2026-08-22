@@ -11,7 +11,9 @@ use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
+use Medzuch\JwtBundle\Security\RejectionReason;
 use Medzuch\JwtBundle\Tests\Functional\App\ArrayCache;
+use Medzuch\JwtBundle\Tests\Functional\App\RecordsVerification;
 use Medzuch\JwtBundle\Tests\Functional\App\StubHttpClient;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use Medzuch\JwtBundle\Tests\Functional\App\TransportFailure;
@@ -169,6 +171,14 @@ final class RemoteJwksTest extends KernelTestCase
 
         self::assertInstanceOf(JwksResolutionException::class, $cause);
         self::assertInstanceOf(TransportFailure::class, $cause->getPrevious(), 'the transport failure should still be readable under the credential error');
+
+        // And announced as what it is. A caller sees a refused credential
+        // either way; whoever is on call needs to know this one is not about
+        // the token, and it is the only reason worth paging on.
+        $listener = self::getContainer()->get('test.verification_listener');
+        self::assertInstanceOf(RecordsVerification::class, $listener);
+        self::assertCount(1, $listener->rejected);
+        self::assertSame(RejectionReason::KeysUnavailable, $listener->rejected[0]->reason);
     }
 
     #[TestDox('tokens naming a kid the issuer never published cost one fetch, not one each')]

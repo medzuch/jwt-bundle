@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Tests\Functional\App;
 
 use Medzuch\Jwt\Primitives\FrozenClock;
+use Medzuch\JwtBundle\Event\JwtRejectedEvent;
+use Medzuch\JwtBundle\Event\JwtVerifiedEvent;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
@@ -52,6 +54,13 @@ final class TestKernel extends Kernel
 
             $container->register('test.logger', CollectingLogger::class)->setPublic(true);
 
+            // Without Monolog, Symfony's fallback logger writes every dispatched
+            // event to stderr, which PHPUnit reports as unexpected output.
+            // Collecting rather than discarding, for the same reason
+            // SecuredKernel does it: a silenced kernel also silences the
+            // deprecations a boot would report.
+            $container->register('logger', CollectingLogger::class)->setPublic(true);
+
             // An identity provider and a cache the tests can interrogate. They
             // cost nothing to the tests that ignore them, and a remote JWK Set
             // cannot be exercised without both.
@@ -60,6 +69,15 @@ final class TestKernel extends Kernel
             $container->register('test.cache_pool', ArrayAdapter::class)->setPublic(true);
             $container->register('test.user_factory', TenantUserFactory::class)->setPublic(true);
             $container->register('test.denylist', InMemoryDenylist::class)->setPublic(true);
+
+            // Listening always, because it records and decides nothing: a
+            // consumer announcing a verdict is part of every test's wiring,
+            // and a listener registered only where it is asserted would leave
+            // the dispatch itself unexercised everywhere else.
+            $container->register('test.verification_listener', RecordsVerification::class)
+                ->setPublic(true)
+                ->addTag('kernel.event_listener', ['event' => JwtVerifiedEvent::class, 'method' => 'onVerified'])
+                ->addTag('kernel.event_listener', ['event' => JwtRejectedEvent::class, 'method' => 'onRejected']);
 
             // Registered only where it can be satisfied: it asks for an ID
             // token verifier by argument name, which is the whole of what it

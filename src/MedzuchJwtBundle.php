@@ -1183,9 +1183,11 @@ final class MedzuchJwtBundle extends AbstractBundle
             $services->set('medzuch_jwt.handler.' . $name, AccessTokenHandler::class)
                 ->args([
                     service('medzuch_jwt.consumer.' . $name),
+                    $name,
                     self::userResolver($name, $consumer['user']),
                     'exclusive' === $consumer['audience_policy'] ? array_values($consumer['audience']) : null,
                     self::registerDenylist($services, $builder, $name, $consumer['denylist'], $consumer['leeway']),
+                    service('event_dispatcher')->nullOnInvalid(),
                 ]);
         }
     }
