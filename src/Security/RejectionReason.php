@@ -68,7 +68,11 @@ enum RejectionReason: string
     /** A claim is missing, of the wrong type, or refused by the profile. */
     case ClaimsRefused = 'claims_refused';
 
-    /** The key set could not be fetched. An outage, not a verdict on the token. */
+    /**
+     * The keys to verify with could not be had: the set would not fetch, or
+     * what came back is not usable key material. An outage on one side or the
+     * other, not a verdict on the token.
+     */
     case KeysUnavailable = 'keys_unavailable';
 
     /** The token verified, and the application refused the identity behind it. */
@@ -93,7 +97,12 @@ enum RejectionReason: string
             $failure instanceof SignatureVerificationException => self::SignatureInvalid,
             $failure instanceof KeyNotFoundException,
             $failure instanceof KeyMismatchException => self::UnknownKey,
-            $failure instanceof InvalidKeyException => self::UnknownKey,
+            // Not a rotation half-done but key material that cannot be used —
+            // a JWK the issuer published wrong, most likely. An operator
+            // watching for "we cannot verify anything right now" should see it
+            // beside an unreachable issuer, not beside a token naming a kid we
+            // have not got yet.
+            $failure instanceof InvalidKeyException => self::KeysUnavailable,
             $failure instanceof AlgorithmNotAllowedException => self::AlgorithmRefused,
             $failure instanceof InvalidIssuerException => self::WrongIssuer,
             $failure instanceof InvalidAudienceException => self::WrongAudience,

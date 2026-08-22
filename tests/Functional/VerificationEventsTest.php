@@ -44,6 +44,7 @@ final class VerificationEventsTest extends KernelTestCase
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
     private const ISSUER = 'https://issuer.test';
     private const AUDIENCE = 'https://api.test';
+    private const KID = 'the-only-key';
 
     /**
      * @param array<array-key, mixed> $options
@@ -130,6 +131,18 @@ final class VerificationEventsTest extends KernelTestCase
             RejectionReason::AlgorithmRefused,
         ];
 
+        yield 'not yet valid' => [
+            'not valid yet',
+            static fn(): string => self::token(notBefore: new DateTimeImmutable('+1 hour')),
+            RejectionReason::NotYetValid,
+        ];
+
+        yield 'unknown kid' => [
+            'signed under a key id this consumer does not have',
+            static fn(): string => self::token(kid: 'a-key-nobody-published'),
+            RejectionReason::UnknownKey,
+        ];
+
         yield 'malformed' => [
             'not a JWT at all',
             static fn(): string => 'not-a-token',
@@ -171,6 +184,26 @@ final class VerificationEventsTest extends KernelTestCase
 
         self::assertCount(1, self::listener()->rejected);
         self::assertSame(RejectionReason::WrongAudience, self::listener()->rejected[0]->reason);
+    }
+
+    #[TestDox('a token that names nobody is a claim failure, however it fails to name them')]
+    public function testTheIdentityClaimIsAClaim(): void
+    {
+        $configuration = self::configuration();
+        $configuration['consumers']['api']['user'] = ['identity_claim' => 'email'];
+
+        self::bootKernel(['medzuch_jwt' => $configuration]);
+
+        // Absent, and present but not a string. One is refused by this bundle
+        // and the other by the library, and an operator counting refusals
+        // should not have to know which: it is the same defect in the token.
+        self::refuse(self::token());
+        self::refuse(self::token(extraClaims: ['email' => 42]));
+
+        self::assertSame(
+            [RejectionReason::ClaimsRefused, RejectionReason::ClaimsRefused],
+            array_map(static fn(JwtRejectedEvent $e): RejectionReason => $e->reason, self::listener()->rejected),
+        );
     }
 
     #[TestDox('a token the application will not turn into a user is refused as an identity failure')]
@@ -239,7 +272,10 @@ final class VerificationEventsTest extends KernelTestCase
     private static function configuration(): array
     {
         return [
-            'keys' => ['default' => ['hmac' => self::SECRET]],
+            // Named, so that a token bearing another `kid` is a key this
+            // consumer has not got rather than a signature that does not check
+            // out.
+            'keys' => ['default' => ['hmac' => self::SECRET, 'kid' => self::KID]],
             'consumers' => [
                 'api' => [
                     'issuer' => self::ISSUER,
@@ -252,7 +288,8 @@ final class VerificationEventsTest extends KernelTestCase
     }
 
     /**
-     * @param string|list<string> $audience
+     * @param string|list<string>  $audience
+     * @param array<string, mixed> $extraClaims
      */
     private static function token(
         string $secret = self::SECRET,
@@ -260,18 +297,33 @@ final class VerificationEventsTest extends KernelTestCase
         string $issuer = self::ISSUER,
         string $algorithm = 'HS256',
         ?DateTimeImmutable $expiresAt = null,
+        ?DateTimeImmutable $notBefore = null,
         ?string $jwtId = null,
+        ?string $kid = self::KID,
+        ?string $subject = 'user-42',
+        array $extraClaims = [],
     ): string {
         $profile = AccessTokenProfile::issuer(
             $issuer,
             'HS512' === $algorithm ? new Hs512() : new Hs256(),
-            HmacKey::fromBinary($secret, $algorithm),
+            HmacKey::fromBinary($secret, $algorithm, $kid),
         );
 
         $builder = $profile->issue()
-            ->subject('user-42')
             ->audience($audience)
             ->clientId('test-client');
+
+        if (null !== $subject) {
+            $builder = $builder->subject($subject);
+        }
+
+        if (null !== $notBefore) {
+            $builder = $builder->notBefore($notBefore);
+        }
+
+        foreach ($extraClaims as $name => $value) {
+            $builder = $builder->withClaim($name, $value);
+        }
 
         if (null !== $jwtId) {
             $builder = $builder->jwtId($jwtId);

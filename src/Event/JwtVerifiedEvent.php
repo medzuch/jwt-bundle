@@ -17,7 +17,12 @@ use Medzuch\Jwt\Jwt\ClaimsSet;
  * the other half: how many tokens each consumer accepts, from which issuer,
  * with what left of their lifetime.
  *
- * The claims are the token's own, so a listener can read anything it carries.
+ * The claims are the token's own, so a listener can read anything it carries —
+ * and, for the same reason, anything it carries is what a listener that logs
+ * them writes down: subjects, emails, tenant ids. The token itself is not here,
+ * for the reason it is not on {@see JwtRejectedEvent} either, but claims are
+ * personal data and a log is a place they are easy to forget.
+ *
  * `$identifier` is what the request will authenticate as, which is not always a
  * claim: a `custom` factory may derive it from several.
  */

@@ -729,7 +729,8 @@ final class CountsRefusals
 ```
 
 `JwtVerifiedEvent` is the other side: the consumer, the token's claims, and the identity the
-request will authenticate as.
+request will authenticate as. It carries no token either — but the claims are the token's own, so
+a listener that logs them logs whatever they hold: subjects, emails, tenant ids.
 
 | Reason | What happened | What it usually means |
 |---|---|---|
@@ -742,14 +743,24 @@ request will authenticate as.
 | `wrong_audience` | `aud` does not name this consumer, or names another too | the token was minted for a different service |
 | `revoked` | a denylist withdrew this `jti` | working as intended |
 | `malformed` | not a JWT this consumer can read, `typ` included | a client sending the wrong thing |
-| `claims_refused` | a claim is missing, mistyped or refused | usually a profile mismatch |
-| `keys_unavailable` | the key set could not be fetched | **an outage, not a verdict on the token** |
-| `identity_refused` | the token verified, the application refused who it named | your factory or store said no |
+| `claims_refused` | a claim is missing, mistyped or refused — the identity claim included | usually a profile mismatch |
+| `keys_unavailable` | the key set would not fetch, or what came back is not usable key material | **an outage, not a verdict on the token** |
+| `identity_refused` | the token verified and named somebody, and the application refused them | your `custom` factory said no |
 | `other` | something with no bucket yet | read `cause` |
 
 The reasons are coarser than the library's exception classes on purpose: a case per exception
 would only move the coupling, and a dashboard would have to learn a new name every time the
 library grows a leaf. `$event->cause` is the exception itself when you need more than the bucket.
+
+A token that names *nobody* — no `sub`, or no configured `identity_claim` — is `claims_refused`
+rather than `identity_refused`: there was no identity to refuse. It reads the same way whether
+the claim was missing or held a number, which is the point of a bucket.
+
+**A `custom` factory's own message does reach the client.** Throwing a
+`CustomUserMessageAuthenticationException` from `userFrom()` is how you say something specific to
+the caller, and the bundle passes it through untouched — deliberately, since the factory is the
+only party that knows whether its refusal is safe to explain. Everything else stays behind
+Symfony's generic `Invalid credentials.`
 
 **Neither event carries the token.** What was presented is a credential whether or not it
 verified here — a revoked token still opens doors elsewhere — so a listener that logs what it is
