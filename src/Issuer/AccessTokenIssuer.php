@@ -26,8 +26,9 @@ use Psr\EventDispatcher\EventDispatcherInterface;
  * 4. listeners on `JwtIssuingEvent` — last, because adjusting a claim set means
  *    seeing all of it.
  *
- * The profile's own claims are applied after all four and cannot be overridden
- * by any of them.
+ * The builder is filled before any of them and the assembled map is applied on
+ * top of it, so what protects the registered claims is the library: it refuses
+ * them in `withClaim()` whoever sends them.
  *
  * Two claims deserve naming, because they are not registered claims and so the
  * library does not protect them: a static or per-call claim called `client_id`

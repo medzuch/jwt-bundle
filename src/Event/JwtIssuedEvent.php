@@ -16,6 +16,12 @@ use Medzuch\JwtBundle\Issuer\TokenIssuance;
  * credential to a log. Revocation needs the `jti`, not the token, and so does
  * anything else that asks about it later.
  *
+ * Two of its fields answer different questions, and for one token they can
+ * disagree: `$issuance->scopes` is what the call asked to grant, while a
+ * `scope` in `$claims` — which configuration and the `issue()` argument are
+ * still allowed to set — is what the token actually says. An audit trail that
+ * has to match the token reads the claim.
+ *
  * Listeners cannot change anything: the token exists by the time this is
  * dispatched. Changing what it says is what JwtIssuingEvent is for.
  */

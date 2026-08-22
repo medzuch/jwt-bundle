@@ -16,9 +16,12 @@ use LogicException;
  * 9068 §2.2 meaning to everyone else — so a provider returning `scope` would
  * silently replace what the caller asked to grant.
  *
- * Configuration is checked for the same names at container build
- * (`issuers.*.claims`); this is the runtime half, for the contributions no
- * container can see.
+ * This list is longer than the one configuration is checked against at
+ * container build: `issuers.*.claims` refuses the registered names only, and
+ * lets `client_id` and `scope` through deliberately — static claims and the
+ * arguments of `issue()` are both places where someone decided about a token
+ * they were looking at. A provider or a listener was not looking at it, which
+ * is the whole reason this list is stricter.
  *
  * @internal
  */

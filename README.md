@@ -284,7 +284,9 @@ final class RecordsGrants
         $this->audit->granted(
             $event->issuance->jti,
             $event->issuance->subject,
-            $event->issuance->scopes,
+            // What the token says, which is the argument unless something
+            // deliberately overrode the claim — see below.
+            $event->claims['scope'] ?? implode(' ', $event->issuance->scopes),
             $event->issuance->ttl,
         );
     }
@@ -294,6 +296,11 @@ final class RecordsGrants
 It carries no token. Everything an audit trail needs is on the event already, and a listener
 writing what it is handed to a log would otherwise be writing a working credential to a log —
 revocation needs the `jti`, and so does anything else that asks about this token later.
+
+`issuance->scopes` is what the call asked for, and `claims['scope']` is what the token ended up
+saying. They are the same until something sets the `scope` claim itself — which configuration
+and the `issue()` argument may still do, deliberately — so an audit trail that has to agree with
+the token reads the claim, as above.
 
 
 ## Keys

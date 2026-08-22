@@ -150,6 +150,26 @@ final class ClaimContributionTest extends WebTestCase
         self::assertSame(['issuance', 'claims'], array_keys(get_object_vars($issued)));
     }
 
+    #[TestDox('a caller may still override the scope, and the audit event shows what was asked and what was granted')]
+    public function testScopeOverrideIsVisibleOnBothSides(): void
+    {
+        self::browser();
+
+        // Allowed on purpose, and older than this PR: the `$claims` argument is
+        // a place where someone decided about one token. A provider is not, and
+        // is refused the same name.
+        $token = self::issuer()->issue('user-7', scopes: ['reports.read'], claims: ['scope' => 'reports.write']);
+
+        self::assertSame('reports.write', self::payload($token)['scope'] ?? null);
+
+        $issued = self::listener()->issued;
+        self::assertInstanceOf(JwtIssuedEvent::class, $issued);
+        // The two views of one token, and they differ: an audit trail that has
+        // to match what was granted reads the claim, not the argument.
+        self::assertSame(['reports.read'], $issued->issuance->scopes);
+        self::assertSame('reports.write', $issued->claims['scope'] ?? null);
+    }
+
     #[TestDox('an issuer with nothing tagged and nothing listening mints a token without the claim')]
     public function testTheClaimComesFromTheProviderAndNowhereElse(): void
     {
@@ -202,6 +222,28 @@ final class ClaimContributionTest extends WebTestCase
         self::assertStringContainsString('@', $user);
 
         return substr($user, (int) strpos($user, '@') + 1);
+    }
+
+    /**
+     * What the token itself says, which for this one claim is the whole point:
+     * the round trip elsewhere asserts what a consumer makes of a token, and
+     * here the question is what was written into it.
+     *
+     * @return array<string, mixed>
+     */
+    private static function payload(IssuedToken $token): array
+    {
+        $segments = explode('.', $token->value);
+        self::assertCount(3, $segments);
+
+        $json = base64_decode(strtr($segments[1], '-_', '+/'), true);
+        self::assertIsString($json);
+
+        $claims = json_decode($json, true, flags: \JSON_THROW_ON_ERROR);
+        self::assertIsArray($claims);
+
+        /** @var array<string, mixed> $claims */
+        return $claims;
     }
 
     private static function provider(string $id): TenantClaims
