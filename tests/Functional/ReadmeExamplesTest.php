@@ -150,6 +150,14 @@ final class ReadmeExamplesTest extends KernelTestCase
             }
         }
 
+        // A consumer promises the two RFC 6750 answers unconditionally.
+        if (is_array($consumers)) {
+            foreach (array_keys($consumers) as $consumer) {
+                $ids[] = sprintf('medzuch_jwt.entry_point.%s', $consumer);
+                $ids[] = sprintf('medzuch_jwt.access_denied.%s', $consumer);
+            }
+        }
+
         $extractors = $configuration['token_extractors'] ?? [];
 
         if (is_array($extractors)) {

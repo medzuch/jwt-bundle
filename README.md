@@ -514,7 +514,73 @@ security:
         - { path: ^/api/reports, allow_if: "is_granted_scope('reports.read')" }
 ```
 
-which is `is_granted('SCOPE_reports.read')` with the prefix kept out of the string.
+which is `is_granted('SCOPE_reports.read')` with the prefix kept out of the string. Note that a
+denial through an expression cannot produce the RFC 6750 `insufficient_scope` header — see
+[what a refusal tells the caller](#what-a-refusal-tells-the-caller).
+
+## What a refusal tells the caller
+
+RFC 6750 §3 asks a resource server to answer refusals in a way a client can act on. Symfony
+answers one of the three cases on its own — a token it rejects — and the bundle supplies the
+other two:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default: { hmac: '%env(JWT_SECRET)%', algorithm: HS256 }
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: ['%env(APP_URL)%']
+            keys: [default]
+            allowed_algorithms: [HS256]
+            realm: 'reports-api'        # …and the same string below
+
+security:
+    firewalls:
+        api:
+            entry_point: medzuch_jwt.entry_point.api
+            access_denied_handler: medzuch_jwt.access_denied.api
+            access_token:
+                token_handler: medzuch_jwt.handler.api
+                realm: 'reports-api'    # Symfony's own, for the header it sends
+```
+
+**Two realms, and they should match.** The rejected-token header is Symfony's, built from
+`access_token.realm`, which defaults to *none*; the other two are the bundle's, from
+`consumers.<name>.realm`, which defaults to the consumer's name. The bundle cannot set
+Symfony's for you without deciding which firewall this consumer belongs to, which is what
+[DEC-1](docs/plan.md) exists to avoid — so it is one string written twice.
+
+| The request | Answer | `WWW-Authenticate` |
+|---|---|---|
+| carried no token | `401` | `Bearer realm="reports-api"` |
+| carried one that was not accepted | `401` | `Bearer realm="reports-api", error="invalid_token", error_description="Invalid credentials."` |
+| was authenticated but lacked a scope | `403` | `Bearer realm="reports-api", error="insufficient_scope", scope="reports.read"` |
+
+**No `error` on the first row**, which RFC 6750 §3 asks for and is worth the exactness:
+`error="invalid_token"` for a request that sent no token describes a failure that did not
+happen, and sends the reader looking for a bad token they never had.
+
+**Nothing on the second row says why.** Expired, wrong audience, revoked, signed by a key this
+consumer does not accept — all of it is `invalid_token`. The reason is in your log, where it
+helps you, rather than on the wire, where it helps someone else.
+
+**The third row names the scope**, and that is not a leak: the caller is already authenticated,
+and the scope is one they could ask their authorization server for. Withholding it leaves a
+client retrying a request that can never succeed.
+
+A denial over anything else — a role, an expression, a voter of your own — is left alone, so
+Symfony's usual 403 stands.
+
+**An `allow_if` is one of those.** What reaches the handler is the expression, not the attribute
+it asked about, so `is_granted_scope('reports.read')` gives a plain 403 with no bearer challenge.
+A rule that wants the RFC header names the attribute directly — `roles: SCOPE_reports.read`, or
+`#[IsGranted('SCOPE_reports.read')]`, both of which carry it.
+
+One scope per rule keeps the header honest, too: Symfony reads several attributes on one rule as
+alternatives — any one grants — while RFC 6750's `scope` reads as what was required.
 
 ## Revoking a token
 
