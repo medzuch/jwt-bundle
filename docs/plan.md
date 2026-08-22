@@ -17,7 +17,7 @@
 > verification (C6) and the audience policy (C14). EdDSA works end to end, since
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
-> in, and so is O4.
+> in, and so are O4 and the issuance hooks I3/I4.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -218,8 +218,8 @@ default and adds no runtime cost when unconfigured.
 |---|---|---|---|
 | I1 | `AccessTokenIssuer::issue(subject, scopes, claims, ttl, audience): IssuedToken` — audience, client id and TTL come from configuration; each argument narrows it for one token. Returns a value object rather than a string so the lifetime travels with the token, instead of the caller re-deriving an `expires_in` it just asked for | `AccessTokenProfile::issuer()` | T1 |
 | I2 | Named issuers (different audiences/keys/TTLs per client or tenant) | config tree §4 | T2 |
-| I3 | `TokenClaimProviderInterface` tagged services — apps contribute claims (tenant, email, entitlements) without subclassing the issuer | DI tags | T2 |
-| I4 | `JwtIssuingEvent` (mutable claims) + `JwtIssuedEvent` (audit hook) | EventDispatcher | T2 |
+| I3 | `TokenClaimProviderInterface` autoconfigured services — apps contribute claims (tenant, email, entitlements) without subclassing the issuer. Handed a `TokenIssuance`, so a provider can serve one issuer of several; refused the claims the issuer decides itself, since a provider runs for tokens it was never asked about | DI tags | T2 |
+| I4 | `JwtIssuingEvent` (mutable claims, dispatched last so it sees the whole set) + `JwtIssuedEvent` (audit hook, carrying the `jti` and never the token) | EventDispatcher | T2 |
 | I5 | Login integration: an authentication success handler that returns `{ "access_token": ..., "token_type": "Bearer", "expires_in": ... }`, pluggable into `json_login`/`form_login` | Symfony + I1 | T1 |
 | I6 | `IdTokenIssuer` for apps acting as an OIDC provider | `IdTokenProfile::issuer()` | T3 |
 | I7 | Security Event Token issuer (emit RISC/CAEP events to relying parties) | `SetProfile::issuer()` | T3 |
