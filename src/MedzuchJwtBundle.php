@@ -16,6 +16,7 @@ use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Command\GenerateKeyCommand;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
+use Medzuch\JwtBundle\Issuer\TokenClaimProviderInterface;
 use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
@@ -49,6 +50,7 @@ use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
 use function Symfony\Component\DependencyInjection\Loader\Configurator\inline_service;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
+use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_iterator;
 
 /**
  * Wires `medzuch/jwt-php` into a Symfony application.
@@ -115,6 +117,12 @@ final class MedzuchJwtBundle extends AbstractBundle
         }
 
         $keys = $this->keyEntries($config['keys']);
+
+        // Implementing the interface is the whole registration: a claim
+        // provider is application code, and asking it to also remember a tag
+        // would make a silent no-op the price of forgetting.
+        $builder->registerForAutoconfiguration(TokenClaimProviderInterface::class)
+            ->addTag('medzuch_jwt.token_claim_provider');
 
         $services = $container->services();
         $this->registerKeys($services, $keys);
@@ -1057,10 +1065,16 @@ final class MedzuchJwtBundle extends AbstractBundle
             $services->set('medzuch_jwt.issuer.' . $name, AccessTokenIssuer::class)
                 ->args([
                     service('medzuch_jwt.issuer.' . $name . '.profile'),
+                    $name,
                     array_values($issuer['audience']),
                     $issuer['client_id'],
                     $issuer['ttl'],
                     $issuer['claims'],
+                    tagged_iterator('medzuch_jwt.token_claim_provider'),
+                    // Optional so the issuer stands on its own: outside a
+                    // Symfony application — a unit test, a script — there is no
+                    // dispatcher, and issuance is not the place to require one.
+                    service('event_dispatcher')->nullOnInvalid(),
                 ]);
 
             $services->set('medzuch_jwt.login.' . $name, AccessTokenSuccessHandler::class)

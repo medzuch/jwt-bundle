@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional\App;
 
+use Medzuch\JwtBundle\Event\JwtIssuedEvent;
+use Medzuch\JwtBundle\Event\JwtIssuingEvent;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
 use Medzuch\JwtBundle\Tests\Functional\App\CollectingLogger as TestLogger;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
@@ -28,8 +30,10 @@ final class SecuredKernel extends Kernel
     /**
      * @param array<array-key, mixed> $bundleConfig configuration under the `medzuch_jwt` root key
      */
-    public function __construct(private readonly array $bundleConfig = [])
-    {
+    public function __construct(
+        private readonly array $bundleConfig = [],
+        private readonly bool $issuanceHooks = false,
+    ) {
         parent::__construct('test', true);
     }
 
@@ -47,7 +51,7 @@ final class SecuredKernel extends Kernel
             sys_get_temp_dir(),
             \PHP_VERSION_ID,
             Kernel::VERSION_ID,
-            hash('xxh128', serialize($this->bundleConfig)),
+            hash('xxh128', serialize([$this->bundleConfig, $this->issuanceHooks])),
         );
     }
 
@@ -182,6 +186,26 @@ final class SecuredKernel extends Kernel
             ->set('test.cache', ArrayCache::class)->public()
 
             ->set(ScopedController::class)->public();
+
+        if (!$this->issuanceHooks) {
+            return;
+        }
+
+        $container->services()
+            // Tagged by nothing but the interface: autoconfiguration is the
+            // registration a claim provider is meant to need, and a test that
+            // tagged it by hand would never notice if that stopped working.
+            ->set('test.claims.tenant', TenantClaims::class)->args(['acme'])->autoconfigure()->public()
+
+            // The same interface with a priority, so ordering is asserted
+            // rather than assumed: this one runs first and is overridden by
+            // the one above, which runs later.
+            ->set('test.claims.first', TenantClaims::class)->args(['first-in'])->public()
+            ->tag('medzuch_jwt.token_claim_provider', ['priority' => 10])
+
+            ->set('test.issuance_listener', RecordsIssuance::class)->public()
+            ->tag('kernel.event_listener', ['event' => JwtIssuingEvent::class, 'method' => 'onIssuing'])
+            ->tag('kernel.event_listener', ['event' => JwtIssuedEvent::class, 'method' => 'onIssued']);
     }
 
     /**

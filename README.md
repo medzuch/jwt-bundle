@@ -184,6 +184,118 @@ medzuch_jwt:
             allowed_algorithms: [HS256]
 ```
 
+## Claims an application adds
+
+A token says what its issuer decides it says. Four places decide, and each can override the one
+before it.
+
+**Configuration**, for a claim that never changes:
+
+```yaml
+# config/packages/medzuch_jwt.yaml
+medzuch_jwt:
+    keys:
+        default:
+            hmac: '%env(JWT_SECRET)%'
+
+    issuers:
+        default:
+            issuer: '%env(APP_URL)%'
+            key: default
+            client_id: '%env(APP_CLIENT_ID)%'
+            audience: '%env(APP_URL)%'
+            claims:
+                region: eu-central
+```
+
+**A claim provider**, for one that has to be looked up. Implement the interface and the bundle
+finds it — there is no tag to remember:
+
+```php
+use Medzuch\JwtBundle\Issuer\TokenClaimProviderInterface;
+use Medzuch\JwtBundle\Issuer\TokenIssuance;
+
+final class TenantClaims implements TokenClaimProviderInterface
+{
+    public function __construct(private readonly TenantContext $tenants) {}
+
+    public function claimsFor(TokenIssuance $issuance): array
+    {
+        return ['tenant' => $this->tenants->current()->id];
+    }
+}
+```
+
+`$issuance` describes the token being minted — `issuerName`, `subject`, `scopes`, `audience`,
+`ttl` and the `jti` it will carry. A provider runs for every issuer, so with more than one
+configured, `$issuance->issuerName` is how a provider serving only some of them says so;
+returning `[]` contributes nothing. Tag priority orders providers, and the one that runs *later*
+wins, as with event listeners.
+
+**The call itself**, for this token only:
+
+```php
+$this->issuer->issue('user-42', scopes: ['invoices:read'], claims: ['tenant' => 'acme']);
+```
+
+**A listener on `JwtIssuingEvent`**, which runs last because adjusting a claim set means seeing
+all of it:
+
+```php
+use Medzuch\JwtBundle\Event\JwtIssuingEvent;
+use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
+
+#[AsEventListener]
+final class StampsTheDevice
+{
+    public function __invoke(JwtIssuingEvent $event): void
+    {
+        $event->setClaim('device', $this->devices->currentFor($event->issuance->subject));
+    }
+}
+```
+
+### The claims nobody may contribute
+
+`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`, `client_id` and `scope` are the issuer's own,
+and a provider or a listener returning one throws — naming the class, so the message says where
+to go.
+
+The registered claims are set from configuration and from the arguments of `issue()`. The other
+two are the reason the list is not simply "the registered claims": to a JWT library `client_id`
+and `scope` are ordinary claims, and to RFC 9068 §2.2 they are what the token grants. A provider
+runs for tokens it was never asked about, so one quietly rewriting `scope` would widen every
+token in the application. Configuration and the `issue()` call may still set them — both are
+places where someone decided *this* token deliberately.
+
+### Knowing what was issued
+
+`JwtIssuedEvent` arrives once the token is signed, for audit and metrics:
+
+```php
+use Medzuch\JwtBundle\Event\JwtIssuedEvent;
+use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
+
+#[AsEventListener]
+final class RecordsGrants
+{
+    public function __invoke(JwtIssuedEvent $event): void
+    {
+        $this->audit->granted(
+            $event->issuance->jti,
+            $event->issuance->subject,
+            $event->issuance->scopes,
+            $event->issuance->ttl,
+        );
+    }
+}
+```
+
+It carries no token. Everything an audit trail needs is on the event already, and a listener
+writing what it is handed to a log would otherwise be writing a working credential to a log —
+revocation needs the `jti`, and so does anything else that asks about this token later.
+
+
 ## Keys
 
 A key is bound to exactly one algorithm, and the algorithm decides what material it must be

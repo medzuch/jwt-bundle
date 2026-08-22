@@ -13,6 +13,27 @@ a class or method signature would be.
 
 ### Added
 
+- **Claims an application contributes (I3, I4).** `TokenClaimProviderInterface` services add
+  claims to every token an issuer mints — a tenant, an entitlement list, anything that has to
+  be looked up rather than configured. Implementing the interface is the whole registration;
+  autoconfiguration tags it. Providers are handed a `TokenIssuance` describing what is being
+  minted (issuer name, subject, scopes, audience, TTL and the `jti` the token will carry), run
+  in tag priority order, and the one that runs later wins.
+
+  `JwtIssuingEvent` is the same hook for code that cannot be a provider — another bundle's
+  listener, a subscriber that also listens for something else. It runs last, after the
+  providers and after the caller's own `issue()` claims, because adjusting a claim set means
+  seeing all of it. `JwtIssuedEvent` follows the signature, for audit and metrics: it carries
+  the issuance and the claims, and deliberately **not** the token, so a listener logging what
+  it is handed cannot log a working credential.
+
+  Neither hook may set `iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`, `client_id` or `scope`;
+  doing so throws, naming the provider class or the event. The registered ones the library
+  already refuses, but from inside a builder, where the message cannot say whose contribution
+  it was; `client_id` and `scope` nothing refused at all, and a provider runs for tokens it was
+  never asked about, so one rewriting `scope` would widen every token in the application.
+  Configuration and the `issue()` arguments may still set those two, as before.
+
 - **RFC 6750 refusals (O4).** `medzuch_jwt.entry_point.<name>` and
   `medzuch_jwt.access_denied.<name>` supply the two answers Symfony has none of. A request
   carrying no token is challenged with `WWW-Authenticate: Bearer realm="…"` and **no
