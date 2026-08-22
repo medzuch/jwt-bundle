@@ -13,6 +13,27 @@ a class or method signature would be.
 
 ### Added
 
+- **Why a token was refused (O3).** `JwtRejectedEvent` carries the consumer, the exception,
+  and a `RejectionReason` — `expired`, `signature_invalid`, `unknown_key`,
+  `algorithm_refused`, `wrong_issuer`, `wrong_audience`, `revoked`, `malformed`,
+  `claims_refused`, `keys_unavailable`, `identity_refused`, `not_yet_valid`, `other`. Symfony's
+  own `LoginFailureEvent` reaches a listener with the same generic message for every refusal,
+  which is right on the wire and useless on a dashboard. `JwtVerifiedEvent` is the other side:
+  the consumer, the claims, and the identity the request will authenticate as.
+
+  The reasons are coarser than the library's exception hierarchy on purpose — a case per
+  exception class would only move the coupling, and every dashboard would have to learn a new
+  name whenever the library grows a leaf. The distinctions kept are the ones an operator acts
+  on differently, `keys_unavailable` above all: an issuer that cannot be reached is an outage,
+  not a verdict on the token.
+
+  Refusals now throw `RejectedTokenException`, a `BadCredentialsException` that carries its
+  reason. Nothing changes on the wire: `getMessageKey()` is inherited, so a rejected token
+  still gets Symfony's generic "Invalid credentials." and none of the detail behind it.
+
+  Neither event carries the token. Both are dispatched only where an application has an event
+  dispatcher, which outside a framework it may not.
+
 - **Claims an application contributes (I3, I4).** `TokenClaimProviderInterface` services add
   claims to every token an issuer mints — a tenant, an entitlement list, anything that has to
   be looked up rather than configured. Implementing the interface is the whole registration;
