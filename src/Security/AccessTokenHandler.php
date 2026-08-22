@@ -6,9 +6,12 @@ namespace Medzuch\JwtBundle\Security;
 
 use Medzuch\Jwt\Exception\JwtException;
 use Medzuch\Jwt\Profile\ProfileConsumer;
+use Medzuch\JwtBundle\Event\JwtRejectedEvent;
+use Medzuch\JwtBundle\Event\JwtVerifiedEvent;
 use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\Identity\UserResolverInterface;
-use Symfony\Component\Security\Core\Exception\BadCredentialsException;
+use Psr\EventDispatcher\EventDispatcherInterface;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
 use Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface;
 use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
 
@@ -16,8 +19,14 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
  * Turns a validated token into a `UserBadge` for Symfony's native
  * `access_token` authenticator. One instance per configured consumer.
  *
- * Every library failure becomes the same `BadCredentialsException`, carrying the
- * original as `previous`: the reason belongs in the log, not in the response.
+ * Every failure becomes the same `BadCredentialsException`, carrying the
+ * original as `previous` and a {@see RejectionReason} of its own: what refused
+ * the token belongs in the log and on {@see JwtRejectedEvent}, not in the
+ * response, where RFC 6750 §3.1 has three error codes and "which claim" is not
+ * among them. A token that is accepted announces itself too, on
+ * {@see JwtVerifiedEvent} — both are dispatched only where an application has
+ * an event dispatcher, which outside a framework it may not.
+ *
  * Who the token names, and what that identity becomes, is a
  * {@see UserResolverInterface}: a lookup in the application's store, a user
  * built from the claims, or the application's own mapping — which may derive an
@@ -37,9 +46,11 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
      */
     public function __construct(
         private readonly ProfileConsumer $consumer,
+        private readonly string $name,
         private readonly UserResolverInterface $users,
         private readonly ?array $exclusiveTo = null,
         private readonly ?TokenDenylistInterface $denylist = null,
+        private readonly ?EventDispatcherInterface $events = null,
     ) {}
 
     public function getUserBadgeFrom(string $accessToken): UserBadge
@@ -52,12 +63,36 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
 
             // Inside the try because naming the user reads claims, and
             // getString() throws when one holds a non-string — a bad token,
-            // not a server error. A BadCredentialsException raised in there is
+            // not a server error. An AuthenticationException raised in there is
             // not a JwtException and passes through with its own message.
-            return $this->users->badgeFor($claims);
+            $badge = $this->users->badgeFor($claims);
         } catch (JwtException $e) {
-            throw new BadCredentialsException('Invalid access token.', previous: $e);
+            throw $this->rejected(new RejectedTokenException(RejectionReason::of($e), 'Invalid access token.', $e));
+        } catch (AuthenticationException $e) {
+            throw $this->rejected($e);
         }
+
+        $this->events?->dispatch(new JwtVerifiedEvent($this->name, $claims, $badge->getUserIdentifier()));
+
+        return $badge;
+    }
+
+    /**
+     * Announces a refusal and hands back the exception to throw, so that one
+     * `throw` site is one event: a refusal raised inside the try would
+     * otherwise be caught by the block below it and announced twice.
+     *
+     * An exception that is not ours came from the user resolver, which only
+     * runs on a token that already verified — the token was fine and the
+     * application refused what it named.
+     */
+    private function rejected(AuthenticationException $failure): AuthenticationException
+    {
+        $reason = $failure instanceof RejectedTokenException ? $failure->reason : RejectionReason::IdentityRefused;
+
+        $this->events?->dispatch(new JwtRejectedEvent($this->name, $reason, $failure));
+
+        return $failure;
     }
 
     /**
@@ -77,11 +112,11 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
         // silently accepted the first would be a revocation list that lets
         // through exactly the tokens nobody can name.
         if (null === $jti || '' === $jti) {
-            throw new BadCredentialsException('Access token carries no "jti", so it cannot be checked against the denylist.');
+            throw new RejectedTokenException(RejectionReason::ClaimsRefused, 'Access token carries no "jti", so it cannot be checked against the denylist.');
         }
 
         if ($this->denylist->isRevoked($jti)) {
-            throw new BadCredentialsException('Access token has been revoked.');
+            throw new RejectedTokenException(RejectionReason::Revoked, 'Access token has been revoked.');
         }
     }
 
@@ -102,7 +137,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
         $others = array_values(array_diff($audience, $this->exclusiveTo));
 
         if ([] !== $others) {
-            throw new BadCredentialsException(sprintf(
+            throw new RejectedTokenException(RejectionReason::WrongAudience, sprintf(
                 'Access token is addressed to %s as well, and this consumer accepts tokens minted for it alone.',
                 '"' . implode('", "', $others) . '"',
             ));

@@ -701,6 +701,65 @@ A rule that wants the RFC header names the attribute directly — `roles: SCOPE_
 One scope per rule keeps the header honest, too: Symfony reads several attributes on one rule as
 alternatives — any one grants — while RFC 6750's `scope` reads as what was required.
 
+## Knowing why, when the caller is not told
+
+The wire says `invalid_token` for every rejected token, deliberately. Your dashboard needs the
+half that is missing there, and two events carry it:
+
+```php
+use Medzuch\JwtBundle\Event\JwtRejectedEvent;
+use Medzuch\JwtBundle\Security\RejectionReason;
+use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
+
+#[AsEventListener]
+final class CountsRefusals
+{
+    public function __invoke(JwtRejectedEvent $event): void
+    {
+        $this->metrics->increment('jwt.rejected', [
+            'consumer' => $event->consumer,
+            'reason' => $event->reason->value,
+        ]);
+
+        if (RejectionReason::KeysUnavailable === $event->reason) {
+            $this->alerts->page('cannot reach the issuer', $event->cause);
+        }
+    }
+}
+```
+
+`JwtVerifiedEvent` is the other side: the consumer, the token's claims, and the identity the
+request will authenticate as.
+
+| Reason | What happened | What it usually means |
+|---|---|---|
+| `expired` | `exp` has passed | the ordinary cost of short lifetimes — worth a baseline, not an alert |
+| `not_yet_valid` | `nbf` or `iat` is in the future | clock skew; raise `leeway` if it is small and constant |
+| `signature_invalid` | no accepted key verifies it | somebody is trying something |
+| `unknown_key` | no key matches the token's `kid` | a rotation that has not finished, or another issuer's token |
+| `algorithm_refused` | the `alg` is not in `allowed_algorithms` | a client misconfigured, or an algorithm-confusion attempt |
+| `wrong_issuer` | `iss` is not the configured one | a token from somewhere else |
+| `wrong_audience` | `aud` does not name this consumer, or names another too | the token was minted for a different service |
+| `revoked` | a denylist withdrew this `jti` | working as intended |
+| `malformed` | not a JWT this consumer can read, `typ` included | a client sending the wrong thing |
+| `claims_refused` | a claim is missing, mistyped or refused | usually a profile mismatch |
+| `keys_unavailable` | the key set could not be fetched | **an outage, not a verdict on the token** |
+| `identity_refused` | the token verified, the application refused who it named | your factory or store said no |
+| `other` | something with no bucket yet | read `cause` |
+
+The reasons are coarser than the library's exception classes on purpose: a case per exception
+would only move the coupling, and a dashboard would have to learn a new name every time the
+library grows a leaf. `$event->cause` is the exception itself when you need more than the bucket.
+
+**Neither event carries the token.** What was presented is a credential whether or not it
+verified here — a revoked token still opens doors elsewhere — so a listener that logs what it is
+handed cannot write one into a log.
+
+**Verified is not authenticated.** In `user.mode: provider` and `claims`, Symfony loads the user
+after this bundle is done, so a token can be accepted here and the request still fail because
+the store has no such user. That refusal is Symfony's `LoginFailureEvent`, not this bundle's.
+
+
 ## Revoking a token
 
 A JWT is valid because it verifies, not because anyone is still willing to accept it — that is
