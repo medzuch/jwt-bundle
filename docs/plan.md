@@ -17,7 +17,7 @@
 > verification (C6) and the audience policy (C14). EdDSA works end to end, since
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
-> in, and so are O4, the issuance hooks I3/I4, O3, and the token commands D1/D2.
+> in, and so are O4, the issuance hooks I3/I4, O3, and the console commands D1/D2/D4.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -257,7 +257,7 @@ default and adds no runtime cost when unconfigured.
 | D1 | `jwt:token:create` — mint a token from CLI (subject, audience, scopes, TTL, extra claims, named issuer) through the configured issuer, so providers and issuing listeners run as they would in the application. `--raw` for a shell to capture; registered only where an issuer is | T2 |
 | D2 | `jwt:token:inspect` — decode with no configuration at all, verify through the consumer's own handler where there is one, and name the O3 reason a refusal keeps off the wire. Reads a token from a pipe; exit status says accepted, refused, or not a JWT | T2 |
 | D3 | `jwt:key:generate` — generate HMAC secret / RSA / EC / OKP keypair in PEM or JWK, with `kid`, and print the configuration that uses it. Refuses to overwrite a key file and writes the private half 0600 | T2 |
-| D4 | `jwt:jwks:dump` — print the public JWK Set (what K4 would serve) | T2 |
+| D4 | `jwt:jwks:dump` — print the public JWK Set from the same `JwkSet` service K4 serves, so a document written to a file cannot drift from the one served over HTTP. `--compact` is byte for byte what the endpoint returns | T2 |
 | D5 | Test helpers shipped in `src/Test/`: a `TestTokenFactory` for functional tests, assertion helpers, a frozen-clock service alias for time-travel tests | T2 |
 | D6 | Flex recipe: registers the bundle, writes a starter `config/packages/medzuch_jwt.yaml` and `.env` entries | T3 |
 | D7 | Documentation: quickstart per role (resource server / auth server / OIDC RP), config reference, cookbook (rotation, multi-tenant, SPA cookies), upgrade notes | T2 |

@@ -56,7 +56,7 @@
         "psr/http-factory": "To point a remote JWK Set at a PSR-17 request factory, when the PSR-18 client is not one itself",
         "psr/simple-cache": "To cache a remote JWK Set through a PSR-16 service of your own",
         "symfony/cache": "To cache a remote JWK Set through a PSR-6 pool such as cache.app, which the default wiring wraps",
-        "symfony/console": "To run jwt:key:generate, jwt:token:create and jwt:token:inspect",
+        "symfony/console": "To run jwt:key:generate, jwt:token:create, jwt:token:inspect and jwt:jwks:dump",
         "symfony/expression-language": "To write is_granted_scope() in access_control or #[IsGranted] expressions"
     },
     "autoload": {
