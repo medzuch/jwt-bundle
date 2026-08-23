@@ -17,8 +17,8 @@
 > verification (C6) and the audience policy (C14). EdDSA works end to end, since
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
-> in, and so are O4, the issuance hooks I3/I4, O3, the console commands D1/D2/D4, and the
-> test helpers D5.
+> in, and so are O4, the issuance hooks I3/I4, O3, the console commands D1/D2/D4/O5, and
+> the test helpers D5.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -249,7 +249,7 @@ default and adds no runtime cost when unconfigured.
 | O2 | Profiler / web-debug-toolbar panel: tokens seen this request, decoded header + claims (redacted), validation verdict and reason, key/kid used, verification timing | `DataCollector` | T2 |
 | O3 | `JwtVerifiedEvent` and `JwtRejectedEvent`, the latter carrying a `RejectionReason` — a small stable vocabulary rather than a case per library exception, since a dashboard should not have to learn a new name every time the library grows a leaf. `keys_unavailable` is kept apart from every other reason: an unreachable issuer is an outage, not a verdict on the token | EventDispatcher | T2 |
 | O4 | RFC 6750 `WWW-Authenticate` on refusals. Symfony already answers a rejected token with `error="invalid_token"` and a generic description, so what the bundle adds is the challenge for a request carrying no credentials — no `error`, per §3 — and the `insufficient_scope` 403 naming the scope that would have sufficed (§3.1) | entry point + access denied handler | T2 |
-| O5 | Health/self-check: a command that validates configuration (keys parse, algorithms match key types, JWKS reachable) — CI- and deploy-gate friendly | Command | T2 |
+| O5 | `jwt:config:check`: builds every key, consumer, issuer and verifier the container left for later, and reaches every remote set. What it adds to the build-time refusals is the material behind the configuration — a key file nobody deployed, an empty env variable, an unreachable issuer — which are factory arguments and so fail on the first request instead. Exit status gates a deploy step; `--skip-remote` reports what it skipped | Command | T2 |
 
 ### 3.5 Developer experience
 

@@ -1111,7 +1111,7 @@ library does not have yet, and this bundle does not reimplement crypto its libra
 
 ## From the console
 
-Four commands, and none of them a second implementation of anything: each asks the services your
+Five commands, and none of them a second implementation of anything: each asks the services your
 application already has.
 
 ```bash
@@ -1182,7 +1182,24 @@ Serving the file yourself means serving the headers the endpoint sets for you: `
 application/jwk-set+json` (RFC 7517 §8.5), a cache lifetime, and an `ETag`. Most relying parties
 accept `application/json`; the strict ones are the reason to set it.
 
-`jwt:key:generate` is the fourth — see [Generating keys](#generating-keys).
+`jwt:config:check` builds everything the container left for later and says what broke:
+
+```bash
+bin/console jwt:config:check              # 0 when everything answered, 1 when anything did not
+bin/console jwt:config:check --skip-remote
+```
+
+The container refuses the mistakes it can see when it is built. This is for the ones it cannot:
+a `pem_private` naming a file that was not deployed, an env variable that arrived empty, a secret
+two bytes shorter than its algorithm allows, an issuer whose JWK Set cannot be reached *from
+here*. All of those are factory arguments, and a factory runs when its service is first used —
+which is to say, on somebody's first request. Run this as a deploy step and the deploy fails
+instead.
+
+Remote sets are fetched, so `--skip-remote` is there for a gate with no network; what it does not
+check, it says it did not check rather than passing quietly.
+
+`jwt:key:generate` is the fifth — see [Generating keys](#generating-keys).
 
 **A minted token is a working credential** for as long as it lives. It is on your screen and in
 your shell history; `--raw` at least keeps the surrounding text out of a log.

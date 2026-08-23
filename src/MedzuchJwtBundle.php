@@ -14,6 +14,7 @@ use Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
+use Medzuch\JwtBundle\Command\CheckConfigurationCommand;
 use Medzuch\JwtBundle\Command\CreateTokenCommand;
 use Medzuch\JwtBundle\Command\DumpJwksCommand;
 use Medzuch\JwtBundle\Command\GenerateKeyCommand;
@@ -134,8 +135,8 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $this->registerConsoleCommands(
             $services,
-            array_keys($config['issuers']),
-            array_keys($config['consumers']),
+            $config,
+            $keys,
             $this->registerJwks($services, $keys, $config['jwks']),
         );
         $this->registerAuthorization($services);
@@ -188,18 +189,35 @@ final class MedzuchJwtBundle extends AbstractBundle
      * that could fetch anything would be a command that can be asked for
      * anything.
      *
-     * @param list<string> $issuers
-     * @param list<string> $consumers
-     * @param bool         $publishes whether a JWK Set service was registered to dump
+     * @param array{keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, remote_jwks: array<string, mixed>, ...} $config
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
+     * @param bool                                                                                                                                                                        $publishes whether a JWK Set service was registered to dump
      */
-    private function registerConsoleCommands(ServicesConfigurator $services, array $issuers, array $consumers, bool $publishes): void
+    private function registerConsoleCommands(ServicesConfigurator $services, array $config, array $keys, bool $publishes): void
     {
         if (!class_exists(Command::class)) {
             return;
         }
 
+        $issuers = array_keys($config['issuers']);
+        $consumers = array_keys($config['consumers']);
+
         $services->set('medzuch_jwt.command.key_generate', GenerateKeyCommand::class)
             ->tag('console.command', ['command' => 'jwt:key:generate']);
+
+        $services->set('medzuch_jwt.command.config_check', CheckConfigurationCommand::class)
+            ->args([
+                service_locator(self::everythingBuiltLazily($config, $keys)),
+                service_locator(array_combine(
+                    array_keys($config['remote_jwks']),
+                    array_map(
+                        static fn(string $name): ReferenceConfigurator => service('medzuch_jwt.remote_jwks.' . $name),
+                        array_keys($config['remote_jwks']),
+                    ),
+                )),
+                $publishes ? service('medzuch_jwt.jwks.key_set') : null,
+            ])
+            ->tag('console.command', ['command' => 'jwt:config:check']);
 
         $services->set('medzuch_jwt.command.token_inspect', InspectTokenCommand::class)
             ->args([
@@ -229,6 +247,47 @@ final class MedzuchJwtBundle extends AbstractBundle
                 )),
             ])
             ->tag('console.command', ['command' => 'jwt:token:create']);
+    }
+
+    /**
+     * What the container builds only when something asks for it, keyed by the
+     * name the report calls it. Key material above all: a `pem_private` is a
+     * path or an env reference until a factory reads it, so a file nobody
+     * deployed is a configuration that compiles and a request that does not.
+     *
+     * @param array{keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, ...} $config
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                        $keys
+     *
+     * @return array<string, ReferenceConfigurator>
+     */
+    private static function everythingBuiltLazily(array $config, array $keys): array
+    {
+        $subjects = [];
+
+        foreach ($keys as $name => $key) {
+            foreach (['signing' => self::hasPrivateHalf($key), 'verification' => self::hasPublicHalf($key)] as $half => $configured) {
+                if ($configured) {
+                    $subjects[sprintf('key "%s" (%s)', $name, $half)] = service(sprintf('medzuch_jwt.key.%s.%s', $name, $half));
+                }
+            }
+        }
+
+        foreach (array_keys($config['consumers']) as $name) {
+            // The handler rather than the consumer: it is what the firewall
+            // calls, so building it also builds the user resolver and the
+            // denylist behind it.
+            $subjects[sprintf('consumer "%s"', $name)] = service('medzuch_jwt.handler.' . $name);
+        }
+
+        foreach (array_keys($config['issuers']) as $name) {
+            $subjects[sprintf('issuer "%s"', $name)] = service('medzuch_jwt.issuer.' . $name);
+        }
+
+        foreach (array_keys($config['id_tokens']) as $name) {
+            $subjects[sprintf('ID token "%s"', $name)] = service('medzuch_jwt.id_token.' . $name);
+        }
+
+        return $subjects;
     }
 
     private function configureGlobals(NodeBuilder $children): void
