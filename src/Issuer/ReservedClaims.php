@@ -27,8 +27,25 @@ use LogicException;
  */
 final class ReservedClaims
 {
+    /**
+     * RFC 7519 §4.1. The library routes these through typed setters and refuses
+     * them in `withClaim()`, whoever sends them.
+     *
+     * @var list<string>
+     */
+    public const REGISTERED = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti'];
+
+    /**
+     * Ordinary claims to a JWT library, RFC 9068 §2.2 meaning to everyone else.
+     * Configuration and the arguments of `issue()` may set them deliberately;
+     * an ambient hook may not.
+     *
+     * @var list<string>
+     */
+    public const OWN = ['client_id', 'scope'];
+
     /** @var list<string> */
-    public const NAMES = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti', 'client_id', 'scope'];
+    public const NAMES = [...self::REGISTERED, ...self::OWN];
 
     /**
      * @param list<string> $names claim names the hook wants to write

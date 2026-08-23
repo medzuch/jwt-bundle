@@ -1093,6 +1093,70 @@ token names more than one audience, `exp`/`iat`, the claims OIDC requires, and t
 you pass one. **`at_hash` is not** — binding an ID token to an access token needs support the
 library does not have yet, and this bundle does not reimplement crypto its library is missing.
 
+## From the console
+
+Three commands, and none of them a second implementation of anything: each asks the services
+your application already has.
+
+```bash
+# Mint a token through a configured issuer
+bin/console jwt:token:create alice --scope reports.read --ttl 60
+
+# Capture it, then ask what a consumer makes of it
+TOKEN=$(bin/console jwt:token:create alice --raw)
+bin/console jwt:token:inspect "$TOKEN"
+
+# Or pipe it straight through
+bin/console jwt:token:create alice --raw | bin/console jwt:token:inspect -
+```
+
+`jwt:token:create` calls `AccessTokenIssuer::issue()`, so the token it prints is the token your
+application would have minted: the configured key signs it, the configured audience and client
+id are on it, and your claim providers and `JwtIssuingEvent` listeners run. Every option after
+the subject narrows what configuration decided, exactly as the method's arguments do. It appears
+only where an issuer is configured — an application that mints nothing has no use for it — and
+`--issuer` can be left out where one issuer is configured, whatever it is called.
+
+`--claim` carries the claims the issuer does not set itself. The registered ones (`iss`, `sub`,
+`aud`, `exp`, `nbf`, `iat`, `jti`) come from the arguments and are refused here rather than deep
+in a builder; `client_id` and `scope` are accepted and override the configured client id and
+`--scope`, which is the issuer's own rule for a caller's claims.
+
+`jwt:token:inspect` does two things, and the first needs no configuration at all. It decodes:
+header, claims, and the moments among them rendered as moments, so `exp` reads *expired 4 minutes
+ago* rather than as a number. Then, given a consumer, it verifies — through that consumer's own
+handler, which is what makes the answer worth having, and it names the reason a refusal would
+never put on the wire:
+
+```
+ [ERROR] Consumer "api" refuses this token: expired
+```
+
+The exit status is scriptable: `0` accepted, or decoded where the application configures no
+consumer at all; `1` refused; `2` nothing to inspect — not a JWT, no token, no such consumer, or
+several configured and none named. That last one is deliberately not a pass: `jwt:token:inspect
+"$TOKEN" && deploy` should not go green having verified nothing.
+
+Two consequences of verifying through the real path, both deliberate. Your listeners see an
+inspection as they would a request, so a metrics listener counts it — an answer reached by a
+second, quieter route would be worth much less than one that agrees with your firewall. And with
+several consumers configured the command will not pick one for you: name it with `--consumer`.
+
+`--consumer` names an **access-token** consumer. An ID token still decodes — that half needs no
+configuration — but a consumer asked to verify one refuses it as `malformed`, because `typ` says
+it is not the kind of token that consumer reads. ID tokens are verified by `IdTokenVerifier`
+from your callback, not by a firewall (DEC-8).
+
+*Would* authenticate is the exact word: for `user.mode: provider` and `claims`, the identity is
+loaded by Symfony after the handler returns, so the command can accept a token naming a user your
+store no longer has. It is the same "verified, not authenticated" line `JwtVerifiedEvent` draws.
+
+`jwt:key:generate` is the third — see [Generating keys](#generating-keys).
+
+**A minted token is a working credential** for as long as it lives. It is on your screen and in
+your shell history; `--raw` at least keeps the surrounding text out of a log.
+
+
 ## Configuration reference
 
 The complete tree, with every option, default and explanation, is generated from the bundle
