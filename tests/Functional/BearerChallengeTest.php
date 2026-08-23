@@ -11,6 +11,7 @@ use Medzuch\JwtBundle\Security\Http\BearerEntryPoint;
 use Medzuch\JwtBundle\Security\Http\InsufficientScopeHandler;
 use Medzuch\JwtBundle\Tests\Functional\App\SecuredKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
@@ -152,6 +153,34 @@ final class BearerChallengeTest extends WebTestCase
         self::assertIsString($header);
 
         return $header;
+    }
+
+    #[DataProvider('unnameableScopes')]
+    #[TestDox('a $defect is not a scope, so the denial names nothing rather than naming it wrongly')]
+    public function testAttributesThatAreNotScopesAreNotNamed(string $defect, string $path): void
+    {
+        $client = self::createClient();
+        $token = self::issuer()->issue('alice', scopes: ['nothing.useful']);
+
+        $client->request('GET', $path, server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token->value]);
+
+        self::assertResponseStatusCodeSame(403);
+
+        // No challenge at all, which is the honest answer: a newline would cost
+        // the whole header anyway — PHP refuses to emit one containing it — and
+        // a space would arrive at the client as two scopes it never asked
+        // about. RFC 6750 §3.1 makes the parameter optional; saying nothing is
+        // allowed, saying something untrue is not.
+        self::assertNull($client->getResponse()->headers->get('WWW-Authenticate'));
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function unnameableScopes(): iterable
+    {
+        yield 'newline' => ['scope attribute carrying a newline', '/api/dodgy-scope'];
+        yield 'space' => ['scope attribute carrying a space', '/api/spaced-scope'];
     }
 
     private static function issuer(): AccessTokenIssuer

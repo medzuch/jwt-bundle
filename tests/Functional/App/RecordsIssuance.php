@@ -20,6 +20,13 @@ final class RecordsIssuance
      */
     public array $adjust = [];
 
+    /**
+     * Claims this listener deletes when the next token is minted.
+     *
+     * @var list<string>
+     */
+    public array $remove = [];
+
     /** @var array<string, mixed>|null */
     public ?array $sawIssuing = null;
 
@@ -31,6 +38,10 @@ final class RecordsIssuance
 
         foreach ($this->adjust as $name => $value) {
             $event->setClaim($name, $value);
+        }
+
+        foreach ($this->remove as $name) {
+            $event->removeClaim($name);
         }
     }
 

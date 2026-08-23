@@ -132,6 +132,42 @@ final class ClaimContributionTest extends WebTestCase
         self::issuer()->issue('user-7');
     }
 
+    #[TestDox('a listener cannot delete a reserved claim either, only decline to add one')]
+    public function testListenerCannotRemoveAReservedClaim(): void
+    {
+        self::browser();
+
+        self::listener()->remove = ['scope'];
+
+        $this->expectException(LogicException::class);
+        // The sentence has to describe the line the stack trace points at: a
+        // listener that reads `removeClaim('scope')` being told it cannot
+        // "set" one sends its author looking for a call they did not make.
+        $this->expectExceptionMessage('A listener on JwtIssuingEvent cannot remove the reserved claim "scope"');
+
+        // Deleting is the quieter half of writing: without this the listener
+        // could drop a `scope` that configuration deliberately put there, and
+        // the caller would get a token granting less than it asked for with
+        // nothing saying so.
+        self::issuer()->issue('user-7', scopes: ['reports.read']);
+    }
+
+    #[TestDox('a claim of the application\'s own can still be removed')]
+    public function testAnOrdinaryClaimIsStillRemovable(): void
+    {
+        $client = self::browser();
+
+        self::listener()->remove = ['tenant'];
+
+        $client->request('GET', '/api/whoami', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::issuer()->issue('user-7')->value,
+        ]);
+
+        // The factory refuses a token that names no tenant, which is this
+        // kernel's way of saying the claim really is gone.
+        self::assertResponseStatusCodeSame(401);
+    }
+
     #[TestDox('the audit event carries the id and the claims, and never the token')]
     public function testIssuedEventIsAnAuditRecord(): void
     {

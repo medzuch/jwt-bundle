@@ -413,6 +413,33 @@ final class ConfigurationValidationTest extends KernelTestCase
         ];
     }
 
+    #[TestDox('a realm carrying a control character fails at container build')]
+    public function testRealmWithAControlCharacter(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/quote, a backslash or a control character/');
+
+        // The header would be dropped by PHP rather than emitted with a
+        // newline in it, so the 401 this realm belongs to would go out saying
+        // nothing about how to authenticate.
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'consumers' => ['api' => self::consumer(['realm' => "api\r\nX-Injected: yes"])],
+        ]]);
+    }
+
+    #[TestDox('a realm carrying a quote still fails at container build')]
+    public function testRealmWithAQuote(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/quote, a backslash or a control character/');
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'consumers' => ['api' => self::consumer(['realm' => 'api", error="insufficient_scope'])],
+        ]]);
+    }
+
     /**
      * @param array<string, mixed> $overrides
      *

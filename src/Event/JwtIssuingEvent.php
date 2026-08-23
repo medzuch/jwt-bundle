@@ -20,7 +20,10 @@ use Medzuch\JwtBundle\Issuer\TokenIssuance;
  *
  * The reserved names are refused here rather than after dispatch, so the
  * exception is thrown inside the listener that wrote one and the stack trace
- * names it.
+ * names it. Both ways of writing are refused: setting a claim the issuer
+ * decides, and removing one — a listener deleting the `scope` that
+ * `issuers.*.claims` put there would mint a token granting less than the
+ * configuration says, and the caller would never learn that it had.
  */
 final class JwtIssuingEvent
 {
@@ -49,6 +52,12 @@ final class JwtIssuingEvent
 
     public function removeClaim(string $name): void
     {
+        // The same names, for the same reason. Removal is the quieter half of
+        // writing: what a listener cannot set, it cannot delete either — and a
+        // `scope` that configuration put there is exactly as deliberate as one
+        // a listener would replace it with.
+        ReservedClaims::refuse([$name], 'A listener on JwtIssuingEvent', 'remove');
+
         unset($this->claims[$name]);
     }
 }

@@ -192,6 +192,26 @@ a class or method signature would be.
   consulted — so an identity assembled from several claims is fine and the badge cannot
   disagree with the user it loads.
 
+### Fixed
+
+- **A listener can no longer delete what it cannot write ([#31](https://github.com/medzuch/jwt-bundle/issues/31)).**
+  `JwtIssuingEvent::setClaim()` refused the claims the issuer decides itself; `removeClaim()`
+  refused nothing, so a listener could drop a `scope` that `issuers.*.claims` deliberately put
+  there and mint a token granting less than the configuration says, with nothing saying so. Both
+  halves of writing are refused now.
+- **`WWW-Authenticate` carries only what it can carry ([#32](https://github.com/medzuch/jwt-bundle/issues/32)).**
+  Quoting covered `"` and `\`; a control character has no place in a quoted-string either (RFC
+  9110 §5.6.4), and a newline costs more than a wrong value — PHP refuses to emit a header
+  carrying one, so the `401` would go out with no challenge at all. `consumers.*.realm` refuses
+  a quote, a backslash and a control character at container build, which also means it must be
+  a literal rather than an env reference: Symfony declines to validate a placeholder.
+
+  A `SCOPE_*` attribute the bundle never sees until a request is denied is now held to RFC 6749
+  §3.3 instead: only a real `scope-token` reaches the `scope` parameter, and a rule whose
+  attributes are none — one carrying a space, say, which would arrive at the client as two
+  scopes it never asked about — is answered with a plain `403` and no challenge. RFC 6750 §3.1
+  makes the parameter optional; saying nothing is allowed, saying something untrue is not.
+
 ## [0.3.0] — 2026-08-20
 
 Phase 3 of the roadmap in [`docs/plan.md`](docs/plan.md): federation. Keys can now
