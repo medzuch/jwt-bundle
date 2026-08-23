@@ -1114,7 +1114,13 @@ bin/console jwt:token:create alice --raw | bin/console jwt:token:inspect -
 application would have minted: the configured key signs it, the configured audience and client
 id are on it, and your claim providers and `JwtIssuingEvent` listeners run. Every option after
 the subject narrows what configuration decided, exactly as the method's arguments do. It appears
-only where an issuer is configured — an application that mints nothing has no use for it.
+only where an issuer is configured — an application that mints nothing has no use for it — and
+`--issuer` can be left out where one issuer is configured, whatever it is called.
+
+`--claim` carries the claims the issuer does not set itself. The registered ones (`iss`, `sub`,
+`aud`, `exp`, `nbf`, `iat`, `jti`) come from the arguments and are refused here rather than deep
+in a builder; `client_id` and `scope` are accepted and override the configured client id and
+`--scope`, which is the issuer's own rule for a caller's claims.
 
 `jwt:token:inspect` does two things, and the first needs no configuration at all. It decodes:
 header, claims, and the moments among them rendered as moments, so `exp` reads *expired 4 minutes
@@ -1126,13 +1132,24 @@ never put on the wire:
  [ERROR] Consumer "api" refuses this token: expired
 ```
 
-The exit status is scriptable: `0` accepted (or nothing to verify against), `1` refused, `2` not
-a JWT.
+The exit status is scriptable: `0` accepted, or decoded where the application configures no
+consumer at all; `1` refused; `2` nothing to inspect — not a JWT, no token, no such consumer, or
+several configured and none named. That last one is deliberately not a pass: `jwt:token:inspect
+"$TOKEN" && deploy` should not go green having verified nothing.
 
 Two consequences of verifying through the real path, both deliberate. Your listeners see an
 inspection as they would a request, so a metrics listener counts it — an answer reached by a
 second, quieter route would be worth much less than one that agrees with your firewall. And with
 several consumers configured the command will not pick one for you: name it with `--consumer`.
+
+`--consumer` names an **access-token** consumer. An ID token still decodes — that half needs no
+configuration — but a consumer asked to verify one refuses it as `malformed`, because `typ` says
+it is not the kind of token that consumer reads. ID tokens are verified by `IdTokenVerifier`
+from your callback, not by a firewall (DEC-8).
+
+*Would* authenticate is the exact word: for `user.mode: provider` and `claims`, the identity is
+loaded by Symfony after the handler returns, so the command can accept a token naming a user your
+store no longer has. It is the same "verified, not authenticated" line `JwtVerifiedEvent` draws.
 
 `jwt:key:generate` is the third — see [Generating keys](#generating-keys).
 

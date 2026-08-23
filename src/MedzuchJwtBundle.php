@@ -18,6 +18,7 @@ use Medzuch\JwtBundle\Command\CreateTokenCommand;
 use Medzuch\JwtBundle\Command\GenerateKeyCommand;
 use Medzuch\JwtBundle\Command\InspectTokenCommand;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
+use Medzuch\JwtBundle\Issuer\ReservedClaims;
 use Medzuch\JwtBundle\Issuer\TokenClaimProviderInterface;
 use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
@@ -66,12 +67,6 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_it
  */
 final class MedzuchJwtBundle extends AbstractBundle
 {
-    /**
-     * Claims {@see \Medzuch\Jwt\Jwt\JwtBuilder::withClaim()} refuses, because
-     * each has a typed setter that enforces its shape.
-     */
-    private const REGISTERED_CLAIMS = ['iss', 'sub', 'aud', 'exp', 'nbf', 'iat', 'jti'];
-
     /** Named because the registration compares against it to catch a prefix nothing would read. */
     private const DEFAULT_DENYLIST_PREFIX = 'medzuch_jwt.revoked.';
 
@@ -539,10 +534,10 @@ final class MedzuchJwtBundle extends AbstractBundle
         // refuses them here, so this configuration would build a green
         // container and throw on the first token minted.
         $claims->validate()
-            ->ifTrue(static fn(mixed $value): bool => is_array($value) && [] !== array_intersect(array_keys($value), self::REGISTERED_CLAIMS))
+            ->ifTrue(static fn(mixed $value): bool => is_array($value) && [] !== array_intersect(array_keys($value), ReservedClaims::REGISTERED))
             ->thenInvalid(sprintf(
                 'Static claims cannot include the registered claims %s — they are set from configuration (`issuer`, `audience`, `ttl`) or by the profile. Got %%s',
-                '"' . implode('", "', self::REGISTERED_CLAIMS) . '"',
+                '"' . implode('", "', ReservedClaims::REGISTERED) . '"',
             ))
             ->end();
     }

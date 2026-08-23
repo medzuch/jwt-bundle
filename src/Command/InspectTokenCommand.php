@@ -13,6 +13,7 @@ use Medzuch\JwtBundle\Security\RejectedTokenException;
 use Psr\Clock\ClockInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -79,8 +80,10 @@ final class InspectTokenCommand extends Command
                 firewall would give — including the reason, which the 401 deliberately
                 withholds. Your listeners see it as they would a request.
 
-                Exit status is 0 when the token is accepted or when there was nothing to
-                verify against, 1 when a consumer refuses it, and 2 when it is not a JWT.
+                Exit status is 0 when the token is accepted, or when this application
+                configures no consumer to accept it with; 1 when a consumer refuses it;
+                and 2 when there is nothing to inspect — not a JWT, no token, no such
+                consumer, or several configured and none named.
                 HELP)
         ;
     }
@@ -107,6 +110,12 @@ final class InspectTokenCommand extends Command
 
         $this->describe($io, $parsed->header, $parsed->unverifiedClaims);
 
+        if (self::isBlank($input->getOption('consumer'))) {
+            $io->error('--consumer names one of the configured consumers, and is not empty.');
+
+            return Command::INVALID;
+        }
+
         $name = self::string($input, 'consumer') ?? self::onlyConsumer($this->consumers);
 
         if (null === $name) {
@@ -126,6 +135,13 @@ final class InspectTokenCommand extends Command
         return $this->verdict($io, $name, $token);
     }
 
+    /**
+     * Only a refused credential is caught. A handler that fails for an
+     * infrastructural reason — a denylist cache nothing can reach, a resolver
+     * of the application's own that throws — comes out as the exception it is,
+     * because "this consumer could not answer" would hide the sentence a
+     * debugging command exists to show.
+     */
     private function verdict(SymfonyStyle $io, string $name, string $token): int
     {
         $handler = $this->consumers->get($name);
@@ -156,7 +172,9 @@ final class InspectTokenCommand extends Command
         }
 
         $io->success(sprintf('Consumer "%s" accepts this token.', $name));
-        $io->writeln(sprintf('It would authenticate as <info>%s</info>.', $badge->getUserIdentifier()));
+        // The name on the badge, which for `user.mode: provider` and `claims`
+        // is who Symfony would go and look for — not proof that it finds them.
+        $io->writeln(sprintf('It would authenticate as <info>%s</info>.', OutputFormatter::escape($badge->getUserIdentifier())));
 
         return Command::SUCCESS;
     }
@@ -171,12 +189,15 @@ final class InspectTokenCommand extends Command
             return Command::SUCCESS;
         }
 
-        $io->warning(sprintf(
+        // Not SUCCESS: `jwt:token:inspect "$TOKEN" && deploy` would otherwise
+        // pass having verified nothing, which is the one way this command can
+        // give a wrong answer rather than no answer.
+        $io->error(sprintf(
             'Nothing was verified: name a consumer with --consumer. Configured: %s.',
             self::listOf($configured),
         ));
 
-        return Command::SUCCESS;
+        return Command::INVALID;
     }
 
     private function describe(SymfonyStyle $io, Header $header, ClaimsSet $claims): void
@@ -198,9 +219,9 @@ final class InspectTokenCommand extends Command
         $rows = [];
 
         foreach ($values as $name => $value) {
-            $rows[] = [$name => in_array($name, self::INSTANTS, true) && is_int($value)
+            $rows[] = [OutputFormatter::escape($name) => in_array($name, self::INSTANTS, true) && is_int($value)
                 ? $this->moment($value)
-                : self::scalar($value)];
+                : self::display($value)];
         }
 
         return [] === $rows ? [['(empty)' => '']] : $rows;
@@ -213,8 +234,12 @@ final class InspectTokenCommand extends Command
      */
     private function moment(int $timestamp): string
     {
-        $at = (new DateTimeImmutable())->setTimestamp($timestamp);
         $now = $this->clock->now();
+        // From the clock, zone included: `new DateTimeImmutable()` would take
+        // the process timezone, and the same token would then read differently
+        // on a developer's laptop and on the server whose refusal is being
+        // explained.
+        $at = $now->setTimestamp($timestamp);
         $seconds = $timestamp - $now->getTimestamp();
 
         return sprintf(
@@ -226,26 +251,40 @@ final class InspectTokenCommand extends Command
 
     private static function duration(int $seconds): string
     {
-        if ($seconds < 90) {
-            return sprintf('%d seconds', $seconds);
+        foreach ([[86400, 'day'], [3600, 'hour'], [60, 'minute']] as [$size, $unit]) {
+            if ($seconds >= 2 * $size) {
+                return self::plural(intdiv($seconds, $size), $unit);
+            }
         }
 
-        if ($seconds < 5400) {
-            return sprintf('%d minutes', intdiv($seconds, 60));
-        }
-
-        return sprintf('%d hours', intdiv($seconds, 3600));
+        return self::plural($seconds, 'second');
     }
 
-    private static function scalar(mixed $value): string
+    private static function plural(int $count, string $unit): string
     {
-        if (is_string($value)) {
-            return $value;
+        return sprintf('%d %s%s', $count, $unit, 1 === $count ? '' : 's');
+    }
+
+    /**
+     * Everything here comes out of a token this command was handed, which is
+     * the one input it is guaranteed not to trust. Console markup in a claim
+     * would otherwise be swallowed by the formatter — so a `sub` of
+     * `<error>root</error>` would print as `root`, which is a debugging tool
+     * showing something the token does not say — and could paint a line that
+     * reads like this command's own verdict.
+     */
+    private static function display(mixed $value): string
+    {
+        $text = is_string($value) ? $value : json_encode($value, \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE);
+
+        if (false === $text) {
+            return '(unprintable)';
         }
 
-        $json = json_encode($value, \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE);
+        // C0 and DEL, which a terminal would act on rather than print.
+        $text = (string) preg_replace('/[\x00-\x1F\x7F]/u', '', $text);
 
-        return false === $json ? '(unprintable)' : $json;
+        return OutputFormatter::escape($text);
     }
 
     /**
@@ -277,6 +316,16 @@ final class InspectTokenCommand extends Command
         }
 
         return $token;
+    }
+
+    /**
+     * An option given as an empty string is a mistake worth naming: without
+     * this it is indistinguishable from one not given at all, and the command
+     * would answer for a consumer nobody asked about.
+     */
+    private static function isBlank(mixed $value): bool
+    {
+        return is_string($value) && '' === trim($value);
     }
 
     private static function string(InputInterface $input, string $option): ?string

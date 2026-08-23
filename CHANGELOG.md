@@ -21,9 +21,16 @@ a class or method signature would be.
   `jwt:token:inspect -` reads one from a pipe.
 
   Inspecting decodes with or without configuration — header, claims, and the instants among
-  them rendered as instants against the application's own clock — and names the reason a
-  refusal keeps off the wire (`… refuses this token: expired`). Exit status is scriptable: `0`
-  accepted or nothing to verify against, `1` refused, `2` not a JWT.
+  them rendered as instants in the application clock's own zone, not the machine's — and names
+  the reason a refusal keeps off the wire (`… refuses this token: expired`). Values out of the
+  token are escaped before display, since a claim carrying console markup would otherwise print
+  as something the token does not say. Exit status is scriptable: `0` accepted or decoded with
+  no consumer configured, `1` refused, `2` nothing to inspect — including several consumers
+  configured and none named, which is a usage error rather than a pass.
+
+  `--issuer` and `--consumer` can be left out where one is configured, whatever it is called;
+  `--issuer` falls back to `default` among several. Every bad input is refused before anything
+  is signed, the registered claims given to `--claim` included.
 
   `jwt:token:create` is registered only where an issuer is configured; `jwt:token:inspect`
   always, since decoding needs nothing. Both reach their subjects through a service locator

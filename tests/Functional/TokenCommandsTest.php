@@ -4,15 +4,19 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional;
 
+use DateInterval;
 use DateTimeImmutable;
 use Medzuch\Jwt\Algorithm\Signing\Hs256;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Command\CreateTokenCommand;
 use Medzuch\JwtBundle\Command\InspectTokenCommand;
+use Medzuch\JwtBundle\Security\RejectionReason;
+use Medzuch\JwtBundle\Tests\Functional\App\RecordsVerification;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
+use Psr\Clock\ClockInterface;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Command\Command;
@@ -125,6 +129,84 @@ final class TokenCommandsTest extends KernelTestCase
         self::assertStringContainsString('name=value', $tester->getDisplay());
     }
 
+    #[TestDox('a claim the token sets itself is refused before anything is signed, not thrown from a builder')]
+    public function testRegisteredClaimIsRefusedAsInput(): void
+    {
+        // The library refuses these too, but from inside a builder, where the
+        // answer is a stack trace that reads like a bug in this bundle.
+        $tester = self::console('jwt:token:create', ['subject' => 'alice', '--claim' => ['exp=1']]);
+
+        self::assertSame(Command::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString('"exp"', $tester->getDisplay());
+    }
+
+    #[TestDox('client_id and scope may still be given as claims, because the issuer says so')]
+    public function testTheTwoOverridableClaimsAreStillAllowed(): void
+    {
+        $token = self::mint([
+            'subject' => 'alice',
+            '--scope' => ['reports.read'],
+            '--claim' => ['scope=reports.write', 'client_id=another'],
+            '--raw' => true,
+        ]);
+
+        $claims = self::payload($token);
+
+        self::assertSame('reports.write', $claims['scope'] ?? null);
+        self::assertSame('another', $claims['client_id'] ?? null);
+    }
+
+    #[TestDox('a subject nobody named is refused rather than minted as an empty one')]
+    public function testEmptySubjectIsRefused(): void
+    {
+        $tester = self::console('jwt:token:create', ['subject' => '']);
+
+        self::assertSame(Command::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString('cannot be empty', $tester->getDisplay());
+    }
+
+    #[TestDox('the only configured issuer is used without being named, whatever it is called')]
+    public function testTheOnlyIssuerNeedsNoNaming(): void
+    {
+        $configuration = self::configuration();
+        $configuration['issuers'] = ['partners' => $configuration['issuers']['default']];
+
+        $tester = self::console('jwt:token:create', ['subject' => 'alice', '--raw' => true], null, $configuration);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertSame('alice', self::payload(trim($tester->getDisplay()))['sub'] ?? null);
+    }
+
+    #[TestDox('among several issuers with no "default" among them, one has to be named')]
+    public function testSeveralIssuersNeedNaming(): void
+    {
+        $configuration = self::configuration();
+        $configuration['issuers'] = [
+            'partners' => $configuration['issuers']['default'],
+            'internal' => $configuration['issuers']['default'],
+        ];
+
+        $tester = self::console('jwt:token:create', ['subject' => 'alice'], null, $configuration);
+
+        self::assertSame(Command::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString('Name one with --issuer', $tester->getDisplay());
+
+        // And naming one mints through it.
+        $named = self::console('jwt:token:create', ['subject' => 'alice', '--issuer' => 'internal', '--raw' => true], null, $configuration);
+
+        self::assertSame(Command::SUCCESS, $named->getStatusCode(), $named->getDisplay());
+    }
+
+    #[TestDox('an option given as an empty string is a mistake, not an option left out')]
+    public function testBlankOptionIsRefused(): void
+    {
+        $create = self::console('jwt:token:create', ['subject' => 'alice', '--issuer' => ' ']);
+        self::assertSame(Command::INVALID, $create->getStatusCode());
+
+        $inspect = self::console('jwt:token:inspect', ['token' => self::expiredToken(), '--consumer' => '']);
+        self::assertSame(Command::INVALID, $inspect->getStatusCode());
+    }
+
     #[TestDox('inspect names the reason a consumer refuses a token, which the 401 does not')]
     public function testRefusalNamesItsReason(): void
     {
@@ -176,10 +258,85 @@ final class TokenCommandsTest extends KernelTestCase
 
         $tester = self::console('jwt:token:inspect', ['token' => self::expiredToken()], null, $configuration);
 
-        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        // Not SUCCESS: `inspect "$TOKEN" && deploy` would otherwise pass having
+        // verified nothing at all.
+        self::assertSame(Command::INVALID, $tester->getStatusCode());
         self::assertStringContainsString('name a consumer with --consumer', $tester->getDisplay());
         self::assertStringContainsString('"api"', $tester->getDisplay());
         self::assertStringContainsString('"admin"', $tester->getDisplay());
+
+        // Named, it answers for that one.
+        $named = self::console('jwt:token:inspect', ['token' => self::expiredToken(), '--consumer' => 'admin'], null, $configuration);
+
+        self::assertSame(Command::FAILURE, $named->getStatusCode());
+        self::assertStringContainsString('Consumer "admin" refuses this token: expired', $named->getDisplay());
+    }
+
+    #[TestDox('a consumer that is not configured is refused by name, with the ones that are')]
+    public function testUnknownConsumerIsRefused(): void
+    {
+        $tester = self::console('jwt:token:inspect', ['token' => self::expiredToken(), '--consumer' => 'nope']);
+
+        self::assertSame(Command::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString('No consumer named "nope"', $tester->getDisplay());
+        self::assertStringContainsString('"api"', $tester->getDisplay());
+    }
+
+    #[TestDox('console markup inside a token is printed, not obeyed')]
+    public function testTokenValuesAreEscaped(): void
+    {
+        $tester = self::console('jwt:token:inspect', ['token' => self::tokenNaming('<error>root</error>')]);
+
+        $display = $tester->getDisplay();
+
+        // Twice, and the count is the point: once in the claims table and once
+        // in the line naming who this token would authenticate as. Unescaped,
+        // the formatter eats the tags and prints "root" — a debugging command
+        // showing something the token does not say — so either escape going
+        // missing drops this to one.
+        self::assertSame(2, substr_count($display, '<error>root</error>'), $display);
+
+        // A claim that appears nowhere but the table, so the table's own
+        // escaping is pinned rather than inferred.
+        self::assertStringContainsString('<info>not a verdict</info>', $display);
+    }
+
+    #[TestDox('inspecting a token is announced to the listeners a request would reach')]
+    public function testInspectionDispatchesTheSameEvents(): void
+    {
+        $tester = self::console('jwt:token:inspect', ['token' => self::expiredToken()]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+
+        // The deliberate half of verifying through the real handler: an answer
+        // reached by a quieter route would not be the firewall's answer.
+        $listener = self::getContainer()->get('test.verification_listener');
+        self::assertInstanceOf(RecordsVerification::class, $listener);
+        self::assertCount(1, $listener->rejected);
+        self::assertSame(RejectionReason::Expired, $listener->rejected[0]->reason);
+    }
+
+    #[TestDox('instants are rendered in the application clock\'s zone, not the machine\'s')]
+    public function testInstantsFollowTheClock(): void
+    {
+        $timezone = date_default_timezone_get();
+        date_default_timezone_set('America/New_York');
+
+        try {
+            $tester = self::console('jwt:token:inspect', ['token' => self::expiredToken()]);
+        } finally {
+            date_default_timezone_set($timezone);
+        }
+
+        // Asserted against the clock rather than against a literal, so this
+        // says "the rendering follows the clock" and not "UTC happens to be
+        // what came out": a token read on a laptop and on the server that
+        // refused it should not need an offset undoing between them.
+        $clock = self::getContainer()->get('medzuch_jwt.clock');
+        self::assertInstanceOf(ClockInterface::class, $clock);
+
+        self::assertStringContainsString($clock->now()->format('P'), $tester->getDisplay());
+        self::assertStringNotContainsString('-04:00', $tester->getDisplay());
     }
 
     #[TestDox('with no consumer configured, inspect still decodes and says nothing was verified')]
@@ -266,6 +423,18 @@ final class TokenCommandsTest extends KernelTestCase
 
         /** @var array<string, mixed> $claims */
         return $claims;
+    }
+
+    private static function tokenNaming(string $subject): string
+    {
+        return (string) AccessTokenProfile::issuer(self::ISSUER, new Hs256(), HmacKey::fromBinary(self::SECRET, 'HS256'))
+            ->issue()
+            ->subject($subject)
+            ->audience(self::AUDIENCE)
+            ->clientId('test-client')
+            ->withClaim('note', '<info>not a verdict</info>')
+            ->expiresIn(new DateInterval('PT5M'))
+            ->build();
     }
 
     private static function expiredToken(): string
