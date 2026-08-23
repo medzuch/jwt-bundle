@@ -24,6 +24,15 @@ use Medzuch\JwtBundle\Issuer\TokenIssuance;
  *
  * Listeners cannot change anything: the token exists by the time this is
  * dispatched. Changing what it says is what JwtIssuingEvent is for.
+ *
+ * **Dispatched after signing**, which decides what a throwing listener means:
+ * the token exists, is signed, and will verify until `exp`, while the caller of
+ * `issue()` sees an exception. Nothing has been issued to anybody, so nothing
+ * is exposed — but an application treating a failed `issue()` as "no token
+ * exists" is wrong, and one that needs the opposite guarantee, no token without
+ * its audit record, cannot have it from an event dispatched here. That would
+ * take an audit write before signing, which is the application's own to make in
+ * a JwtIssuingEvent listener.
  */
 final class JwtIssuedEvent
 {

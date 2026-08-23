@@ -399,30 +399,56 @@ Design notes:
 
 Registered from `loadExtension()` into `config/services.php`:
 
-- `medzuch_jwt.key.<name>` — factory services building `Key` objects from each
-  configured source; public halves separated from private ones so the JWKS
-  publisher can never expose a private key.
-- `medzuch_jwt.key_resolver.<name>` — `StaticJwkSetResolver`,
-  `RemoteJwksResolver` or `CompositeResolver`, depending on the key entry.
+- `medzuch_jwt.key.<name>` and `medzuch_jwt.key.<name>.signing` /
+  `.verification` — factory services building `Key` objects from each
+  configured source, with the halves as separate ids so the JWKS publisher can
+  only ever be handed a public one.
+- `medzuch_jwt.jwk_set.<name>` and `medzuch_jwt.resolver.<name>` — the local
+  `JwkSet` a consumer verifies against, and the `RemoteJwksResolver` or
+  `CompositeResolver` behind a `remote_jwks` entry.
 - `medzuch_jwt.consumer.<name>` — the library consumer built via a static
   factory (`AccessTokenProfile::consumer(...)` etc.).
 - `medzuch_jwt.handler.<name>` — our `AccessTokenHandlerInterface`
-  implementation wrapping the consumer plus policy (denylist, max age, user
-  mode). Referenced from `security.yaml`.
-- `medzuch_jwt.issuer.<name>` — token-minting service; the `default` one is
-  aliased to `AccessTokenIssuerInterface` for autowiring.
+  implementation wrapping the consumer plus policy (denylist, audience policy,
+  user mode). Referenced from `security.yaml`.
+- `medzuch_jwt.entry_point.<name>` and `medzuch_jwt.access_denied.<name>` —
+  the RFC 6750 challenge and the `insufficient_scope` handler, both named by
+  the firewall rather than wired into it (DEC-1).
+- `medzuch_jwt.denylist.<name>` — registered where a consumer configures one,
+  public so the application can revoke through it.
+- `medzuch_jwt.issuer.<name>` and `medzuch_jwt.login.<name>` — token-minting
+  service and the RFC 6750 login response handler; a `default` issuer is
+  aliased to `AccessTokenIssuer` for autowiring. There is no issuer interface:
+  one implementation with nothing to swap it for would be a seam nobody uses.
+- `medzuch_jwt.id_token.<name>` — the OIDC relying-party verifier, aliased for
+  autowiring by argument name.
+- `medzuch_jwt.jwks.key_set` and `medzuch_jwt.jwks_controller` — the published
+  set and the action that serves it, registered only where `jwks.keys` names
+  keys. The command that dumps the same set is registered on the same
+  condition.
+- `medzuch_jwt.token_extractor.cookie`, `medzuch_jwt.scope_voter`,
+  `medzuch_jwt.scope_expression_provider`, `medzuch_jwt.command.*` — the
+  firewall names the extractor; the voter and the expression provider are
+  tagged; the commands are registered where what they operate on exists.
 - `medzuch_jwt.clock` — alias to a PSR-20 clock; defaults to the library's
   `SystemClock`, swappable to `FrozenClock` in tests.
-- `medzuch_jwt.logger` — optional PSR-3 logger (`jwt` Monolog channel).
-- `medzuch_jwt.role_mapper.<name>`, `medzuch_jwt.user_resolver.<name>` — only
-  registered when the corresponding config branch is present.
-- Autoconfiguration tags: `medzuch_jwt.claim_provider` (I3),
-  `medzuch_jwt.denylist` (C9). No tag for token extractors: a custom one is a
-  service the firewall names in `token_extractors`, and a tag would add a
-  second way to do what Symfony already does.
-- Compiler pass validating cross-references (unknown key name, key/alg
-  mismatch, consumer referenced by no firewall, JWKS publish listing a key with
-  no public half).
+- User resolvers and role mapping are **inline** services inside the handler
+  they belong to, not named ids: one consumer's resolver is nobody else's
+  collaborator, and a name would invite it to be reused as one.
+- The `logger` key names a PSR-3 service the *application* registers (a `jwt`
+  Monolog channel, usually). The bundle registers no logger of its own.
+- Autoconfiguration tag: `medzuch_jwt.token_claim_provider` (I3), applied by
+  `registerForAutoconfiguration(TokenClaimProviderInterface::class)`. It is the
+  only one. A denylist (C9) is a service the consumer names in
+  `denylist.service`, not a tagged one, and there is no tag for token
+  extractors either: a custom one is a service the firewall names in
+  `token_extractors`, and a tag would add a second way to do what Symfony
+  already does.
+- Cross-reference validation (unknown key name, key/algorithm mismatch, an
+  allowed algorithm with no key behind it, a JWKS entry with no public half or
+  a symmetric one) happens in `loadExtension()` as the services are registered,
+  not in a compiler pass — the bundle has none. What that cannot see is whether
+  a configured service id exists at all, which is issue #3.
 
 ---
 

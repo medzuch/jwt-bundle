@@ -297,6 +297,13 @@ It carries no token. Everything an audit trail needs is on the event already, an
 writing what it is handed to a log would otherwise be writing a working credential to a log —
 revocation needs the `jti`, and so does anything else that asks about this token later.
 
+It arrives *after* signing, which matters if your listener can fail. A listener that throws — an
+audit database that is down being the obvious one — leaves `issue()` raising an exception for a
+token that exists and will verify until it expires. Nobody has been given it, so nothing is
+exposed; but if you need the stronger guarantee, that no token exists without its audit record,
+write the record from a `JwtIssuingEvent` listener instead, where a failure happens before
+anything is signed.
+
 `issuance->scopes` is what the call asked for, and `claims['scope']` is what the token ended up
 saying. They are the same until something sets the `scope` claim itself — which configuration
 and the `issue()` argument may still do, deliberately — so an audit trail that has to agree with
@@ -699,7 +706,11 @@ A rule that wants the RFC header names the attribute directly — `roles: SCOPE_
 `#[IsGranted('SCOPE_reports.read')]`, both of which carry it.
 
 One scope per rule keeps the header honest, too: Symfony reads several attributes on one rule as
-alternatives — any one grants — while RFC 6750's `scope` reads as what was required.
+alternatives — any one grants — while RFC 6750's `scope` reads as what was required. And keep it
+the *only* attribute on that rule if you have moved off the default `affirmative` strategy: under
+`unanimous` or `consensus` a rule like `roles: [ROLE_ADMIN, SCOPE_reports.read]` can be denied
+over the role, and the header would then send a client off to fetch a scope it already has. What
+reaches the handler is the attribute list, not which of them voted no.
 
 ## Knowing why, when the caller is not told
 
