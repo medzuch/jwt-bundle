@@ -40,7 +40,10 @@ use Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface;
  * to its authorization server for a scope it already holds. The bundle cannot
  * tell the two apart: what reaches the handler is the attribute list, not which
  * of them voted no. One scope per rule and nothing else on it is what keeps
- * this header honest under every strategy.
+ * this header honest under every strategy — and nothing enforces it: what
+ * reaches this handler is the attribute list, so a rule mixing kinds is exactly
+ * as invisible here as the votes are. It is documentation because it cannot be
+ * anything else.
  */
 final class InsufficientScopeHandler implements AccessDeniedHandlerInterface
 {
