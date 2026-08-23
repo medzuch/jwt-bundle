@@ -19,6 +19,8 @@ use Medzuch\JwtBundle\Command\CreateTokenCommand;
 use Medzuch\JwtBundle\Command\DumpJwksCommand;
 use Medzuch\JwtBundle\Command\GenerateKeyCommand;
 use Medzuch\JwtBundle\Command\InspectTokenCommand;
+use Medzuch\JwtBundle\DataCollector\CollectVerdictsPass;
+use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Issuer\ReservedClaims;
 use Medzuch\JwtBundle\Issuer\TokenClaimProviderInterface;
@@ -91,6 +93,15 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->configureJwks($children);
     }
 
+    public function build(ContainerBuilder $container): void
+    {
+        parent::build($container);
+
+        // After every extension, because whether there is a profiler to collect
+        // for is another bundle's answer.
+        $container->addCompilerPass(new CollectVerdictsPass());
+    }
+
     /**
      * The shape below is what the tree in {@see self::configure()} guarantees;
      * `$config` arrives untyped because the parent signature says `array`.
@@ -141,6 +152,16 @@ final class MedzuchJwtBundle extends AbstractBundle
             $this->registerJwks($services, $keys, $config['jwks']),
         );
         $this->registerAuthorization($services);
+
+        // Registered unconditionally and removed by the pass where no profiler
+        // wants it: a data collector is one definition, and deciding here would
+        // mean guessing at an extension that may not have run yet.
+        $services->set('medzuch_jwt.data_collector', JwtDataCollector::class)
+            ->tag('data_collector', [
+                'id' => 'medzuch_jwt',
+                'template' => '@MedzuchJwt/data_collector/jwt.html.twig',
+                'priority' => 300,
+            ]);
     }
 
     /**
@@ -1315,6 +1336,10 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ->args([$realm]);
 
             $services->set('medzuch_jwt.handler.' . $name, AccessTokenHandler::class)
+                // Tagged so the profiler pass can find every handler without
+                // knowing how consumers are named, and carrying the name it
+                // would otherwise have to parse back out of the service id.
+                ->tag('medzuch_jwt.token_handler', ['consumer' => $name])
                 ->args([
                     service('medzuch_jwt.consumer.' . $name),
                     $name,

@@ -49,7 +49,9 @@
         "symfony/error-handler": "^6.4 || ^7.4 || ^8.0",
         "symfony/expression-language": "^6.4 || ^7.4 || ^8.0",
         "symfony/framework-bundle": "^6.4 || ^7.4 || ^8.0",
-        "symfony/routing": "^6.4 || ^7.4 || ^8.0"
+        "symfony/routing": "^6.4 || ^7.4 || ^8.0",
+        "symfony/twig-bundle": "^6.4 || ^7.4 || ^8.0",
+        "symfony/web-profiler-bundle": "^6.4 || ^7.4 || ^8.0"
     },
     "suggest": {
         "psr/http-client": "To consume a remote JWK Set: any PSR-18 client, Symfony's psr18.http_client included",

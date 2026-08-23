@@ -13,6 +13,20 @@ a class or method signature would be.
 
 ### Added
 
+- **A profiler panel (O2).** Every token a consumer was shown during the request, with the
+  verdict, the `RejectionReason` behind a refusal, the algorithm and key id the token named, the
+  identity it would have authenticated as, and the milliseconds spent verifying. The reason is
+  the point: the response says `invalid_token` and nothing else, and the panel is where it is
+  safe to say which of a dozen things that covers.
+
+  Wired by a compiler pass — the bundle's first — which decorates the handler the firewall
+  actually calls and only where `framework.profiler` is enabled. What SecurityBundle calls is a
+  `ChildDefinition` of the configured handler under a name keyed by the firewall, so decorating
+  the bundle's own service would collect nothing.
+
+  The token is never collected: profiler data outlives the request on disk and in a URL. The
+  panel shows the claims as the token has them — unverified, which is all a refused token has.
+
 - **`jwt:config:check` (O5).** Builds every configured key, consumer, issuer and ID-token
   verifier, then reaches every remote JWK Set, and reports what failed. The container refuses
   the mistakes it can see; this is for the ones it cannot — a key file that was not deployed, an

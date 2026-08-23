@@ -3,7 +3,7 @@
 A Symfony bundle wiring [`medzuch/jwt-php`](https://github.com/medzuch/jwt-php) into Symfony
 applications: **issuing** JOSE tokens (RFC 9068 access tokens, OIDC ID tokens, custom JWS/JWE)
 and **verifying** them through Symfony's native Security stack — the `access_token` firewall
-authenticator, DI, configuration and console.
+authenticator, DI, configuration, console and profiler.
 
 Works for any of these roles, in any combination:
 
@@ -1215,6 +1215,27 @@ opens a connection in its constructor opens it here.
 
 **A minted token is a working credential** for as long as it lives. It is on your screen and in
 your shell history; `--raw` at least keeps the surrounding text out of a log.
+
+
+## The profiler panel
+
+Where a profiler is enabled, every token a consumer was shown appears in a **JWT** panel: which
+consumer decided, whether it was accepted or refused, **why** it was refused, the algorithm and
+key id the token named, and how long verifying took.
+
+The reason is the point. A refusal tells the caller `invalid_token` and nothing else, deliberately
+— and then you have to work out which of expired, wrong audience, unknown key or revoked it was.
+The panel is where that question is safe to answer, because nobody but you is reading it.
+
+Nothing is configured: the collector is registered where `framework.profiler` is enabled and
+removed where it is not, and the handler your firewall calls is wrapped only in the first case —
+a decorator recording into nothing has no business on the hot path of every authenticated
+request.
+
+**The token itself is never collected.** Profiler data is written to disk and served back by a
+URL, so a bearer token in there is a credential in a file — and one a screenshot in a bug report
+would carry out of the building. The panel shows the claims instead, as the token has them:
+unverified, which is exactly what a refused token leaves you to read.
 
 
 ## Testing an application that uses this
