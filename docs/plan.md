@@ -17,7 +17,7 @@
 > verification (C6) and the audience policy (C14). EdDSA works end to end, since
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
-> in, and so are O4, the issuance hooks I3/I4, and O3.
+> in, and so are O4, the issuance hooks I3/I4, O3, and the token commands D1/D2.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -254,8 +254,8 @@ default and adds no runtime cost when unconfigured.
 
 | # | Capability | Tier |
 |---|---|---|
-| D1 | `jwt:token:create` — mint a token from CLI for local testing (subject, audience, scopes, TTL, named issuer) | T2 |
-| D2 | `jwt:token:inspect` — decode and verify a token, printing header/claims/verdict with human-readable failure reasons | T2 |
+| D1 | `jwt:token:create` — mint a token from CLI (subject, audience, scopes, TTL, extra claims, named issuer) through the configured issuer, so providers and issuing listeners run as they would in the application. `--raw` for a shell to capture; registered only where an issuer is | T2 |
+| D2 | `jwt:token:inspect` — decode with no configuration at all, verify through the consumer's own handler where there is one, and name the O3 reason a refusal keeps off the wire. Reads a token from a pipe; exit status says accepted, refused, or not a JWT | T2 |
 | D3 | `jwt:key:generate` — generate HMAC secret / RSA / EC / OKP keypair in PEM or JWK, with `kid`, and print the configuration that uses it. Refuses to overwrite a key file and writes the private half 0600 | T2 |
 | D4 | `jwt:jwks:dump` — print the public JWK Set (what K4 would serve) | T2 |
 | D5 | Test helpers shipped in `src/Test/`: a `TestTokenFactory` for functional tests, assertion helpers, a frozen-clock service alias for time-travel tests | T2 |

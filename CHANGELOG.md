@@ -13,6 +13,22 @@ a class or method signature would be.
 
 ### Added
 
+- **`jwt:token:create` and `jwt:token:inspect` (D1, D2).** Mint a token from the command line
+  and ask what a consumer makes of one. Neither is a second implementation: `create` calls
+  `AccessTokenIssuer::issue()`, so the configured key signs it and the application's claim
+  providers and issuing listeners run; `inspect` verifies through the consumer's own handler,
+  so its answer is the firewall's. `--raw` prints the token alone for a shell to capture, and
+  `jwt:token:inspect -` reads one from a pipe.
+
+  Inspecting decodes with or without configuration — header, claims, and the instants among
+  them rendered as instants against the application's own clock — and names the reason a
+  refusal keeps off the wire (`… refuses this token: expired`). Exit status is scriptable: `0`
+  accepted or nothing to verify against, `1` refused, `2` not a JWT.
+
+  `jwt:token:create` is registered only where an issuer is configured; `jwt:token:inspect`
+  always, since decoding needs nothing. Both reach their subjects through a service locator
+  built from the configured names, so neither can be asked for a service nobody named.
+
 - **Why a token was refused (O3).** `JwtRejectedEvent` carries the consumer, the exception,
   and a `RejectionReason` — `expired`, `signature_invalid`, `unknown_key`,
   `algorithm_refused`, `wrong_issuer`, `wrong_audience`, `revoked`, `malformed`,

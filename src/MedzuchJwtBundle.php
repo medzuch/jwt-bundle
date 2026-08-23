@@ -14,7 +14,9 @@ use Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
+use Medzuch\JwtBundle\Command\CreateTokenCommand;
 use Medzuch\JwtBundle\Command\GenerateKeyCommand;
+use Medzuch\JwtBundle\Command\InspectTokenCommand;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Issuer\TokenClaimProviderInterface;
 use Medzuch\JwtBundle\Jwks\JwksController;
@@ -50,6 +52,7 @@ use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
 use function Symfony\Component\DependencyInjection\Loader\Configurator\inline_service;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
+use function Symfony\Component\DependencyInjection\Loader\Configurator\service_locator;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_iterator;
 
 /**
@@ -133,7 +136,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger']);
 
         $this->registerJwks($services, $keys, $config['jwks']);
-        $this->registerConsoleCommands($services);
+        $this->registerConsoleCommands($services, array_keys($config['issuers']), array_keys($config['consumers']));
         $this->registerAuthorization($services);
     }
 
@@ -170,8 +173,22 @@ final class MedzuchJwtBundle extends AbstractBundle
      * normal way to deploy this bundle, and a service definition for a class
      * that cannot be loaded would break its container for a command it can
      * never run.
+     *
+     * The same reasoning one level down: `jwt:token:create` is registered only
+     * where an issuer is, because a command whose every run ends in "nothing is
+     * configured" is a line in `bin/console list` that promises something this
+     * application cannot do. `jwt:token:inspect` is registered either way — it
+     * decodes without configuration, which is exactly what a token from
+     * somewhere else needs.
+     *
+     * Both reach their subjects through a service locator rather than a
+     * container: the names are known at build time, and a command that could
+     * fetch anything would be a command that can be asked for anything.
+     *
+     * @param list<string> $issuers
+     * @param list<string> $consumers
      */
-    private function registerConsoleCommands(ServicesConfigurator $services): void
+    private function registerConsoleCommands(ServicesConfigurator $services, array $issuers, array $consumers): void
     {
         if (!class_exists(Command::class)) {
             return;
@@ -179,6 +196,29 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $services->set('medzuch_jwt.command.key_generate', GenerateKeyCommand::class)
             ->tag('console.command', ['command' => 'jwt:key:generate']);
+
+        $services->set('medzuch_jwt.command.token_inspect', InspectTokenCommand::class)
+            ->args([
+                service_locator(array_combine(
+                    $consumers,
+                    array_map(static fn(string $name): ReferenceConfigurator => service('medzuch_jwt.handler.' . $name), $consumers),
+                )),
+                service('medzuch_jwt.clock'),
+            ])
+            ->tag('console.command', ['command' => 'jwt:token:inspect']);
+
+        if ([] === $issuers) {
+            return;
+        }
+
+        $services->set('medzuch_jwt.command.token_create', CreateTokenCommand::class)
+            ->args([
+                service_locator(array_combine(
+                    $issuers,
+                    array_map(static fn(string $name): ReferenceConfigurator => service('medzuch_jwt.issuer.' . $name), $issuers),
+                )),
+            ])
+            ->tag('console.command', ['command' => 'jwt:token:create']);
     }
 
     private function configureGlobals(NodeBuilder $children): void

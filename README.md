@@ -1093,6 +1093,53 @@ token names more than one audience, `exp`/`iat`, the claims OIDC requires, and t
 you pass one. **`at_hash` is not** — binding an ID token to an access token needs support the
 library does not have yet, and this bundle does not reimplement crypto its library is missing.
 
+## From the console
+
+Three commands, and none of them a second implementation of anything: each asks the services
+your application already has.
+
+```bash
+# Mint a token through a configured issuer
+bin/console jwt:token:create alice --scope reports.read --ttl 60
+
+# Capture it, then ask what a consumer makes of it
+TOKEN=$(bin/console jwt:token:create alice --raw)
+bin/console jwt:token:inspect "$TOKEN"
+
+# Or pipe it straight through
+bin/console jwt:token:create alice --raw | bin/console jwt:token:inspect -
+```
+
+`jwt:token:create` calls `AccessTokenIssuer::issue()`, so the token it prints is the token your
+application would have minted: the configured key signs it, the configured audience and client
+id are on it, and your claim providers and `JwtIssuingEvent` listeners run. Every option after
+the subject narrows what configuration decided, exactly as the method's arguments do. It appears
+only where an issuer is configured — an application that mints nothing has no use for it.
+
+`jwt:token:inspect` does two things, and the first needs no configuration at all. It decodes:
+header, claims, and the moments among them rendered as moments, so `exp` reads *expired 4 minutes
+ago* rather than as a number. Then, given a consumer, it verifies — through that consumer's own
+handler, which is what makes the answer worth having, and it names the reason a refusal would
+never put on the wire:
+
+```
+ [ERROR] Consumer "api" refuses this token: expired
+```
+
+The exit status is scriptable: `0` accepted (or nothing to verify against), `1` refused, `2` not
+a JWT.
+
+Two consequences of verifying through the real path, both deliberate. Your listeners see an
+inspection as they would a request, so a metrics listener counts it — an answer reached by a
+second, quieter route would be worth much less than one that agrees with your firewall. And with
+several consumers configured the command will not pick one for you: name it with `--consumer`.
+
+`jwt:key:generate` is the third — see [Generating keys](#generating-keys).
+
+**A minted token is a working credential** for as long as it lives. It is on your screen and in
+your shell history; `--raw` at least keeps the surrounding text out of a log.
+
+
 ## Configuration reference
 
 The complete tree, with every option, default and explanation, is generated from the bundle
