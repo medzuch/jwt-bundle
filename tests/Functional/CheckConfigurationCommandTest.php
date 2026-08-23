@@ -1,0 +1,321 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Medzuch\JwtBundle\Tests\Functional;
+
+use Medzuch\Jwt\Key\JwkSet;
+use Medzuch\Jwt\Key\Resolver\RemoteJwksResolver;
+use Medzuch\Jwt\Key\RsaPrivateKey;
+use Medzuch\JwtBundle\Command\CheckConfigurationCommand;
+use Medzuch\JwtBundle\Tests\Functional\App\StubHttpClient;
+use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\TestDox;
+use Symfony\Bundle\FrameworkBundle\Console\Application;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Tester\CommandTester;
+use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\HttpKernel\KernelInterface;
+
+/**
+ * The command exists for configuration that compiles and does not work, so
+ * every case here is exactly that: a container that builds cleanly and a piece
+ * of material that is missing, empty or unreachable behind it.
+ */
+#[CoversClass(CheckConfigurationCommand::class)]
+final class CheckConfigurationCommandTest extends KernelTestCase
+{
+    use GeneratesKeypairs;
+    use RestoresExceptionHandler;
+
+    private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
+    private const URI = 'https://idp.test/.well-known/jwks.json';
+
+    /**
+     * @param array<array-key, mixed> $options
+     */
+    protected static function createKernel(array $options = []): KernelInterface
+    {
+        $config = $options['medzuch_jwt'] ?? self::configuration();
+
+        return new TestKernel(is_array($config) ? $config : []);
+    }
+
+    #[TestDox('a configuration whose material is all there passes, and says what it looked at')]
+    public function testEverythingBuilds(): void
+    {
+        $tester = self::check();
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+
+        $display = $tester->getDisplay();
+        // One row for the shared secret, not two: it is both halves, and
+        // `.signing` and `.verification` are aliases to the one service. Two
+        // rows would read as two mistakes when the secret is wrong.
+        self::assertStringContainsString('key "default"', $display);
+        self::assertStringNotContainsString('(signing)', $display);
+        self::assertStringContainsString('consumer "api"', $display);
+        self::assertStringContainsString('issuer "default"', $display);
+    }
+
+    #[TestDox('a key file nobody deployed is what this command is for')]
+    public function testMissingKeyMaterial(): void
+    {
+        $configuration = self::configuration();
+        $configuration['keys'] = [
+            'default' => ['pem_public' => '/nowhere/never-deployed.pem', 'algorithm' => 'RS256'],
+        ];
+        $configuration['consumers']['api']['allowed_algorithms'] = ['RS256'];
+        unset($configuration['issuers']);
+
+        // The container builds: a path is a factory argument, and a factory
+        // runs when something asks for the service — on a request, normally.
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('key "default" (verification)', $tester->getDisplay());
+        self::assertStringContainsString('FAIL', $tester->getDisplay());
+
+        // And the consumer behind it, because building a handler builds the
+        // key it verifies with. One mistake, both rows, which is what an
+        // operator needs to see.
+        self::assertSame(2, substr_count($tester->getDisplay(), 'FAIL'));
+    }
+
+    #[TestDox('a secret too short for the algorithm it is bound to is caught before a request finds it')]
+    public function testSecretShorterThanItsAlgorithm(): void
+    {
+        $configuration = self::configuration();
+        // RFC 8725 §3.5 wants 64 bytes for HS512. The container has no opinion:
+        // the length is checked by the key, and the key is built lazily.
+        $configuration['keys'] = ['default' => ['hmac' => self::SECRET, 'algorithm' => 'HS512']];
+        $configuration['consumers']['api']['allowed_algorithms'] = ['HS512'];
+        $configuration['issuers']['default']['key'] = 'default';
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('at least 64 bytes', $tester->getDisplay());
+
+        // The key once and the two things built from it: one mistake, three
+        // rows, none of them a second copy of the key itself.
+        self::assertSame(3, substr_count($tester->getDisplay(), 'FAIL'));
+    }
+
+    #[TestDox('an issuer that cannot be reached fails the check, and --skip-remote leaves it alone')]
+    public function testRemoteSetIsReached(): void
+    {
+        $configuration = self::remoteConfiguration();
+
+        $tester = self::check(configuration: $configuration, publish: true);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringContainsString('remote JWK Set "partner_idp"', $tester->getDisplay());
+        self::assertStringContainsString('reachable', $tester->getDisplay());
+
+        $offline = self::check(configuration: $configuration, publish: false);
+
+        self::assertSame(Command::FAILURE, $offline->getStatusCode());
+        self::assertStringContainsString('remote JWK Set "partner_idp"', $offline->getDisplay());
+
+        // The same broken endpoint, and a gate that has no network to reach it
+        // with: what it cannot check, it says it did not check.
+        $skipped = self::check(['--skip-remote' => true], $configuration, publish: false);
+
+        self::assertSame(Command::SUCCESS, $skipped->getStatusCode(), $skipped->getDisplay());
+        self::assertStringContainsString('skipped', $skipped->getDisplay());
+    }
+
+    #[TestDox('the published document is counted, and read for what must never be in it')]
+    public function testPublishedSetIsInspected(): void
+    {
+        $configuration = self::configuration();
+        $configuration['keys']['publishable'] = [
+            'pem_public' => self::keypair('check-rsa')['public'],
+            'algorithm' => 'RS256',
+            'kid' => 'rsa-2026',
+        ];
+        $configuration['jwks'] = ['keys' => ['publishable']];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringContainsString('published JWK Set', $tester->getDisplay());
+        self::assertStringContainsString('1 public key(s)', $tester->getDisplay());
+    }
+
+    #[TestDox('a published set carrying private material fails, whatever put it there')]
+    public function testPublishedSetCarryingPrivateMaterial(): void
+    {
+        // Built by hand, because no configuration can produce it: the container
+        // refuses a symmetric key under `jwks`, and a public half has no private
+        // members to leak. That is the point — this row is the last line, for a
+        // mistake in the wiring or in a hand-written JWK rather than in the
+        // configuration the earlier checks already cover.
+        $set = JwkSet::of(RsaPrivateKey::fromPem(self::keypair('leaky')['private'], 'RS256', 'oops'));
+
+        /** @var ServiceLocator<object> $nothing */
+        $nothing = new ServiceLocator([]);
+        /** @var ServiceLocator<RemoteJwksResolver> $noRemote */
+        $noRemote = new ServiceLocator([]);
+
+        $command = new CheckConfigurationCommand($nothing, $noRemote, static fn(): JwkSet => $set);
+        $command->setName('jwt:config:check');
+
+        $tester = new CommandTester($command);
+        $tester->execute([]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('private material', $tester->getDisplay());
+    }
+
+    #[TestDox('an ID-token verifier is checked like everything else')]
+    public function testIdTokenRegistrationIsChecked(): void
+    {
+        $configuration = self::configuration();
+        $configuration['keys']['partner'] = [
+            'pem_public' => self::keypair('check-idp')['public'],
+            'algorithm' => 'RS256',
+            'kid' => 'partner-2026',
+        ];
+        $configuration['id_tokens'] = ['partner' => [
+            'issuer' => 'https://idp.test',
+            'client_id' => 'this-application',
+            'keys' => ['partner'],
+            'allowed_algorithms' => ['RS256'],
+        ]];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringContainsString('ID token "partner"', $tester->getDisplay());
+
+        // And it fails like everything else when its key is not there, which is
+        // what stops the loop that collects them from being dropped quietly.
+        $configuration['keys']['partner'] = ['pem_public' => '/nowhere/never-deployed.pem', 'algorithm' => 'RS256'];
+
+        $broken = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $broken->getStatusCode());
+        self::assertStringContainsString('ID token "partner"', $broken->getDisplay());
+    }
+
+    #[TestDox('a published key whose file is missing is a row, not an exception instead of one')]
+    public function testMissingPublishedKeyIsReported(): void
+    {
+        $configuration = self::configuration();
+        $configuration['keys']['published'] = ['pem_public' => '/nowhere/never-deployed.pem', 'algorithm' => 'RS256'];
+        $configuration['jwks'] = ['keys' => ['published']];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+
+        $display = $tester->getDisplay();
+
+        // The published set fails, and so does the key behind it — but the rest
+        // of the report is still there. Built when the command was constructed
+        // rather than when it ran, this key would have thrown before the first
+        // row was printed and taken every other check with it.
+        self::assertStringContainsString('published JWK Set', $display);
+        self::assertStringContainsString('key "published" (verification)', $display);
+        self::assertStringContainsString('consumer "api"', $display);
+        self::assertStringContainsString('issuer "default"', $display);
+    }
+
+    #[TestDox('an application that configures nothing is told so rather than shown an empty table')]
+    public function testNothingToCheck(): void
+    {
+        $tester = self::check(configuration: ['keys' => []]);
+
+        // Not 0: `jwt:config:check && deploy` would go green having checked
+        // nothing, which is what a package file that failed to deploy looks
+        // like from here.
+        self::assertSame(Command::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString('configures nothing', $tester->getDisplay());
+    }
+
+    /**
+     * @param array<string, mixed>      $input
+     * @param array<string, mixed>|null $configuration
+     */
+    private static function check(array $input = [], ?array $configuration = null, ?bool $publish = null): CommandTester
+    {
+        self::ensureKernelShutdown();
+        self::bootKernel(['medzuch_jwt' => $configuration ?? self::configuration()]);
+
+        if (null !== $publish) {
+            $client = self::getContainer()->get('test.http_client');
+            self::assertInstanceOf(StubHttpClient::class, $client);
+
+            $publish
+                ? $client->publishes(self::document())
+                : $client->goesOffline();
+        }
+
+        $kernel = self::$kernel;
+        self::assertInstanceOf(KernelInterface::class, $kernel);
+
+        $application = new Application($kernel);
+        $application->setAutoExit(false);
+
+        $tester = new CommandTester($application->find('jwt:config:check'));
+        $tester->execute($input);
+
+        return $tester;
+    }
+
+    private static function document(): string
+    {
+        $jwk = RsaPrivateKey::fromPem(self::keypair('remote-idp')['private'], 'RS256', 'partner-2026')
+            ->toPublicKey()
+            ->toJwk();
+
+        return json_encode(['keys' => [$jwk]], \JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function remoteConfiguration(): array
+    {
+        return [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'remote_jwks' => ['partner_idp' => [
+                'uri' => self::URI,
+                'http_client' => 'test.http_client',
+                'cache' => 'test.cache',
+            ]],
+            'consumers' => ['partner' => [
+                'issuer' => 'https://idp.test',
+                'audience' => 'https://api.test',
+                'remote_jwks' => 'partner_idp',
+                'allowed_algorithms' => ['RS256'],
+            ]],
+        ];
+    }
+
+    /**
+     * @return array{keys: array<string, array<string, mixed>>, issuers: array<string, array<string, mixed>>, consumers: array<string, array<string, mixed>>}
+     */
+    private static function configuration(): array
+    {
+        return [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'issuers' => ['default' => [
+                'issuer' => 'https://issuer.test',
+                'key' => 'default',
+                'client_id' => 'test-client',
+                'audience' => 'https://api.test',
+            ]],
+            'consumers' => ['api' => [
+                'issuer' => 'https://issuer.test',
+                'audience' => 'https://api.test',
+                'keys' => ['default'],
+                'allowed_algorithms' => ['HS256'],
+            ]],
+        ];
+    }
+}
