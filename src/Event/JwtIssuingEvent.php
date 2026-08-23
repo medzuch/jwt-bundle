@@ -56,7 +56,7 @@ final class JwtIssuingEvent
         // writing: what a listener cannot set, it cannot delete either — and a
         // `scope` that configuration put there is exactly as deliberate as one
         // a listener would replace it with.
-        ReservedClaims::refuse([$name], 'A listener on JwtIssuingEvent');
+        ReservedClaims::refuse([$name], 'A listener on JwtIssuingEvent', 'remove');
 
         unset($this->claims[$name]);
     }

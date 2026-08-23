@@ -140,7 +140,10 @@ final class ClaimContributionTest extends WebTestCase
         self::listener()->remove = ['scope'];
 
         $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('A listener on JwtIssuingEvent cannot set the reserved claim "scope"');
+        // The sentence has to describe the line the stack trace points at: a
+        // listener that reads `removeClaim('scope')` being told it cannot
+        // "set" one sends its author looking for a call they did not make.
+        $this->expectExceptionMessage('A listener on JwtIssuingEvent cannot remove the reserved claim "scope"');
 
         // Deleting is the quieter half of writing: without this the listener
         // could drop a `scope` that configuration deliberately put there, and

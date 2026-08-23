@@ -19,6 +19,9 @@ namespace Medzuch\JwtBundle\Security\Http;
  */
 final class Challenge
 {
+    /** What a quoted-string cannot carry at all (RFC 9110 §5.6.4), named here so the config node can refuse it by the same rule. */
+    public const CONTROL = '/[\x00-\x1F\x7F]/';
+
     public static function quote(string $value): string
     {
         // Stripped, not escaped: a quoted-string has no escape for a control
@@ -26,7 +29,10 @@ final class Challenge
         // than a wrong one — PHP refuses to emit it, so the response goes out
         // with no challenge at all, which is the one thing an entry point
         // exists to prevent.
-        $value = (string) preg_replace('/[\x00-\x1F\x7F]/', '', $value);
+        // ?? $value rather than a cast: a PCRE failure would otherwise turn
+        // into an empty realm, which is a header saying something false rather
+        // than one saying too much.
+        $value = preg_replace(self::CONTROL, '', $value) ?? $value;
 
         return str_replace(['\\', '"'], ['\\\\', '\\"'], $value);
     }

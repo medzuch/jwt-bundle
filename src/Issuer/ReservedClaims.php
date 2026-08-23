@@ -49,8 +49,10 @@ final class ReservedClaims
 
     /**
      * @param list<string> $names claim names the hook wants to write
+     * @param string       $verb  what it was trying to do, so the sentence
+     *                            describes the line the stack trace points at
      */
-    public static function refuse(array $names, string $origin): void
+    public static function refuse(array $names, string $origin, string $verb = 'set'): void
     {
         $reserved = array_values(array_intersect($names, self::NAMES));
 
@@ -59,8 +61,9 @@ final class ReservedClaims
         }
 
         throw new LogicException(sprintf(
-            '%s cannot set the reserved claim %s. The issuer sets these itself, from its configuration and the arguments of issue(): %s.',
+            '%s cannot %s the reserved claim %s. The issuer sets these itself, from its configuration and the arguments of issue(): %s.',
             $origin,
+            $verb,
             '"' . implode('", "', $reserved) . '"',
             '"' . implode('", "', self::NAMES) . '"',
         ));

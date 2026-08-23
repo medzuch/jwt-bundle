@@ -19,6 +19,12 @@ use Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface;
  * server for, and withholding it leaves a caller retrying a request that can
  * never succeed. What stays unsaid is everything about the token itself.
  *
+ * An attribute that is not a scope is left out of the header, and a rule with
+ * nothing nameable left gets no challenge at all: the parameter is a
+ * space-delimited list of RFC 6749 §3.3 scope-tokens, and an attribute carrying
+ * a space would arrive at the client as two scopes it never asked about. What
+ * the bundle cannot name honestly, it does not name.
+ *
  * A denial over anything else — a role, an expression, a voter of the
  * application's own — is left alone: this answers `SCOPE_*` and returns null
  * otherwise, which lets Symfony produce its usual 403. An `allow_if` calling
@@ -34,6 +40,9 @@ use Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface;
  */
 final class InsufficientScopeHandler implements AccessDeniedHandlerInterface
 {
+    /** RFC 6749 §3.3: `scope-token = 1*( %x21 / %x23-5B / %x5D-7E )` — no space, no quote, no backslash, no controls. */
+    private const SCOPE_TOKEN = '/^[\x21\x23-\x5B\x5D-\x7E]+$/';
+
     public function __construct(private readonly string $realm) {}
 
     public function handle(Request $request, AccessDeniedException $accessDeniedException): ?Response
@@ -42,11 +51,20 @@ final class InsufficientScopeHandler implements AccessDeniedHandlerInterface
 
         foreach ($accessDeniedException->getAttributes() as $attribute) {
             if (is_string($attribute) && str_starts_with($attribute, ScopeVoter::PREFIX)) {
-                $scopes[] = substr($attribute, strlen(ScopeVoter::PREFIX));
+                $scope = substr($attribute, strlen(ScopeVoter::PREFIX));
+
+                // Only what RFC 6749 §3.3 calls a scope-token gets in. The
+                // parameter is a space-delimited list, so an attribute
+                // carrying a space would arrive as two scopes, neither of them
+                // the one required; a quote or a control character cannot be
+                // in the value at all. What the bundle cannot name, it does
+                // not name — the same answer it gives a denial with no
+                // `SCOPE_*` on it.
+                if (1 === preg_match(self::SCOPE_TOKEN, $scope)) {
+                    $scopes[] = $scope;
+                }
             }
         }
-
-        $scopes = array_values(array_filter($scopes, static fn(string $scope): bool => '' !== $scope));
 
         if ([] === $scopes) {
             return null;

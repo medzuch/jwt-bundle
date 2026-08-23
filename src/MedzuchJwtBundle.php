@@ -32,6 +32,7 @@ use Medzuch\JwtBundle\Security\Authorization\ScopeExpressionProvider;
 use Medzuch\JwtBundle\Security\Authorization\ScopeVoter;
 use Medzuch\JwtBundle\Security\Extractor\CookieTokenExtractor;
 use Medzuch\JwtBundle\Security\Http\BearerEntryPoint;
+use Medzuch\JwtBundle\Security\Http\Challenge;
 use Medzuch\JwtBundle\Security\Http\InsufficientScopeHandler;
 use Medzuch\JwtBundle\Security\Identity\ClaimsUserResolver;
 use Medzuch\JwtBundle\Security\Identity\CustomUserResolver;
@@ -630,7 +631,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         $consumer->scalarNode('realm')
             ->defaultNull()
             ->cannotBeEmpty()
-            ->info('Protection space named in the `WWW-Authenticate` header of this consumer\'s entry point and scope denials (RFC 6750 §3). Null uses the consumer\'s name. Symfony has its own `access_token.realm` for the header it sends itself; keep the two equal.')
+            ->info('Protection space named in the `WWW-Authenticate` header of this consumer\'s entry point and scope denials (RFC 6750 §3). Null uses the consumer\'s name. Symfony has its own `access_token.realm` for the header it sends itself; keep the two equal. A literal, not an env reference: the value is validated, which is what stops a quote or a newline from costing the header, and Symfony refuses to validate a placeholder.')
             ->example('api')
             ->validate()
                 // A quote would close the quoted-string it is interpolated
@@ -641,7 +642,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                 // saying how to authenticate. Escaped or stripped on the way
                 // out as well, but a realm nobody can read is a configuration
                 // mistake worth naming here.
-                ->ifTrue(static fn(mixed $value): bool => is_string($value) && (false !== strpbrk($value, "\"\\") || 1 === preg_match('/[\x00-\x1F\x7F]/', $value)))
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && (false !== strpbrk($value, "\"\\") || 1 === preg_match(Challenge::CONTROL, $value)))
                 ->thenInvalid('A realm cannot contain a quote, a backslash or a control character: it is interpolated into a quoted-string in WWW-Authenticate (RFC 9110 §5.6.4). Got %s')
             ->end()
             ->end();
