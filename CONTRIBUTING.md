@@ -68,6 +68,19 @@ chore(ci): pin actions to commit SHAs
 Scopes in use: `di`, `security`, `issuer`, `key`, `jwks`, `command`, `config`,
 `profiler`, `ci`, `docs`.
 
+## Mutation-testing a compiler pass
+
+Symfony's compiled container tracks configuration and class resources, not the
+file a compiler pass lives in. Change `CollectVerdictsPass` to prove a test
+catches it and the suite may keep passing against a container compiled before
+the change:
+
+```bash
+docker compose exec php rm -rf /tmp/medzuch-jwt-bundle-tests
+```
+
+Wipe it first, or the mutation you are testing never runs.
+
 ## GitHub Actions
 
 Workflows must pin every action to a **commit SHA**, with the version as a

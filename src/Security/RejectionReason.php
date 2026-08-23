@@ -20,6 +20,7 @@ use Medzuch\Jwt\Exception\KeyNotFoundException;
 use Medzuch\Jwt\Exception\MalformedJwtException;
 use Medzuch\Jwt\Exception\NotYetValidException;
 use Medzuch\Jwt\Exception\SignatureVerificationException;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
 
 /**
  * Why a consumer refused a token, in the vocabulary metrics and alerting need.
@@ -80,6 +81,23 @@ enum RejectionReason: string
 
     /** A failure this bundle has no bucket for; the exception on the event says more. */
     case Other = 'other';
+
+    /**
+     * The reason a refusal carries, wherever it is read from.
+     *
+     * One place, because there are two readers — the handler, which announces
+     * it on {@see \Medzuch\JwtBundle\Event\JwtRejectedEvent}, and the
+     * profiler's decorator, which shows it. They disagreed once: an identity
+     * refusal reached the event as `identity_refused` and the panel as
+     * "other", because the handler rethrows the resolver's own exception and
+     * the decorator asked a narrower question of it.
+     */
+    public static function forRefusal(AuthenticationException $failure): self
+    {
+        // Not one of ours means it came from the user resolver, which only runs
+        // on a token that already verified.
+        return $failure instanceof RejectedTokenException ? $failure->reason : self::IdentityRefused;
+    }
 
     /**
      * The bucket a library failure belongs in.

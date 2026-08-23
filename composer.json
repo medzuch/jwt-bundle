@@ -49,7 +49,9 @@
         "symfony/error-handler": "^6.4 || ^7.4 || ^8.0",
         "symfony/expression-language": "^6.4 || ^7.4 || ^8.0",
         "symfony/framework-bundle": "^6.4 || ^7.4 || ^8.0",
-        "symfony/routing": "^6.4 || ^7.4 || ^8.0"
+        "symfony/routing": "^6.4 || ^7.4 || ^8.0",
+        "symfony/twig-bundle": "^6.4 || ^7.4 || ^8.0",
+        "symfony/web-profiler-bundle": "^6.4 || ^7.4 || ^8.0"
     },
     "suggest": {
         "psr/http-client": "To consume a remote JWK Set: any PSR-18 client, Symfony's psr18.http_client included",
@@ -58,7 +60,8 @@
         "symfony/cache": "To cache a remote JWK Set through a PSR-6 pool such as cache.app, which the default wiring wraps",
         "symfony/console": "To run jwt:key:generate, jwt:token:create, jwt:token:inspect, jwt:jwks:dump and jwt:config:check",
         "phpunit/phpunit": "To use Medzuch\\JwtBundle\\Test\\AssertsBearerChallenges in your own functional suite; TestTokenFactory needs nothing beyond medzuch/jwt-php",
-        "symfony/expression-language": "To write is_granted_scope() in access_control or #[IsGranted] expressions"
+        "symfony/expression-language": "To write is_granted_scope() in access_control or #[IsGranted] expressions",
+        "symfony/web-profiler-bundle": "To see the JWT panel, which says why a token was refused where the response will not"
     },
     "autoload": {
         "psr-4": {
