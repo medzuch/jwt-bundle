@@ -154,6 +154,26 @@ final class BearerChallengeTest extends WebTestCase
         return $header;
     }
 
+    #[TestDox('a scope attribute carrying a newline cannot cost the response its challenge')]
+    public function testControlCharactersAreStrippedFromTheChallenge(): void
+    {
+        $client = self::createClient();
+        $token = self::issuer()->issue('alice', scopes: ['nothing.useful']);
+
+        $client->request('GET', '/api/dodgy-scope', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token->value]);
+
+        self::assertResponseStatusCodeSame(403);
+
+        // The whole header. A newline in a header value is not a second header
+        // — PHP refuses to emit the value at all — so what an unstripped
+        // attribute costs is the challenge itself, on the one response whose
+        // job is to say what would have sufficed.
+        self::assertSame(
+            'Bearer realm="reports-api", error="insufficient_scope", scope="reports.readX-Injected: yes"',
+            $client->getResponse()->headers->get('WWW-Authenticate'),
+        );
+    }
+
     private static function issuer(): AccessTokenIssuer
     {
         $issuer = self::getContainer()->get('medzuch_jwt.issuer.default');

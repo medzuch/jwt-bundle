@@ -139,6 +139,10 @@ final class SecuredKernel extends Kernel
             // A denial with no scope in it, so the bearer challenge has
             // nothing to add and Symfony's own 403 stands.
             ['path' => '^/api/role', 'roles' => 'ROLE_NOBODY_HAS_THIS'],
+            // An attribute the bundle never validates, because it never sees it
+            // until a request is denied: whatever the application wrote here
+            // ends up inside a quoted-string in a header.
+            ['path' => '^/api/dodgy-scope', 'roles' => "SCOPE_reports.read\r\nX-Injected: yes"],
             ['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY'],
         ];
 
@@ -234,6 +238,7 @@ final class SecuredKernel extends Kernel
         $routes->add('scoped', '/api/scoped')->controller(WhoAmIController::class);
         $routes->add('bare_scope', '/api/bare-scope')->controller(WhoAmIController::class);
         $routes->add('role_only', '/api/role')->controller(WhoAmIController::class);
+        $routes->add('dodgy_scope', '/api/dodgy-scope')->controller(WhoAmIController::class);
         // Guarded by an attribute rather than an access rule: a different
         // listener, the same voter.
         $routes->add('attribute_scoped', '/api/attribute-scoped')->controller(ScopedController::class);

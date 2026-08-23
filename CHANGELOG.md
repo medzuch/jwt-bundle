@@ -192,6 +192,20 @@ a class or method signature would be.
   consulted — so an identity assembled from several claims is fine and the badge cannot
   disagree with the user it loads.
 
+### Fixed
+
+- **A listener can no longer delete what it cannot write ([#31](https://github.com/medzuch/jwt-bundle/issues/31)).**
+  `JwtIssuingEvent::setClaim()` refused the claims the issuer decides itself; `removeClaim()`
+  refused nothing, so a listener could drop a `scope` that `issuers.*.claims` deliberately put
+  there and mint a token granting less than the configuration says, with nothing saying so. Both
+  halves of writing are refused now.
+- **`WWW-Authenticate` values are stripped of control characters ([#32](https://github.com/medzuch/jwt-bundle/issues/32)).**
+  Quoting covered `"` and `\`; a control character has no place in a quoted-string either (RFC
+  9110 §5.6.4), and a newline costs more than a wrong value — PHP refuses to emit a header
+  carrying one, so the `401` would go out with no challenge at all. `consumers.*.realm` refuses
+  them at container build, and a `SCOPE_*` attribute — which the bundle never sees until a
+  request is denied — has them stripped on the way into the header.
+
 ## [0.3.0] — 2026-08-20
 
 Phase 3 of the roadmap in [`docs/plan.md`](docs/plan.md): federation. Keys can now

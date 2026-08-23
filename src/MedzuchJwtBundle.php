@@ -634,11 +634,15 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->example('api')
             ->validate()
                 // A quote would close the quoted-string it is interpolated
-                // into and let the rest read as further auth-params. Escaped
-                // on the way out as well, but a realm nobody can read is a
-                // configuration mistake worth naming here.
-                ->ifTrue(static fn(mixed $value): bool => is_string($value) && false !== strpbrk($value, "\"\\"))
-                ->thenInvalid('A realm cannot contain a quote or a backslash: it is interpolated into a quoted-string in WWW-Authenticate (RFC 9110 §5.6.4). Got %s')
+                // into and let the rest read as further auth-params; a control
+                // character is not allowed in one at all (RFC 9110 §5.6.4), and
+                // a newline costs the whole header — PHP refuses to emit a
+                // header value carrying one, so the 401 goes out with nothing
+                // saying how to authenticate. Escaped or stripped on the way
+                // out as well, but a realm nobody can read is a configuration
+                // mistake worth naming here.
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && (false !== strpbrk($value, "\"\\") || 1 === preg_match('/[\x00-\x1F\x7F]/', $value)))
+                ->thenInvalid('A realm cannot contain a quote, a backslash or a control character: it is interpolated into a quoted-string in WWW-Authenticate (RFC 9110 §5.6.4). Got %s')
             ->end()
             ->end();
 
