@@ -13,6 +13,11 @@ a class or method signature would be.
 
 ### Added
 
+- **`jwt:jwks:dump` (D4).** Prints the JWK Set the endpoint serves, from the same `JwkSet`
+  service, so a document written to a file cannot drift from one served over HTTP. Indented by
+  default; `--compact` is byte for byte what `medzuch_jwt.jwks_controller` returns, for
+  `> public/.well-known/jwks.json`. Registered only where `medzuch_jwt.jwks` names keys.
+
 - **`jwt:token:create` and `jwt:token:inspect` (D1, D2).** Mint a token from the command line
   and ask what a consumer makes of one. Neither is a second implementation: `create` calls
   `AccessTokenIssuer::issue()`, so the configured key signs it and the application's claim

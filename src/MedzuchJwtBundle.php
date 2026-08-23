@@ -15,6 +15,7 @@ use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Command\CreateTokenCommand;
+use Medzuch\JwtBundle\Command\DumpJwksCommand;
 use Medzuch\JwtBundle\Command\GenerateKeyCommand;
 use Medzuch\JwtBundle\Command\InspectTokenCommand;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
@@ -131,7 +132,12 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger']);
 
         $this->registerJwks($services, $keys, $config['jwks']);
-        $this->registerConsoleCommands($services, array_keys($config['issuers']), array_keys($config['consumers']));
+        $this->registerConsoleCommands(
+            $services,
+            array_keys($config['issuers']),
+            array_keys($config['consumers']),
+            [] !== $config['jwks']['keys'],
+        );
         $this->registerAuthorization($services);
     }
 
@@ -170,20 +176,22 @@ final class MedzuchJwtBundle extends AbstractBundle
      * never run.
      *
      * The same reasoning one level down: `jwt:token:create` is registered only
-     * where an issuer is, because a command whose every run ends in "nothing is
+     * where an issuer is, and `jwt:jwks:dump` only where there are keys to
+     * publish, because a command whose every run ends in "nothing is
      * configured" is a line in `bin/console list` that promises something this
      * application cannot do. `jwt:token:inspect` is registered either way — it
      * decodes without configuration, which is exactly what a token from
      * somewhere else needs.
      *
-     * Both reach their subjects through a service locator rather than a
-     * container: the names are known at build time, and a command that could
-     * fetch anything would be a command that can be asked for anything.
+     * The two that take a name reach their subjects through a service locator
+     * rather than a container: the names are known at build time, and a command
+     * that could fetch anything would be a command that can be asked for
+     * anything.
      *
      * @param list<string> $issuers
      * @param list<string> $consumers
      */
-    private function registerConsoleCommands(ServicesConfigurator $services, array $issuers, array $consumers): void
+    private function registerConsoleCommands(ServicesConfigurator $services, array $issuers, array $consumers, bool $publishes): void
     {
         if (!class_exists(Command::class)) {
             return;
@@ -201,6 +209,12 @@ final class MedzuchJwtBundle extends AbstractBundle
                 service('medzuch_jwt.clock'),
             ])
             ->tag('console.command', ['command' => 'jwt:token:inspect']);
+
+        if ($publishes) {
+            $services->set('medzuch_jwt.command.jwks_dump', DumpJwksCommand::class)
+                ->args([service('medzuch_jwt.jwks.key_set')])
+                ->tag('console.command', ['command' => 'jwt:jwks:dump']);
+        }
 
         if ([] === $issuers) {
             return;

@@ -1095,8 +1095,8 @@ library does not have yet, and this bundle does not reimplement crypto its libra
 
 ## From the console
 
-Three commands, and none of them a second implementation of anything: each asks the services
-your application already has.
+Four commands, and none of them a second implementation of anything: each asks the services your
+application already has.
 
 ```bash
 # Mint a token through a configured issuer
@@ -1151,7 +1151,18 @@ from your callback, not by a firewall (DEC-8).
 loaded by Symfony after the handler returns, so the command can accept a token naming a user your
 store no longer has. It is the same "verified, not authenticated" line `JwtVerifiedEvent` draws.
 
-`jwt:key:generate` is the third — see [Generating keys](#generating-keys).
+`jwt:jwks:dump` prints the document `medzuch_jwt.jwks_controller` serves — the same `JwkSet`
+service, so the two cannot drift apart. Indented for reading, `--compact` for byte-for-byte:
+
+```bash
+bin/console jwt:jwks:dump --compact > public/.well-known/jwks.json
+```
+
+which is what it is for. An application publishing its keys from a file or a CDN rather than from
+the endpoint needs the document without needing the route, and writing one by hand is how a `kid`
+comes to disagree with the key it names. It appears only where `medzuch_jwt.jwks` has keys in it.
+
+`jwt:key:generate` is the fourth — see [Generating keys](#generating-keys).
 
 **A minted token is a working credential** for as long as it lives. It is on your screen and in
 your shell history; `--raw` at least keeps the surrounding text out of a log.
