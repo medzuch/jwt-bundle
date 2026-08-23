@@ -60,6 +60,12 @@ final class ReadmeExamplesTest extends KernelTestCase
 
         $container = self::getContainer();
 
+        // True of every example, and the reason this case is not risky when a
+        // snippet advertises no services of its own — a configuration block
+        // that compiles is the assertion, and the clock is what proves the
+        // bundle's extension ran at all.
+        self::assertTrue($container->has('medzuch_jwt.clock'), sprintf('README line %d should compile the bundle', $line));
+
         foreach (self::advertisedServices($configuration) as $id) {
             self::assertTrue($container->has($id), sprintf('README line %d implies the service "%s"', $line, $id));
         }

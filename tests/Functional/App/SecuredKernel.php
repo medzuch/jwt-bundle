@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional\App;
 
+use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\JwtBundle\Event\JwtIssuedEvent;
 use Medzuch\JwtBundle\Event\JwtIssuingEvent;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
@@ -189,6 +190,15 @@ final class SecuredKernel extends Kernel
 
             // A denylist store the tests can revoke through.
             ->set('test.cache', ArrayCache::class)->public()
+
+            // A clock a test can move, for the same reason TestKernel has one:
+            // `medzuch_jwt.clock` is what every consumer, issuer and denylist
+            // reads, so freezing it is the only way to watch a token expire
+            // without sleeping through it.
+            ->set('test.frozen_clock', FrozenClock::class)
+            ->factory([FrozenClock::class, 'at'])
+            ->args(['2026-01-01T00:00:00+00:00'])
+            ->public()
 
             ->set(ScopedController::class)->public();
 

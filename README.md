@@ -1188,6 +1188,100 @@ accept `application/json`; the strict ones are the reason to set it.
 your shell history; `--raw` at least keeps the surrounding text out of a log.
 
 
+## Testing an application that uses this
+
+Two things ship in `src/Test/` for your own functional suite.
+
+**`TestTokenFactory`** mints the tokens your firewall has to refuse, which the issuer will not
+make for you — it mints tokens meant to work:
+
+```php
+use Medzuch\JwtBundle\Test\TestTokenFactory;
+
+$tokens = TestTokenFactory::hmac('https://issuer.test', 'https://api.test', $secret);
+
+$tokens->token('alice', scopes: ['reports.read']);   // accepted
+$tokens->expired();                                  // exp an hour ago
+$tokens->notYetValid();                              // nbf an hour out
+$tokens->withAudience('https://other.test')->token();
+$tokens->withIssuer('https://elsewhere.test')->token();
+```
+
+For RS256, ES256 or EdDSA, hand it the private key your issuer signs with:
+
+```php
+$key = RsaPrivateKey::fromPem(file_get_contents('config/jwt/default.private.pem'), 'RS256');
+
+$tokens = TestTokenFactory::signedWith('https://issuer.test', 'https://api.test', new Rs256(), $key);
+```
+
+A token signed by somebody else is a second factory rather than a method — every algorithm gets
+the same answer and there is nothing to switch on:
+
+```php
+$stranger = TestTokenFactory::hmac('https://issuer.test', 'https://api.test', 'another-secret-of-32-bytes-plus!!');
+```
+
+**It reads no configuration, deliberately.** A test that mints from the same container it
+verifies against cannot catch a configuration mistake: an `audience` wrong in both halves agrees
+with itself and the test passes. Naming the issuer, the audience and the key in the test is what
+makes it an assertion about the contract.
+
+**`AssertsBearerChallenges`** says what a refusal should have carried, without asserting the
+whole header — which breaks the day your realm changes:
+
+```php
+use Medzuch\JwtBundle\Test\AssertsBearerChallenges;
+
+final class ApiTest extends WebTestCase
+{
+    use AssertsBearerChallenges;
+
+    public function testRefusals(): void
+    {
+        $client = static::createClient();
+
+        $client->request('GET', '/api/reports');
+        self::assertBearerChallenge($client->getResponse(), realm: 'api');   // and no error, per RFC 6750 §3
+
+        $client->request('GET', '/api/reports', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $tokens->expired()]);
+        self::assertInvalidToken($client->getResponse());
+
+        $client->request('GET', '/api/reports', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $tokens->token('alice')]);
+        self::assertInsufficientScope($client->getResponse(), 'reports.read');
+
+        // A role, an expression, a voter of your own: this bundle says nothing.
+        self::assertNoBearerChallenge($client->getResponse());
+    }
+}
+```
+
+**Time travel** is one configuration line, in `config/packages/test/`:
+
+```yaml
+services:
+    test.frozen_clock:
+        class: Medzuch\Jwt\Primitives\FrozenClock
+        factory: [Medzuch\Jwt\Primitives\FrozenClock, at]
+        arguments: ['2026-01-01T00:00:00+00:00']
+        public: true
+
+medzuch_jwt:
+    clock: test.frozen_clock
+```
+
+Every consumer, issuer and denylist reads that clock, so one tick expires a token without
+anything sleeping:
+
+```php
+$clock = self::getContainer()->get('test.frozen_clock');
+$token = $tokens->withClock($clock)->token('alice');   // the same clock, or `iat` comes from
+                                                       // one and `exp` is checked against another
+
+$clock->tick(new DateInterval('PT2H'));                // the same request now gets a 401
+```
+
+
 ## Configuration reference
 
 The complete tree, with every option, default and explanation, is generated from the bundle

@@ -57,6 +57,7 @@
         "psr/simple-cache": "To cache a remote JWK Set through a PSR-16 service of your own",
         "symfony/cache": "To cache a remote JWK Set through a PSR-6 pool such as cache.app, which the default wiring wraps",
         "symfony/console": "To run jwt:key:generate, jwt:token:create, jwt:token:inspect and jwt:jwks:dump",
+        "phpunit/phpunit": "To use Medzuch\\JwtBundle\\Test\\AssertsBearerChallenges in your own functional suite; TestTokenFactory needs nothing beyond medzuch/jwt-php",
         "symfony/expression-language": "To write is_granted_scope() in access_control or #[IsGranted] expressions"
     },
     "autoload": {

@@ -13,6 +13,23 @@ a class or method signature would be.
 
 ### Added
 
+- **Test helpers for the applications using this bundle (D5).** `Medzuch\JwtBundle\Test\TestTokenFactory`
+  mints what an issuer will not: a token that expired an hour ago, one not valid for another
+  hour, one addressed elsewhere, one from an issuer nobody trusts. It reads no configuration on
+  purpose — a test minting from the same container it verifies against cannot catch an
+  `audience` that is wrong in both halves. A token signed by a stranger is a second factory
+  rather than a method, so every algorithm gets the same answer.
+
+  `Medzuch\JwtBundle\Test\AssertsBearerChallenges` says what a refusal carried without pinning
+  the whole header: `assertBearerChallenge()` (and no `error`, per RFC 6750 §3),
+  `assertInvalidToken()`, `assertInsufficientScope()` and `assertNoBearerChallenge()`. Parameters
+  are read by name, so a test does not fail over the spacing Symfony's header and this bundle's
+  differ in.
+
+  Time travel needs no helper: `medzuch_jwt.clock` already takes any PSR-20 service, so a frozen
+  clock in `config/packages/test/` reaches every consumer, issuer and denylist at once. The
+  README shows the four lines.
+
 - **`jwt:jwks:dump` (D4).** Prints the JWK Set the endpoint serves, from the same `JwkSet`
   service, so a document written to a file cannot drift from one served over HTTP. Indented by
   default; `--compact` is byte for byte what `medzuch_jwt.jwks_controller` returns, for
