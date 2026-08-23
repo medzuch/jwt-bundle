@@ -51,7 +51,11 @@ final class DumpJwksCommandTest extends KernelTestCase
         $served = $controller(Request::create('/.well-known/jwks.json'))->getContent();
 
         self::assertIsString($served);
-        self::assertSame($served, trim($tester->getDisplay()));
+        // The whole output, not a trimmed version of it: byte for byte is the
+        // promise, and trim() would forgive a trailing newline — the one byte
+        // that makes a hash of the dumped file disagree with the endpoint's
+        // ETag for the same keys.
+        self::assertSame($served, $tester->getDisplay());
     }
 
     #[TestDox('the default is indented, and is the same document')]
@@ -63,7 +67,7 @@ final class DumpJwksCommandTest extends KernelTestCase
         self::assertStringContainsString("\n    ", $display, 'a console is read by people');
 
         $printed = json_decode($display, true, flags: \JSON_THROW_ON_ERROR);
-        $compact = json_decode(trim(self::dump(['--compact' => true])->getDisplay()), true, flags: \JSON_THROW_ON_ERROR);
+        $compact = json_decode(self::dump(['--compact' => true])->getDisplay(), true, flags: \JSON_THROW_ON_ERROR);
 
         self::assertSame($compact, $printed);
     }
@@ -71,7 +75,7 @@ final class DumpJwksCommandTest extends KernelTestCase
     #[TestDox('what it prints is a key set of public halves, one per configured key')]
     public function testPrintsThePublicHalves(): void
     {
-        $document = json_decode(trim(self::dump([])->getDisplay()), true, flags: \JSON_THROW_ON_ERROR);
+        $document = json_decode(self::dump([])->getDisplay(), true, flags: \JSON_THROW_ON_ERROR);
 
         self::assertIsArray($document);
         self::assertIsArray($document['keys'] ?? null);
@@ -90,8 +94,15 @@ final class DumpJwksCommandTest extends KernelTestCase
     #[TestDox('an application that publishes nothing is not offered a command that would print nothing')]
     public function testAbsentWithoutPublishedKeys(): void
     {
+        // Keys configured and none of them published, which is what a resource
+        // server looks like — and the case the registration predicate is really
+        // about. An application with no keys at all would be absent whatever
+        // that predicate said.
+        $configuration = self::configuration();
+        unset($configuration['jwks']);
+
         self::ensureKernelShutdown();
-        self::bootKernel(['medzuch_jwt' => ['keys' => []]]);
+        self::bootKernel(['medzuch_jwt' => $configuration]);
 
         $kernel = self::$kernel;
         self::assertInstanceOf(KernelInterface::class, $kernel);
@@ -144,12 +155,30 @@ final class DumpJwksCommandTest extends KernelTestCase
 
         return self::$configuration = [
             'keys' => [
-                // A slash in the `kid` on purpose: it is the one character
-                // whose encoding the command and the endpoint could disagree
-                // about, and without it the two documents would match whatever
-                // JSON flags either of them used.
-                'rsa' => ['pem_public' => $rsa['public'], 'algorithm' => 'RS256', 'kid' => 'rsa/2026'],
-                'ed' => ['jwk_public' => $ed['public'], 'algorithm' => 'EdDSA', 'kid' => 'ed-2026'],
+                // Both halves, so the private-material scan below can fail:
+                // with only a public half configured there is no signing key in
+                // the container for the set to be built from by mistake.
+                //
+                // The `kid` is awkward on purpose. `<` and `>` are escaped by
+                // JsonResponse and left alone by a bare json_encode(), and `/`
+                // is escaped by both but not by JSON_UNESCAPED_SLASHES — which
+                // is the flag this command first reached for. Between them the
+                // parity test fails for either mistake; a slash alone catches
+                // only the second.
+                'rsa' => [
+                    'pem_private' => $rsa['private'],
+                    'pem_public' => $rsa['public'],
+                    'algorithm' => 'RS256',
+                    'kid' => 'rsa/<2026>',
+                ],
+                // Both halves here too, so the scan runs against a container
+                // that really holds signing material for every key in the set.
+                'ed' => [
+                    'jwk_private' => $ed['private'],
+                    'jwk_public' => $ed['public'],
+                    'algorithm' => 'EdDSA',
+                    'kid' => 'ed-2026',
+                ],
             ],
             'jwks' => ['keys' => ['rsa', 'ed']],
         ];

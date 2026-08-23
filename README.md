@@ -1162,6 +1162,10 @@ which is what it is for. An application publishing its keys from a file or a CDN
 the endpoint needs the document without needing the route, and writing one by hand is how a `kid`
 comes to disagree with the key it names. It appears only where `medzuch_jwt.jwks` has keys in it.
 
+Serving the file yourself means serving the headers the endpoint sets for you: `Content-Type:
+application/jwk-set+json` (RFC 7517 §8.5), a cache lifetime, and an `ETag`. Most relying parties
+accept `application/json`; the strict ones are the reason to set it.
+
 `jwt:key:generate` is the fourth — see [Generating keys](#generating-keys).
 
 **A minted token is a working credential** for as long as it lives. It is on your screen and in

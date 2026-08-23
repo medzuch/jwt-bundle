@@ -22,7 +22,7 @@ use Symfony\Component\HttpFoundation\JsonResponse;
  *
  * Nothing but the document is printed, so it can be redirected:
  *
- *     bin/console jwt:jwks:dump > public/.well-known/jwks.json
+ *     bin/console jwt:jwks:dump --compact > public/.well-known/jwks.json
  *
  * which is also the reason to have the command at all. An application that
  * serves its keys from a file or a CDN rather than from the endpoint needs the
@@ -51,7 +51,8 @@ final class DumpJwksCommand extends Command
                   <info>%command.full_name% --compact > public/.well-known/jwks.json</info>
 
                 Indented by default because a console is read by people; --compact prints
-                the document byte for byte as medzuch_jwt.jwks_controller serves it.
+                the document byte for byte as medzuch_jwt.jwks_controller serves it,
+                trailing newline included — which is to say, without one.
 
                 Only public halves are ever in it. Publishing a shared secret is refused
                 when the container is built, not here, because the one thing a key set must
@@ -62,20 +63,26 @@ final class DumpJwksCommand extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $compact = true === $input->getOption('compact');
+
         // The endpoint's own flags, named rather than guessed at: `--compact`
-        // promises the bytes `medzuch_jwt.jwks_controller` returns, and a `kid`
-        // carrying a slash or an angle bracket is encoded differently by
-        // `JsonResponse` than by a bare `json_encode()`. Taking the constant
-        // means the two cannot disagree, whatever Symfony's defaults become.
+        // promises the bytes `medzuch_jwt.jwks_controller` returns, and
+        // `JsonResponse` escapes `<`, `>`, `&`, `'` and `"` where a bare
+        // `json_encode()` leaves them. Taking the constant means the two cannot
+        // disagree, whatever Symfony's defaults become.
         $flags = JsonResponse::DEFAULT_ENCODING_OPTIONS | \JSON_THROW_ON_ERROR;
 
-        if (true !== $input->getOption('compact')) {
+        if (!$compact) {
             $flags |= \JSON_PRETTY_PRINT;
         }
 
         // Written raw: the document is the whole output, and a formatter would
-        // decorate and wrap what is about to be redirected into a file.
-        $output->writeln(json_encode($this->keys->toArray(), $flags), OutputInterface::OUTPUT_RAW);
+        // decorate and wrap what is about to be redirected into a file. And
+        // without a trailing newline under --compact, because the promise is
+        // the endpoint's bytes and a response body ends where the JSON does —
+        // a file one byte longer hashes to a different ETag than the endpoint
+        // serves for the same keys.
+        $output->write(json_encode($this->keys->toArray(), $flags), !$compact, OutputInterface::OUTPUT_RAW);
 
         return Command::SUCCESS;
     }

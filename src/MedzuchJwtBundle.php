@@ -131,12 +131,11 @@ final class MedzuchJwtBundle extends AbstractBundle
         $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger']);
 
-        $this->registerJwks($services, $keys, $config['jwks']);
         $this->registerConsoleCommands(
             $services,
             array_keys($config['issuers']),
             array_keys($config['consumers']),
-            [] !== $config['jwks']['keys'],
+            $this->registerJwks($services, $keys, $config['jwks']),
         );
         $this->registerAuthorization($services);
     }
@@ -190,6 +189,7 @@ final class MedzuchJwtBundle extends AbstractBundle
      *
      * @param list<string> $issuers
      * @param list<string> $consumers
+     * @param bool         $publishes whether a JWK Set service was registered to dump
      */
     private function registerConsoleCommands(ServicesConfigurator $services, array $issuers, array $consumers, bool $publishes): void
     {
@@ -1141,11 +1141,16 @@ final class MedzuchJwtBundle extends AbstractBundle
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
      * @param array{keys: list<string>, cache_max_age: int}                                                                                                              $jwks
+     *
+     * @return bool whether there is a set to serve, which is also the answer to
+     *              whether there is one to dump — returned rather than asked
+     *              again, so the command cannot be registered against a key set
+     *              this method decided not to build
      */
-    private function registerJwks(ServicesConfigurator $services, array $keys, array $jwks): void
+    private function registerJwks(ServicesConfigurator $services, array $keys, array $jwks): bool
     {
         if ([] === $jwks['keys']) {
-            return;
+            return false;
         }
 
         foreach ($jwks['keys'] as $name) {
@@ -1188,6 +1193,8 @@ final class MedzuchJwtBundle extends AbstractBundle
             // takes a Request, which the standard resolver provides, and no
             // services at all.
             ->public();
+
+        return true;
     }
 
     /**
