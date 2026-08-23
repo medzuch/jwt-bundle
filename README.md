@@ -3,7 +3,7 @@
 A Symfony bundle wiring [`medzuch/jwt-php`](https://github.com/medzuch/jwt-php) into Symfony
 applications: **issuing** JOSE tokens (RFC 9068 access tokens, OIDC ID tokens, custom JWS/JWE)
 and **verifying** them through Symfony's native Security stack — the `access_token` firewall
-authenticator, DI, configuration, console and profiler.
+authenticator, DI, configuration and console.
 
 Works for any of these roles, in any combination:
 
@@ -296,6 +296,16 @@ final class RecordsGrants
 It carries no token. Everything an audit trail needs is on the event already, and a listener
 writing what it is handed to a log would otherwise be writing a working credential to a log —
 revocation needs the `jti`, and so does anything else that asks about this token later.
+
+It arrives *after* signing, which matters if your listener can fail. A listener that throws — an
+audit database that is down being the obvious one — leaves `issue()` raising an exception for a
+token that exists and will verify until it expires. Nobody has been given it, so nothing is
+exposed; but if you need the stronger guarantee, that no token exists without its audit record,
+write the record from a `JwtIssuingEvent` listener instead, where a failure happens before
+anything is signed. That trade has two sides and neither is free: auditing before signing records
+tokens that were never minted if signing then fails, auditing after it misses tokens that were.
+Which of "records with no token" and "tokens with no record" your auditors can live with is the
+question, and only you can answer it.
 
 `issuance->scopes` is what the call asked for, and `claims['scope']` is what the token ended up
 saying. They are the same until something sets the `scope` claim itself — which configuration
@@ -699,7 +709,13 @@ A rule that wants the RFC header names the attribute directly — `roles: SCOPE_
 `#[IsGranted('SCOPE_reports.read')]`, both of which carry it.
 
 One scope per rule keeps the header honest, too: Symfony reads several attributes on one rule as
-alternatives — any one grants — while RFC 6750's `scope` reads as what was required.
+alternatives — any one grants — while RFC 6750's `scope` reads as what was required. And keep it
+the *only* attribute on that rule if you have moved off the default `affirmative` strategy: under
+`unanimous` or `consensus` a rule like `roles: [ROLE_ADMIN, SCOPE_reports.read]` can be denied
+over the role, and the header would then send a client off to fetch a scope it already has. What
+reaches the handler is the attribute list, not which of them voted no. Nothing enforces this:
+access rules are the application's, and a bundle that cannot see which voter refused cannot see a
+rule mixing kinds either — which is why it is written here rather than checked at build.
 
 ## Knowing why, when the caller is not told
 

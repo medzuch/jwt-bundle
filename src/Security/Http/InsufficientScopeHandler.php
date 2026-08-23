@@ -37,6 +37,19 @@ use Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface;
  * reads as what was required, so a rule carrying more than one says something
  * slightly stronger in the header than it means. One scope per rule keeps the
  * two readings the same.
+ *
+ * The same rule, one strategy along, can say something simply untrue. Under the
+ * default `affirmative` strategy a denial means no attribute granted, so every
+ * `SCOPE_*` on the rule really is missing. Under `unanimous` or `consensus` a
+ * rule mixing kinds — `roles: [ROLE_ADMIN, SCOPE_reports.read]` — can be denied
+ * over the role while the scope was granted, and the header then sends a client
+ * to its authorization server for a scope it already holds. The bundle cannot
+ * tell the two apart: what reaches the handler is the attribute list, not which
+ * of them voted no. One scope per rule and nothing else on it is what keeps
+ * this header honest under every strategy — and nothing enforces it: what
+ * reaches this handler is the attribute list, so a rule mixing kinds is exactly
+ * as invisible here as the votes are. It is documentation because it cannot be
+ * anything else.
  */
 final class InsufficientScopeHandler implements AccessDeniedHandlerInterface
 {

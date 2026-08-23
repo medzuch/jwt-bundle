@@ -81,17 +81,16 @@ jwt-bundle/
 ├── composer.json                  # type: symfony-bundle, requires medzuch/jwt-php
 ├── src/
 │   ├── MedzuchJwtBundle.php       # AbstractBundle: configure() + loadExtension()
-│   ├── DependencyInjection/       # config tree, compiler passes
 │   ├── Security/                  # token handlers, user resolution, voters, denylist
 │   ├── Issuer/                    # token-minting services, claim providers
 │   ├── Key/                       # key source loaders, key registry, rotation
 │   ├── Jwks/                      # JWKS publisher controller + remote JWKS wiring
 │   ├── Event/                     # dispatched events
 │   ├── Command/                   # console commands (jwt:key:generate)
-│   ├── DataCollector/             # profiler panel
-│   └── Test/                      # test helpers shipped to consumers
+│   ├── DataCollector/             # profiler panel (O2, not yet)
+│   └── Test/                      # test helpers shipped to consumers (D5, not yet)
 ├── config/
-│   ├── services.php               # service definitions
+│   ├── services.yaml              # the clock, and nothing else
 │                                  # (no routes.php: DEC-6 leaves routing to the app)
 └── tests/                         # unit + functional (real test kernel)
 ```
@@ -113,8 +112,9 @@ Key mechanics that shape the design:
 - **Firewall integration** goes through Symfony's native `access_token` block
   and a token-handler service. The bundle deliberately does **not** implement
   `AuthenticatorFactoryInterface` and ships no firewall key of its own (DEC-1 in
-  §9), so `DependencyInjection/` holds the config tree and compiler passes
-  only.
+  §9). There is no `DependencyInjection/` directory either: `AbstractBundle`
+  puts the config tree and the registration in the bundle class, and a
+  directory holding neither would be ceremony.
 
 ---
 
@@ -387,7 +387,7 @@ Design notes:
 - **`audience` is normalised to a list before it reaches the library.** jwt-php
   1.2.0 refuses a malformed array shape with a `LogicException`, and a YAML
   `audience:` written as a map is exactly what a config tree exists to catch:
-  the tree accepts a scalar or a sequence, and the compiler pass rejects
+  the tree accepts a scalar or a sequence, and `loadExtension()` rejects
   anything else — so the error names the offending config key instead of
   surfacing at the first request as a token problem.
 - **`kid` is explicit, never derived** (DEC-5 in §9): optional for a single-key
@@ -397,32 +397,68 @@ Design notes:
 
 ## 5. Service wiring (DI)
 
-Registered from `loadExtension()` into `config/services.php`:
+`config/services.yaml` holds only what exists regardless of configuration — the
+clock. Everything below is registered from `loadExtension()`, per key, issuer,
+consumer and command:
 
-- `medzuch_jwt.key.<name>` — factory services building `Key` objects from each
-  configured source; public halves separated from private ones so the JWKS
-  publisher can never expose a private key.
-- `medzuch_jwt.key_resolver.<name>` — `StaticJwkSetResolver`,
-  `RemoteJwksResolver` or `CompositeResolver`, depending on the key entry.
+- `medzuch_jwt.key.<name>` and `medzuch_jwt.key.<name>.signing` /
+  `.verification` — factory services building `Key` objects from each
+  configured source, with the halves as separate ids so the JWKS publisher can
+  only ever be handed a public one.
+- `medzuch_jwt.remote_jwks.<entry>` — the `RemoteJwksResolver` for one
+  `remote_jwks` entry, cache and refresh window included, and the id the error
+  message for an undefined set points at. Keyed by the entry, so two consumers
+  of one issuer share it.
+- `medzuch_jwt.jwk_set.<consumer>` — the local `JwkSet` a consumer verifies
+  against, registered only where it has local keys.
+- `medzuch_jwt.resolver.<consumer>` — the `CompositeResolver`, and only that:
+  registered where a consumer has both local keys and a remote set, local first
+  (K6). A consumer with one or the other is handed that one directly.
 - `medzuch_jwt.consumer.<name>` — the library consumer built via a static
   factory (`AccessTokenProfile::consumer(...)` etc.).
 - `medzuch_jwt.handler.<name>` — our `AccessTokenHandlerInterface`
-  implementation wrapping the consumer plus policy (denylist, max age, user
-  mode). Referenced from `security.yaml`.
-- `medzuch_jwt.issuer.<name>` — token-minting service; the `default` one is
-  aliased to `AccessTokenIssuerInterface` for autowiring.
+  implementation wrapping the consumer plus policy (denylist, audience policy,
+  user mode). Referenced from `security.yaml`.
+- `medzuch_jwt.entry_point.<name>` and `medzuch_jwt.access_denied.<name>` —
+  the RFC 6750 challenge and the `insufficient_scope` handler, both named by
+  the firewall rather than wired into it (DEC-1).
+- `medzuch_jwt.denylist.<name>` — registered where a consumer configures one,
+  public so the application can revoke through it.
+- `medzuch_jwt.issuer.<name>` and `medzuch_jwt.login.<name>` — token-minting
+  service and the RFC 6750 login response handler, over a
+  `medzuch_jwt.issuer.<name>.profile` that is the library's builder and nobody
+  else's business. A `default` issuer is aliased to `AccessTokenIssuer` for
+  autowiring. There is no issuer interface: one implementation with nothing to
+  swap it for would be a seam nobody uses.
+- `medzuch_jwt.id_token.<name>` — the OIDC relying-party verifier, aliased for
+  autowiring by argument name.
+- `medzuch_jwt.jwks.key_set` and `medzuch_jwt.jwks_controller` — the published
+  set and the action that serves it, registered only where `jwks.keys` names
+  keys. The command that dumps the same set is registered on the same
+  condition.
+- `medzuch_jwt.token_extractor.<name>`, `medzuch_jwt.scope_voter`,
+  `medzuch_jwt.scope_expression_provider`, `medzuch_jwt.command.*` — the
+  firewall names the extractor; the voter and the expression provider are
+  tagged; the commands are registered where what they operate on exists.
 - `medzuch_jwt.clock` — alias to a PSR-20 clock; defaults to the library's
   `SystemClock`, swappable to `FrozenClock` in tests.
-- `medzuch_jwt.logger` — optional PSR-3 logger (`jwt` Monolog channel).
-- `medzuch_jwt.role_mapper.<name>`, `medzuch_jwt.user_resolver.<name>` — only
-  registered when the corresponding config branch is present.
-- Autoconfiguration tags: `medzuch_jwt.claim_provider` (I3),
-  `medzuch_jwt.denylist` (C9). No tag for token extractors: a custom one is a
-  service the firewall names in `token_extractors`, and a tag would add a
-  second way to do what Symfony already does.
-- Compiler pass validating cross-references (unknown key name, key/alg
-  mismatch, consumer referenced by no firewall, JWKS publish listing a key with
-  no public half).
+- User resolvers and role mapping are **inline** services inside the handler
+  they belong to, not named ids: one consumer's resolver is nobody else's
+  collaborator, and a name would invite it to be reused as one.
+- The `logger` key names a PSR-3 service the *application* registers (a `jwt`
+  Monolog channel, usually). The bundle registers no logger of its own.
+- Autoconfiguration tag: `medzuch_jwt.token_claim_provider` (I3), applied by
+  `registerForAutoconfiguration(TokenClaimProviderInterface::class)`. It is the
+  only one. A denylist (C9) is a service the consumer names in
+  `denylist.service`, not a tagged one, and there is no tag for token
+  extractors either: a custom one is a service the firewall names in
+  `token_extractors`, and a tag would add a second way to do what Symfony
+  already does.
+- Cross-reference validation (unknown key name, key/algorithm mismatch, an
+  allowed algorithm with no key behind it, a JWKS entry with no public half or
+  a symmetric one) happens in `loadExtension()` as the services are registered,
+  not in a compiler pass — the bundle has none. What that cannot see is whether
+  a configured service id exists at all, which is issue #3.
 
 ---
 
@@ -637,7 +673,7 @@ check for guessed secrets, bought for the convenience of not typing a name.
 Deriving it from the config entry's name instead is safe, but writes a
 bundle-internal identifier into the wire format. So `kid` is configuration: it
 stays optional for the single-key case (most HS256 deployments, with no
-rotation story to support), and the compiler pass (D8) **requires** it as soon
+rotation story to support), and the build-time validation (D8) **requires** it as soon
 as a key set holds two keys bound to the same algorithm. Without it the
 library's `StaticJwkSetResolver` resolves a `kid`-less header to *the first* key
 bound to that `alg` and throws if that one does not verify — it does not try
