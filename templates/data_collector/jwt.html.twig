@@ -96,7 +96,10 @@
                         {% for name, value in token.claims %}
                             <tr>
                                 <th>{{ name }}</th>
-                                <td>{{ value is iterable ? value|json_encode : value }}</td>
+                                {# Encoded, all of it: Twig prints `false` and `null` as nothing at all, so a
+                                   flag that is off would read as a claim that is absent. JSON is also how
+                                   the token had them, which is what this table claims to show. #}
+                                <td>{{ value|json_encode }}</td>
                             </tr>
                         {% endfor %}
                     </tbody>
@@ -108,8 +111,10 @@
             The token itself is not collected. Profiler data is written to disk and served back by a
             URL, and a bearer token in there is a credential in a file — one that a screenshot in a
             bug report would carry out of the building. Its <code>jti</code> names it, and the claims
-            above say what it said. They are the token's own claims, unverified: a refused token has
-            no verified ones, and what it claimed is the point.
+            above say what it said — including its <code>jti</code>, where it carries one. They are the
+            token's own claims, unverified: a refused token has no verified ones, and what it claimed
+            is the point. They are stored on disk with the rest of the profile, so whatever a token
+            says about a person is there too.
         </p>
     {% endif %}
 {% endblock %}

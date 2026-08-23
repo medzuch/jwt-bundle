@@ -1227,15 +1227,33 @@ The reason is the point. A refusal tells the caller `invalid_token` and nothing 
 — and then you have to work out which of expired, wrong audience, unknown key or revoked it was.
 The panel is where that question is safe to answer, because nobody but you is reading it.
 
-Nothing is configured: the collector is registered where `framework.profiler` is enabled and
-removed where it is not, and the handler your firewall calls is wrapped only in the first case —
-a decorator recording into nothing has no business on the hot path of every authenticated
-request.
+Nothing is configured: the collector is registered where a `profiler` service is and removed
+where it is not, and the handler your firewall calls is wrapped only in the first case — a
+decorator recording into nothing has no business on the hot path of every authenticated request.
+It follows the profiler rather than the environment, so a staging deployment with the profiler on
+is traced too.
+
+Three things the panel does not show, each for the same reason — it reports what a **consumer**
+decided, not how the request ended:
+
+- **`accepted` is the consumer's verdict, not the firewall's.** In `user.mode: provider` and
+  `claims`, Symfony loads the user after the handler returns, so a token can be accepted here and
+  the request still end in `401` because your store has no such user. "Would authenticate as" is
+  the exact phrase.
+- **Only handlers a firewall calls are traced.** `medzuch_jwt.handler.<name>` injected somewhere
+  of your own, or `jwt:token:inspect`, verifies without a panel row.
+- **ID tokens are not consumers.** `IdTokenVerifier` is a service your callback calls (DEC-8);
+  nothing about it reaches here.
 
 **The token itself is never collected.** Profiler data is written to disk and served back by a
 URL, so a bearer token in there is a credential in a file — and one a screenshot in a bug report
 would carry out of the building. The panel shows the claims instead, as the token has them:
 unverified, which is exactly what a refused token leaves you to read.
+
+The claims *are* stored, though, and a token's claims are usually about a person. The panel's
+privacy is the profiler's — the same directory, the same `/_profiler` URL, the same care about
+who can reach either. That is the trade this panel makes deliberately: a panel that hid what the
+token said could not answer the question it exists for.
 
 
 ## Testing an application that uses this

@@ -88,9 +88,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
      */
     private function rejected(AuthenticationException $failure): AuthenticationException
     {
-        $reason = $failure instanceof RejectedTokenException ? $failure->reason : RejectionReason::IdentityRefused;
-
-        $this->events?->dispatch(new JwtRejectedEvent($this->name, $reason, $failure));
+        $this->events?->dispatch(new JwtRejectedEvent($this->name, RejectionReason::forRefusal($failure), $failure));
 
         return $failure;
     }

@@ -36,6 +36,8 @@ final class JwtDataCollector extends DataCollector
 
     /**
      * @param array<string, mixed> $claims
+     *
+     * @internal to {@see \Medzuch\JwtBundle\Security\TraceableAccessTokenHandler}; an application reads this collector rather than writing to it
      */
     public function accepted(string $consumer, string $identity, array $claims, ?string $algorithm, ?string $keyId, float $milliseconds): void
     {
@@ -54,6 +56,8 @@ final class JwtDataCollector extends DataCollector
 
     /**
      * @param array<string, mixed> $claims
+     *
+     * @internal to {@see \Medzuch\JwtBundle\Security\TraceableAccessTokenHandler}; an application reads this collector rather than writing to it
      */
     public function refused(string $consumer, ?RejectionReason $reason, string $detail, ?string $algorithm, ?string $keyId, float $milliseconds, array $claims): void
     {

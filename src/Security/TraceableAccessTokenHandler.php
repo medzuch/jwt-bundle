@@ -10,6 +10,7 @@ use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
 use Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface;
 use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
+use Throwable;
 
 /**
  * Wraps a consumer's handler so the profiler can say what happened.
@@ -20,7 +21,10 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
  * them on {@see \Medzuch\JwtBundle\Event\JwtVerifiedEvent} would be widening a
  * public contract to feed a development tool.
  *
- * Registered only where a profiler is, so nothing here runs in production.
+ * Registered wherever a profiler service is, which is where the panel can be
+ * read — an environment rather than a rule: a staging deployment with the
+ * profiler on gets the wrapper too, and one without it never builds this class
+ * at all.
  *
  * @internal
  */
@@ -34,23 +38,30 @@ final class TraceableAccessTokenHandler implements AccessTokenHandlerInterface
 
     public function getUserBadgeFrom(string $accessToken): UserBadge
     {
-        $started = hrtime(true);
+        // Described first, then timed: reading the header is work the profiler
+        // asked for, and a duration presented as "spent verifying" should not
+        // include the decorator that measured it.
         [$algorithm, $keyId, $claims] = self::describe($accessToken);
+        $started = hrtime(true);
 
         try {
             $badge = $this->handler->getUserBadgeFrom($accessToken);
-        } catch (AuthenticationException $refusal) {
+        } catch (Throwable $failure) {
+            // Throwable, not AuthenticationException: a resolver or a denylist
+            // store that throws on its own account is precisely the request
+            // somebody opens the panel to understand, and it would otherwise be
+            // the one request with no row at all.
             $this->collector->refused(
                 $this->consumer,
-                $refusal instanceof RejectedTokenException ? $refusal->reason : null,
-                self::detail($refusal),
+                $failure instanceof AuthenticationException ? RejectionReason::forRefusal($failure) : null,
+                self::detail($failure),
                 $algorithm,
                 $keyId,
                 self::since($started),
                 $claims,
             );
 
-            throw $refusal;
+            throw $failure;
         }
 
         $this->collector->accepted($this->consumer, $badge->getUserIdentifier(), $claims, $algorithm, $keyId, self::since($started));
@@ -83,9 +94,9 @@ final class TraceableAccessTokenHandler implements AccessTokenHandlerInterface
      * `BadCredentialsException` carries the generic message the wire gets, and
      * the sentence worth reading is underneath it.
      */
-    private static function detail(AuthenticationException $refusal): string
+    private static function detail(Throwable $failure): string
     {
-        return $refusal->getPrevious()?->getMessage() ?? $refusal->getMessage();
+        return $failure->getPrevious()?->getMessage() ?? $failure->getMessage();
     }
 
     private static function since(float|int $started): float

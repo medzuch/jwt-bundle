@@ -42,7 +42,9 @@ final class ProfilerPanelTest extends WebTestCase
      */
     protected static function createKernel(array $options = []): KernelInterface
     {
-        return new ProfiledKernel(self::configuration());
+        $config = $options['medzuch_jwt'] ?? self::configuration();
+
+        return new ProfiledKernel(is_array($config) ? $config : []);
     }
 
     #[TestDox('an accepted token is collected with what it named and what it cost')]
@@ -111,6 +113,74 @@ final class ProfilerPanelTest extends WebTestCase
         $signature = explode('.', $token)[2];
 
         self::assertStringNotContainsString($signature, serialize(self::collector($client)->tokens()));
+    }
+
+    #[TestDox('nor on a refusal, where the row carries a message somebody else wrote')]
+    public function testTheTokenIsNotCollectedOnARefusalEither(): void
+    {
+        // `detail` is the only free text in a row and it exists only here: it
+        // comes from a library exception, and an exception that ever quoted the
+        // input it was given would put a credential in a file. This is the test
+        // that would notice.
+        foreach (['expired', 'garbage'] as $shape) {
+            $token = 'expired' === $shape ? self::tokens()->expired('alice') : 'not.a.jwt';
+
+            $client = self::createClient();
+            $client->enableProfiler();
+            $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token]);
+
+            $collected = serialize(self::collector($client)->tokens());
+
+            self::assertStringNotContainsString($token, $collected, $shape);
+            self::ensureKernelShutdown();
+        }
+    }
+
+    #[TestDox('something that is not a JWT is collected as what it is, and rendered as what it is not')]
+    public function testGarbageIsCollectedAndRendered(): void
+    {
+        $client = self::createClient();
+        $client->enableProfiler();
+
+        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer not-a-jwt-at-all']);
+
+        self::assertResponseStatusCodeSame(401);
+
+        $tokens = self::collector($client)->tokens();
+
+        self::assertSame('refused', $tokens[0]['verdict']);
+        self::assertSame('malformed', $tokens[0]['reason']);
+        // Nothing decoded, so nothing to name: the panel has a branch for each.
+        self::assertNull($tokens[0]['alg']);
+        self::assertNull($tokens[0]['kid']);
+        self::assertSame([], $tokens[0]['claims']);
+
+        $panel = self::render($client);
+
+        self::assertStringContainsString('(unreadable)', $panel);
+        self::assertStringContainsString('(none named)', $panel);
+        self::assertStringContainsString('this is not a JWT', $panel);
+    }
+
+    #[TestDox('a refusal the application decided keeps the reason the event gives it')]
+    public function testIdentityRefusalKeepsItsReason(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::customModeConfiguration()]);
+        $client->enableProfiler();
+
+        // The factory refuses a token that names no tenant. That refusal is the
+        // application's own exception, not this bundle's, so the reason has to
+        // come from the one rule both the event and the panel read.
+        $client->request('GET', '/api/whoami', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::tokens()->token('alice'),
+        ]);
+
+        self::assertResponseStatusCodeSame(401);
+
+        $tokens = self::collector($client)->tokens();
+
+        self::assertSame('refused', $tokens[0]['verdict']);
+        self::assertSame('identity_refused', $tokens[0]['reason']);
     }
 
     #[TestDox('a request carrying no token collects nothing to show')]
@@ -199,6 +269,42 @@ final class ProfilerPanelTest extends WebTestCase
         $kernel->shutdown();
     }
 
+    #[TestDox('the handler the firewall calls is wrapped, and the one it was made from is not')]
+    public function testOnlyTheChildIsDecorated(): void
+    {
+        self::createClient();
+
+        $container = self::getContainer();
+
+        // The child, which is what SecurityBundle built from our definition.
+        self::assertInstanceOf(TraceableAccessTokenHandler::class, $container->get('security.access_token_handler.api'));
+
+        // And not the parent. Decorating that one is the fix somebody will
+        // reach for when the panel is empty, and it would leave the child
+        // inheriting from a decorator — broken rather than merely silent.
+        self::assertInstanceOf(AccessTokenHandler::class, $container->get('medzuch_jwt.handler.api'));
+    }
+
+    private static function render(KernelBrowser $client): string
+    {
+        $twig = self::getContainer()->get('twig');
+        self::assertInstanceOf(Environment::class, $twig);
+
+        return $twig->load('@MedzuchJwt/data_collector/jwt.html.twig')
+            ->renderBlock('panel', ['collector' => self::collector($client)]);
+    }
+
+    /**
+     * @return array{keys: array<string, array<string, mixed>>, consumers: array<string, array<string, mixed>>}
+     */
+    private static function customModeConfiguration(): array
+    {
+        $configuration = self::configuration();
+        $configuration['consumers']['api']['user'] = ['mode' => 'custom', 'factory' => 'test.user_factory'];
+
+        return $configuration;
+    }
+
     private static function collector(KernelBrowser $client): JwtDataCollector
     {
         $profile = $client->getProfile();
@@ -216,7 +322,7 @@ final class ProfilerPanelTest extends WebTestCase
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array{keys: array<string, array<string, mixed>>, consumers: array<string, array<string, mixed>>}
      */
     private static function configuration(): array
     {

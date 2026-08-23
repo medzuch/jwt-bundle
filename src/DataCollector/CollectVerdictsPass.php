@@ -20,9 +20,15 @@ use Symfony\Component\DependencyInjection\Reference;
  * extensions run in an order no bundle should depend on. Passes run after all
  * of them.
  *
- * It is the bundle's only compiler pass, and it is here rather than in a
- * `DependencyInjection/` directory because it wires one thing and that thing is
- * next to it.
+ * It is the bundle's only compiler pass, and it lives beside the collector
+ * because the panel is the only thing it exists for — `DependencyInjection/`
+ * would be a directory holding one file whose subject is here.
+ *
+ * It must run before child definitions are resolved, which is what the default
+ * `TYPE_BEFORE_OPTIMIZATION` gives it: by `TYPE_OPTIMIZE` every
+ * {@see ChildDefinition} has been flattened into a plain one, the loop below
+ * would match nothing, and the panel would be empty against a container that
+ * built cleanly.
  *
  * @internal
  */
@@ -31,9 +37,12 @@ final class CollectVerdictsPass implements CompilerPassInterface
     public function process(ContainerBuilder $container): void
     {
         if (!$container->has('profiler') || !$container->hasDefinition('medzuch_jwt.data_collector')) {
-            // No profiler: FrameworkBundle removes the collector along with
-            // every other, and a decorator recording into nothing is a wrapper
-            // on the hot path of every authenticated request.
+            // Removed here and nowhere else: FrameworkBundle's own ProfilerPass
+            // returns before it looks at a single `data_collector` when there is
+            // no profiler, and an unused private service is dropped only while
+            // it stays private. Which leaves the decorator, and a wrapper
+            // recording into nothing has no business on the hot path of every
+            // authenticated request.
             $container->removeDefinition('medzuch_jwt.data_collector');
 
             return;

@@ -96,7 +96,11 @@ final class ProfiledKernel extends Kernel
 
         $container->services()
             ->set(WhoAmIController::class)->autowire()->public()
-            ->set('logger', CollectingLogger::class)->public();
+            ->set('logger', CollectingLogger::class)->public()
+            // For the custom user mode, whose factory refuses a token naming no
+            // tenant — an identity refusal is the application's own exception
+            // and the panel has to name it anyway.
+            ->set('test.user_factory', TenantUserFactory::class)->public();
     }
 
     protected function configureRoutes(RoutingConfigurator $routes): void
