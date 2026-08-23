@@ -270,6 +270,15 @@ final class MedzuchJwtBundle extends AbstractBundle
         $subjects = [];
 
         foreach ($keys as $name => $key) {
+            if (null !== $key['hmac']) {
+                // One row, because there is one key: a shared secret is both
+                // halves, and `.signing` and `.verification` are aliases to it.
+                // Reported twice, one bad secret would read as two mistakes.
+                $subjects[sprintf('key "%s"', $name)] = service('medzuch_jwt.key.' . $name);
+
+                continue;
+            }
+
             foreach (['signing' => self::hasPrivateHalf($key), 'verification' => self::hasPublicHalf($key)] as $half => $configured) {
                 if ($configured) {
                     $subjects[sprintf('key "%s" (%s)', $name, $half)] = service(sprintf('medzuch_jwt.key.%s.%s', $name, $half));

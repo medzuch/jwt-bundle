@@ -51,8 +51,11 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
 
         $display = $tester->getDisplay();
-        self::assertStringContainsString('key "default" (signing)', $display);
-        self::assertStringContainsString('key "default" (verification)', $display);
+        // One row for the shared secret, not two: it is both halves, and
+        // `.signing` and `.verification` are aliases to the one service. Two
+        // rows would read as two mistakes when the secret is wrong.
+        self::assertStringContainsString('key "default"', $display);
+        self::assertStringNotContainsString('(signing)', $display);
         self::assertStringContainsString('consumer "api"', $display);
         self::assertStringContainsString('issuer "default"', $display);
     }
@@ -95,6 +98,10 @@ final class CheckConfigurationCommandTest extends KernelTestCase
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
         self::assertStringContainsString('at least 64 bytes', $tester->getDisplay());
+
+        // The key once and the two things built from it: one mistake, three
+        // rows, none of them a second copy of the key itself.
+        self::assertSame(3, substr_count($tester->getDisplay(), 'FAIL'));
     }
 
     #[TestDox('an issuer that cannot be reached fails the check, and --skip-remote leaves it alone')]

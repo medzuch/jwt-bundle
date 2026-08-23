@@ -35,10 +35,20 @@ use Throwable;
  * Remote key sets are reached over the network, so `--skip-remote` exists for
  * the gate that runs without one. Probing costs a fetch — two, when the
  * refresh window is open and the throttle allows a retry — which is a fair
- * price at deploy time and would not be on every request. What the probe
- * answers is "the document was fetched and parsed", not "it has keys in it":
- * an empty set and a populated one both miss a `kid` nobody published, and the
- * resolver offers no way to ask for the set itself.
+ * price at deploy time and would not be on every request. Two things the probe
+ * does not answer. It does not say the set is *useful*: an empty document and a
+ * populated one both miss a `kid` nobody published, and the resolver offers no
+ * way to ask for the set itself. And it does not always reach the endpoint —
+ * the resolver reads its cache first, so a warm entry with the refresh window
+ * closed answers "reachable" without a request leaving the host. That is a
+ * small window and a warm cache means production is being served, but it is
+ * cache-reachable rather than issuer-reachable.
+ *
+ * It is also the one thing here with a side effect: a probe that does reach the
+ * endpoint records the attempt, so the issuer's refresh-on-miss window closes
+ * for as long as `min_refresh` says. The same trade every token bearing an
+ * unknown `kid` already makes, and at deploy time it costs nothing worth
+ * counting.
  *
  * `ok` means built, which is worth reading literally. Building a consumer
  * builds its denylist, but a denylist's constructor stores a cache adapter and
@@ -89,8 +99,9 @@ final class CheckConfigurationCommand extends Command
                 arrived empty, a secret shorter than its algorithm allows, an issuer whose
                 JWK Set cannot be reached from here.
 
-                Exit status is 0 when everything answered and 1 when anything did not, so
-                a deploy step can gate on it.
+                Exit status is 0 when everything answered, 1 when anything did not, and 2
+                when this application configures nothing to check — a gate should not go
+                green because a package file never arrived.
                 HELP)
         ;
     }
