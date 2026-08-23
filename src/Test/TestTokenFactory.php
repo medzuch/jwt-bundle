@@ -6,12 +6,14 @@ namespace Medzuch\JwtBundle\Test;
 
 use DateInterval;
 use DateTimeImmutable;
+use InvalidArgumentException;
 use Medzuch\Jwt\Algorithm\Signing\Hs256;
 use Medzuch\Jwt\Algorithm\Signing\Hs384;
 use Medzuch\Jwt\Algorithm\Signing\Hs512;
 use Medzuch\Jwt\Algorithm\SigningAlgorithm;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\PrivateKey;
+use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\Jwt\Profile\AccessTokenBuilder;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Psr\Clock\ClockInterface;
@@ -94,7 +96,7 @@ final class TestTokenFactory
 
     public function withClientId(string $clientId): self
     {
-        return new self($this->issuer, $this->audience, $this->algorithm, $this->key, $clientId, $this->ttl, $this->clock);
+        return $this->copy(clientId: $clientId);
     }
 
     /**
@@ -104,7 +106,16 @@ final class TestTokenFactory
      */
     public function withTtl(int $seconds): self
     {
-        return new self($this->issuer, $this->audience, $this->algorithm, $this->key, $this->clientId, $seconds, $this->clock);
+        if ($seconds < 1) {
+            // The same refusal `AccessTokenIssuer` makes, and for the same
+            // reason: a token alive for no time is not a shorter token, and
+            // `sprintf('PT%dS', -60)` is a malformed interval rather than a
+            // message anyone can act on. A token that has already expired is
+            // what expired() is for.
+            throw new InvalidArgumentException(sprintf('A lifetime is a whole number of seconds, greater than zero; got %d. For a token that is already past its expiry, use expired().', $seconds));
+        }
+
+        return $this->copy(ttl: $seconds);
     }
 
     /**
@@ -114,13 +125,13 @@ final class TestTokenFactory
      */
     public function withClock(ClockInterface $clock): self
     {
-        return new self($this->issuer, $this->audience, $this->algorithm, $this->key, $this->clientId, $this->ttl, $clock);
+        return $this->copy(clock: $clock);
     }
 
     /** A token from somewhere this consumer does not trust. */
     public function withIssuer(string $issuer): self
     {
-        return new self($issuer, $this->audience, $this->algorithm, $this->key, $this->clientId, $this->ttl, $this->clock);
+        return $this->copy(issuer: $issuer);
     }
 
     /**
@@ -132,12 +143,39 @@ final class TestTokenFactory
      */
     public function withAudience(string|array $audience): self
     {
-        return new self($this->issuer, self::listOf($audience), $this->algorithm, $this->key, $this->clientId, $this->ttl, $this->clock);
+        return $this->copy(audience: self::listOf($audience));
+    }
+
+    /**
+     * The one place the seven constructor arguments are listed positionally.
+     * Six `with…()` methods each re-listing them is six chances to transpose
+     * two, and a suite that only ever mints valid tokens would not notice.
+     *
+     * @param non-empty-list<string>|null $audience
+     */
+    private function copy(
+        ?string $issuer = null,
+        ?array $audience = null,
+        ?string $clientId = null,
+        ?int $ttl = null,
+        ?ClockInterface $clock = null,
+    ): self {
+        return new self(
+            $issuer ?? $this->issuer,
+            $audience ?? $this->audience,
+            $this->algorithm,
+            $this->key,
+            $clientId ?? $this->clientId,
+            $ttl ?? $this->ttl,
+            $clock ?? $this->clock,
+        );
     }
 
     /**
      * @param list<string>         $scopes
-     * @param array<string, mixed> $claims
+     * @param array<string, mixed> $claims claims of the application's own. The registered
+     *                                     ones are set from the arguments above and from
+     *                                     `with…()`; the library refuses them here
      */
     public function token(string $subject = 'test-user', array $scopes = [], array $claims = [], ?string $jti = null): string
     {
@@ -152,7 +190,15 @@ final class TestTokenFactory
      */
     public function expired(string $subject = 'test-user', array $scopes = [], array $claims = [], ?string $jti = null): string
     {
-        return (string) $this->build($subject, $scopes, $claims, $jti)
+        // Dated by a clock two hours back, so `iat` precedes `exp` the way it
+        // does on a token that really did go stale. Minted at "now" the token
+        // would carry an `exp` an hour before its own `iat`, which is refused
+        // for being expired and is also nonsense — and nonsense is what a
+        // later check, or `jwt:token:inspect`, would report instead of the
+        // reason this method's name promises.
+        $issued = new FrozenClock($this->now()->modify('-2 hours'));
+
+        return (string) $this->build($subject, $scopes, $claims, $jti, $issued)
             ->expiresAt($this->now()->modify('-1 hour'))
             ->build();
     }
@@ -173,9 +219,9 @@ final class TestTokenFactory
      * @param list<string>         $scopes
      * @param array<string, mixed> $claims
      */
-    private function build(string $subject, array $scopes, array $claims, ?string $jti): AccessTokenBuilder
+    private function build(string $subject, array $scopes, array $claims, ?string $jti, ?ClockInterface $clock = null): AccessTokenBuilder
     {
-        $profile = AccessTokenProfile::issuer($this->issuer, $this->algorithm, $this->key, $this->clock);
+        $profile = AccessTokenProfile::issuer($this->issuer, $this->algorithm, $this->key, $clock ?? $this->clock);
 
         $builder = $profile->issue()
             ->subject($subject)
@@ -209,6 +255,15 @@ final class TestTokenFactory
      */
     private static function listOf(string|array $audience): array
     {
-        return is_string($audience) ? [$audience] : $audience;
+        $audience = is_string($audience) ? [$audience] : $audience;
+
+        if ([] === $audience) {
+            // The phpdoc says non-empty and nothing enforced it. An empty `aud`
+            // mints a token refused for a reason no test named, which is the
+            // worst kind of green-to-red.
+            throw new InvalidArgumentException('A token is addressed to somebody: give at least one audience.');
+        }
+
+        return $audience;
     }
 }

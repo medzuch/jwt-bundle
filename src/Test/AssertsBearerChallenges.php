@@ -15,9 +15,16 @@ use Symfony\Component\HttpFoundation\Response;
  * refusal is a few facts — a challenge was made, this error was named, this
  * scope would have sufficed — and a test should say which of them it is about.
  *
- * Header parameters are matched case-insensitively in the scheme and by name,
- * because RFC 9110 §11.6.1 says the scheme is case-insensitive and Symfony's
- * own header differs from this bundle's in spacing.
+ * The scheme and the parameter names are matched case-insensitively, because
+ * RFC 9110 §11.6.1 says both are, and the spacing between parameters is ignored
+ * because Symfony's own header and this bundle's differ in it — a test should
+ * not fail over which of them answered.
+ *
+ * One challenge per header is assumed: every `name="value"` after the scheme is
+ * read. A response carrying `Bearer …, Basic …` would have both schemes'
+ * parameters in one map, and splitting that correctly is a parser rather than a
+ * test helper. Symfony emits one challenge; if yours emits two, assert on the
+ * header yourself.
  *
  * Used from a PHPUnit test case; it calls PHPUnit's assertions and is useless
  * anywhere else.
@@ -91,17 +98,23 @@ trait AssertsBearerChallenges
         $header = $response->headers->get('WWW-Authenticate');
 
         Assert::assertIsString($header, 'the response carries no WWW-Authenticate header');
-        Assert::assertStringStartsWith('Bearer', $header, sprintf('not a bearer challenge: %s', $header));
+        Assert::assertMatchesRegularExpression('/^Bearer\\b/i', $header, sprintf('not a bearer challenge: %s', $header));
 
         $parameters = [];
 
-        // Deliberately forgiving about spacing: this bundle writes ", " between
-        // parameters and Symfony writes ",", and a test asserting a fact about
-        // the challenge should not fail over which of them answered.
-        preg_match_all('/([a-z_]+)="((?:[^"\\\\]|\\\\.)*)"/i', substr($header, strlen('Bearer')), $matches, \PREG_SET_ORDER);
+        // Both forms RFC 9110 §11.2 allows for an auth-param value: the quoted
+        // string everything here writes, and the bare token another
+        // implementation or a gateway might. Names take digits and hyphens
+        // because `token` does, even though nothing in RFC 6750 uses them.
+        preg_match_all(
+            '/([a-z0-9_-]+)=(?:"((?:[^"\\\\]|\\\\.)*)"|([^\\s,]+))/i',
+            substr($header, strlen('Bearer')),
+            $matches,
+            \PREG_SET_ORDER,
+        );
 
         foreach ($matches as $match) {
-            $parameters[strtolower($match[1])] = stripslashes($match[2]);
+            $parameters[strtolower($match[1])] = '' !== ($match[2] ?? '') ? stripslashes($match[2]) : ($match[3] ?? $match[2] ?? '');
         }
 
         return $parameters;

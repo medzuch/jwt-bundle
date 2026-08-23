@@ -1210,6 +1210,8 @@ $tokens->withIssuer('https://elsewhere.test')->token();
 For RS256, ES256 or EdDSA, hand it the private key your issuer signs with:
 
 ```php
+$key = RsaPrivateKey::fromPem(file_get_contents('config/jwt/default.private.pem'), 'RS256');
+
 $tokens = TestTokenFactory::signedWith('https://issuer.test', 'https://api.test', new Rs256(), $key);
 ```
 
@@ -1268,9 +1270,16 @@ medzuch_jwt:
     clock: test.frozen_clock
 ```
 
-Every consumer, issuer and denylist reads that clock, so `$clock->tick('+2 hours')` expires a
-token without anything sleeping. Hand the same clock to the factory with `withClock()`, or `iat`
-comes from one clock and `exp` is checked against another.
+Every consumer, issuer and denylist reads that clock, so one tick expires a token without
+anything sleeping:
+
+```php
+$clock = self::getContainer()->get('test.frozen_clock');
+$token = $tokens->withClock($clock)->token('alice');   // the same clock, or `iat` comes from
+                                                       // one and `exp` is checked against another
+
+$clock->tick(new DateInterval('PT2H'));                // the same request now gets a 401
+```
 
 
 ## Configuration reference
