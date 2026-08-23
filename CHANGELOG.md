@@ -19,9 +19,13 @@ a class or method signature would be.
   env variable that arrived empty, a secret shorter than its algorithm allows, an issuer
   unreachable from this host — all of which are factory arguments today, and so surface on
   somebody's first request. Exit status gates a deploy step: `0` when everything answered, `1`
-  when anything did not. `--skip-remote` for a gate with no network, which reports what it
-  skipped rather than passing quietly. The published JWK Set is read for private material, the
-  one thing that document must never carry.
+  when anything did not, `2` when nothing was configured to check — an application whose package
+  file never deployed should not pass a gate by having nothing to fail. `--skip-remote` for a
+  gate with no network, which reports what it skipped rather than passing quietly. The published
+  JWK Set is read for private material, the one thing that document must never carry.
+
+  `ok` means built: a consumer's denylist is constructed but not asked anything, while an
+  issuer's claim providers are constructed, which is the point.
 
 - **Test helpers for the applications using this bundle (D5).** `Medzuch\JwtBundle\Test\TestTokenFactory`
   mints what an issuer will not: a token that expired an hour ago, one not valid for another

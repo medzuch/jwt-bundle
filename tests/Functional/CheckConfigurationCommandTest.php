@@ -154,7 +154,7 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         /** @var ServiceLocator<RemoteJwksResolver> $noRemote */
         $noRemote = new ServiceLocator([]);
 
-        $command = new CheckConfigurationCommand($nothing, $noRemote, $set);
+        $command = new CheckConfigurationCommand($nothing, $noRemote, static fn(): JwkSet => $set);
         $command->setName('jwt:config:check');
 
         $tester = new CommandTester($command);
@@ -164,12 +164,69 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertStringContainsString('private material', $tester->getDisplay());
     }
 
+    #[TestDox('an ID-token verifier is checked like everything else')]
+    public function testIdTokenRegistrationIsChecked(): void
+    {
+        $configuration = self::configuration();
+        $configuration['keys']['partner'] = [
+            'pem_public' => self::keypair('check-idp')['public'],
+            'algorithm' => 'RS256',
+            'kid' => 'partner-2026',
+        ];
+        $configuration['id_tokens'] = ['partner' => [
+            'issuer' => 'https://idp.test',
+            'client_id' => 'this-application',
+            'keys' => ['partner'],
+            'allowed_algorithms' => ['RS256'],
+        ]];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringContainsString('ID token "partner"', $tester->getDisplay());
+
+        // And it fails like everything else when its key is not there, which is
+        // what stops the loop that collects them from being dropped quietly.
+        $configuration['keys']['partner'] = ['pem_public' => '/nowhere/never-deployed.pem', 'algorithm' => 'RS256'];
+
+        $broken = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $broken->getStatusCode());
+        self::assertStringContainsString('ID token "partner"', $broken->getDisplay());
+    }
+
+    #[TestDox('a published key whose file is missing is a row, not an exception instead of one')]
+    public function testMissingPublishedKeyIsReported(): void
+    {
+        $configuration = self::configuration();
+        $configuration['keys']['published'] = ['pem_public' => '/nowhere/never-deployed.pem', 'algorithm' => 'RS256'];
+        $configuration['jwks'] = ['keys' => ['published']];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+
+        $display = $tester->getDisplay();
+
+        // The published set fails, and so does the key behind it — but the rest
+        // of the report is still there. Built when the command was constructed
+        // rather than when it ran, this key would have thrown before the first
+        // row was printed and taken every other check with it.
+        self::assertStringContainsString('published JWK Set', $display);
+        self::assertStringContainsString('key "published" (verification)', $display);
+        self::assertStringContainsString('consumer "api"', $display);
+        self::assertStringContainsString('issuer "default"', $display);
+    }
+
     #[TestDox('an application that configures nothing is told so rather than shown an empty table')]
     public function testNothingToCheck(): void
     {
         $tester = self::check(configuration: ['keys' => []]);
 
-        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        // Not 0: `jwt:config:check && deploy` would go green having checked
+        // nothing, which is what a package file that failed to deploy looks
+        // like from here.
+        self::assertSame(Command::INVALID, $tester->getStatusCode());
         self::assertStringContainsString('configures nothing', $tester->getDisplay());
     }
 

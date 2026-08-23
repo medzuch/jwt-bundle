@@ -1196,8 +1196,20 @@ here*. All of those are factory arguments, and a factory runs when its service i
 which is to say, on somebody's first request. Run this as a deploy step and the deploy fails
 instead.
 
+Exit status: `0` everything answered, `1` something did not, `2` there was nothing configured to
+check — because `jwt:config:check && deploy` going green on an application whose package file
+never arrived is the one way this command could mislead.
+
 Remote sets are fetched, so `--skip-remote` is there for a gate with no network; what it does not
-check, it says it did not check rather than passing quietly.
+check, it says it did not check rather than passing quietly. A reached set is reported as
+reachable and not as *useful*: the probe asks for a key id nobody published, and an empty
+document misses it exactly as a full one does.
+
+**`ok` means built**, which is worth reading literally. Building a consumer builds its denylist —
+but a denylist's constructor stores a cache adapter and asks it nothing, so a Redis that will
+fail on the first request looks fine here. Building an issuer builds every claim provider behind
+it, which is the point: a provider that cannot be constructed fails the deploy, and one that
+opens a connection in its constructor opens it here.
 
 `jwt:key:generate` is the fifth — see [Generating keys](#generating-keys).
 

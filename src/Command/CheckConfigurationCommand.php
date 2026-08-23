@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Command;
 
+use Closure;
 use Medzuch\Jwt\Exception\KeyNotFoundException;
 use Medzuch\Jwt\Key\JwkSet;
 use Medzuch\Jwt\Key\Resolver\RemoteJwksResolver;
@@ -34,25 +35,41 @@ use Throwable;
  * Remote key sets are reached over the network, so `--skip-remote` exists for
  * the gate that runs without one. Probing costs a fetch — two, when the
  * refresh window is open and the throttle allows a retry — which is a fair
- * price at deploy time and would not be on every request.
+ * price at deploy time and would not be on every request. What the probe
+ * answers is "the document was fetched and parsed", not "it has keys in it":
+ * an empty set and a populated one both miss a `kid` nobody published, and the
+ * resolver offers no way to ask for the set itself.
+ *
+ * `ok` means built, which is worth reading literally. Building a consumer
+ * builds its denylist, but a denylist's constructor stores a cache adapter and
+ * asks it nothing — a Redis that will fail on the first request looks ok here.
+ * Building an issuer builds every `TokenClaimProviderInterface` behind it,
+ * which is the "first request without the request" idea working as intended: a
+ * provider that cannot be constructed fails the deploy, and one that opens a
+ * connection in its constructor will open it here.
  */
 #[AsCommand(
     name: 'jwt:config:check',
-    description: 'Build every configured key, consumer and issuer, and report what fails',
+    description: 'Build every configured key, consumer, issuer and verifier, reach every remote key set, and report what fails',
 )]
 final class CheckConfigurationCommand extends Command
 {
     /** Private JWK members, none of which belongs in a document served to the public. */
-    private const PRIVATE_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'k'];
+    private const PRIVATE_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
 
     /**
-     * @param ServiceProviderInterface<object>             $services what the container builds lazily, keyed by what to call it in the report
-     * @param ServiceProviderInterface<RemoteJwksResolver> $remote   key sets that live behind somebody else's HTTP endpoint
+     * @param ServiceProviderInterface<object>             $services  what the container builds lazily, keyed by what to call it in the report
+     * @param ServiceProviderInterface<RemoteJwksResolver> $remote    key sets that live behind somebody else's HTTP endpoint
+     * @param (Closure(): JwkSet)|null                     $published the set the JWKS endpoint serves, or null where nothing is published.
+     *                                                                A closure, not the set: injected as a service it would be built when
+     *                                                                this command is instantiated, so a published key whose file is
+     *                                                                missing — the very case this command exists for — would throw before
+     *                                                                the first row was printed, taking every other check with it
      */
     public function __construct(
         private readonly ServiceProviderInterface $services,
         private readonly ServiceProviderInterface $remote,
-        private readonly ?JwkSet $published = null,
+        private readonly ?Closure $published = null,
     ) {
         parent::__construct();
     }
@@ -101,9 +118,14 @@ final class CheckConfigurationCommand extends Command
         }
 
         if ([] === $rows) {
-            $io->warning('This application configures nothing for this bundle to check.');
+            $io->error('This application configures nothing for this bundle to check.');
 
-            return Command::SUCCESS;
+            // Not SUCCESS: `jwt:config:check && deploy` would go green having
+            // checked nothing, which is what a package file that failed to
+            // deploy looks like. Not FAILURE either — nothing failed. The same
+            // answer `jwt:token:inspect` gives when it is asked to verify
+            // against no consumer.
+            return Command::INVALID;
         }
 
         $io->table(['What', 'Status', 'Detail'], $rows);
@@ -154,7 +176,7 @@ final class CheckConfigurationCommand extends Command
         }
 
         try {
-            $document = $this->published->toArray();
+            $document = ($this->published)()->toArray();
         } catch (Throwable $failure) {
             return [['published JWK Set', 'FAIL', $failure->getMessage()]];
         }
@@ -187,7 +209,10 @@ final class CheckConfigurationCommand extends Command
             // A `kid` nobody publishes, so the answer is about the endpoint
             // rather than about any one key: a miss means the document was
             // fetched, parsed, and is a JWK Set — which is the whole question.
-            $this->remote->get($name)->resolve(['kid' => 'jwt-config-check', 'alg' => 'none']);
+            // The `kid` alone, because the resolver selects on it and never
+            // reaches the `alg` branch — an `alg` here would read as if the
+            // probe depended on one being accepted.
+            $this->remote->get($name)->resolve(['kid' => 'jwt-config-check']);
 
             return [$label, 'ok', 'reachable'];
         } catch (KeyNotFoundException) {

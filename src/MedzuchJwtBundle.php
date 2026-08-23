@@ -56,6 +56,7 @@ use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
 use function Symfony\Component\DependencyInjection\Loader\Configurator\inline_service;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
+use function Symfony\Component\DependencyInjection\Loader\Configurator\service_closure;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\service_locator;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_iterator;
 
@@ -215,7 +216,11 @@ final class MedzuchJwtBundle extends AbstractBundle
                         array_keys($config['remote_jwks']),
                     ),
                 )),
-                $publishes ? service('medzuch_jwt.jwks.key_set') : null,
+                // A closure, so the set is built when the command asks rather
+                // than when the container hands it over: a published key whose
+                // file is missing is a row in the report, not an exception
+                // instead of one.
+                $publishes ? service_closure('medzuch_jwt.jwks.key_set') : null,
             ])
             ->tag('console.command', ['command' => 'jwt:config:check']);
 
