@@ -130,7 +130,7 @@ final class PublicSurfaceTest extends KernelTestCase
 
         self::assertCount(5, $rows, 'the policy should promise five commands');
 
-        $application = new Application(self::$kernel ?? self::bootKernel());
+        $application = new Application(self::bootKernel());
 
         foreach (array_keys($rows) as $name) {
             self::assertTrue($application->has($name), sprintf('the policy promises "%s", which is not registered', $name));
