@@ -77,6 +77,44 @@ final class TokenAgeTest extends KernelTestCase
         self::assertSame([], self::listener()->rejected);
     }
 
+    #[TestDox('the ceiling is inclusive: a token exactly that old is accepted, one second later is not')]
+    public function testTheBoundaryItself(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(maxTokenAge: 300)]);
+
+        // Exactly at the window, which reads the way an operator reads "300
+        // seconds since `iat`": the three-hundredth second is still inside it.
+        self::assertSame('user-42', self::handler()->getUserBadgeFrom(self::tokenIssued('-300 seconds'))->getUserIdentifier());
+
+        // And one second past it is not. The pair is what stops a later `<=`,
+        // or a stray `+ 1`, from passing unnoticed — the two cases either side
+        // of it are minutes away and would not care.
+        self::assertSame(RejectionReason::TooOld, self::refusalReason(self::tokenIssued('-301 seconds')));
+    }
+
+    #[TestDox('the boundary moves with leeway and stays inclusive there')]
+    public function testTheBoundaryWithLeeway(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(maxTokenAge: 300, leeway: 30)]);
+
+        self::assertSame('user-42', self::handler()->getUserBadgeFrom(self::tokenIssued('-330 seconds'))->getUserIdentifier());
+        self::assertSame(RejectionReason::TooOld, self::refusalReason(self::tokenIssued('-331 seconds')));
+    }
+
+    #[TestDox('the refusal says how old the token was and what the window actually is')]
+    public function testTheRefusalNamesTheWindow(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(maxTokenAge: 300, leeway: 30)]);
+
+        $failure = self::refuse(self::tokenIssued('-400 seconds'));
+
+        // The effective window, not `max_token_age` alone: a reader told
+        // "none older than 300" while a 310-second token was accepted would be
+        // reading a number that does not describe what happened.
+        self::assertStringContainsString('issued 400 seconds ago', $failure->getMessage());
+        self::assertStringContainsString('older than 330 seconds (max_token_age 300, plus 30 of leeway)', $failure->getMessage());
+    }
+
     #[TestDox('leeway widens the ceiling, as it widens every other dated check')]
     public function testLeewayWidensIt(): void
     {

@@ -931,8 +931,15 @@ is this application refusing a lifetime the issuer thought reasonable — and an
 the two together would read a policy of theirs as an incident.
 
 `leeway` widens it, exactly as it widens `exp`, `nbf` and `iat`: the age is computed across two
-clocks and inherits the skew between them. Above, a token is refused at five minutes and thirty
-seconds old.
+clocks and inherits the skew between them. Above, a token is accepted at five minutes and thirty
+seconds old and refused once it is older than that. The comparison is in whole seconds, because
+`iat` is one (RFC 7519 NumericDate) and a boundary that depended on the microseconds of whichever
+clock asked would not be a boundary.
+
+**This is a consumer's option, and ID-token registrations do not have it.** An `IdTokenVerifier`
+is called where a provider hands you a token, not on a firewall, and OIDC's own freshness question
+is a different one — `max_age` and `auth_time` are about how long ago the *user* authenticated,
+which is the provider's answer to give rather than a ceiling you impose on their token.
 
 **A token with no `iat` is refused rather than exempted.** RFC 9068 §2.2 requires it and the
 profile enforces it, so this cannot happen through the access-token path — but reading "no

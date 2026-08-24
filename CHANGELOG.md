@@ -344,6 +344,17 @@ a class or method signature would be.
   consulted — so an identity assembled from several claims is fine and the badge cannot
   disagree with the user it loads.
 
+### Changed
+
+- **`AccessTokenHandler`'s constructor takes the freshness policy**, so `$clock` is now its
+  fourth argument and `$maxTokenAge`/`$leewaySeconds` sit ahead of `$denylist` and `$events`.
+  The class is `@internal` and
+  [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) promises
+  `medzuch_jwt.handler.<consumer>` as an `AccessTokenHandlerInterface` rather than as this class,
+  so nothing an application was told to write is affected — but positional construction or a
+  decoration of the concrete class is, and a release note that only says "Added" would not have
+  said so.
+
 ### Fixed
 
 - **A listener can no longer delete what it cannot write ([#31](https://github.com/medzuch/jwt-bundle/issues/31)).**

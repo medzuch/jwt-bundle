@@ -22,11 +22,11 @@
 > is written and enforced by the suite, and issue #3 is closed: a compiler pass
 > refuses a configuration naming a service this application does not have.
 >
-> **Two T2 rows are still open**, and neither was ever assigned to a phase: C7,
-> the handler for application-defined `typ` values, and the max-age half of C10.
-> Both are in 1.0 — the freshness ceiling has landed, C7 follows. §7's "1.0 = the
-> T1+T2 set" is therefore still the definition, with those two named as what is
-> left of it rather than left implicit.
+> **One T2 row is still open**: C7, the handler for application-defined `typ`
+> values. It and C10's max-age half were never assigned to a phase and neither
+> was built; the freshness ceiling has since landed, and both are in 1.0. §7's
+> "1.0 = the T1+T2 set" is therefore still the definition, with C7 named as what
+> is left of it rather than left implicit.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -683,15 +683,22 @@ audiences on `AccessTokenProfile::consumer()`, `?string $passphrase` on
 `RsaPrivateKey::fromPem()` and `EcPrivateKey::fromPem()`, and
 `"php": "~8.3.0 || ~8.4.0"`. 1.2.0 added the `expectAudience()`/`expectIssuer()`
 shape backstop that §4 now normalises for. The library is on Packagist, so it
-is an ordinary dependency rather than a VCS repository. One item is
-deliberately *asked upstream rather than built here*: `max_token_age` (C10)
-compares `iat` against the clock, which is temporal claim validation of the
-same family as `exp`/`nbf`. Implementing it in the handler would duplicate the
-clock and leeway wiring and would report failure with a different exception
-type than every other temporal check — which O4's `WWW-Authenticate` mapping
-would then have to special-case. Proposed upstream as
-`ValidatorBuilder::withMaxAge()` plus an appended profile parameter; it gates
-nothing before Phase 4.
+is an ordinary dependency rather than a VCS repository.
+
+*Reversed for `max_token_age` (C10), which this decision sent upstream and
+Phase 4 built here.* The reasoning was that comparing `iat` against a clock is
+temporal claim validation of the same family as `exp`/`nbf`, so it belonged
+with them. That reads the check as a claim rule, and it is not one: `exp` is
+the issuer's statement about a lifetime, while a maximum age is **this
+application's policy about what it will accept** — two applications verifying
+the same token are entitled to different answers, which is exactly what a
+profile must not encode. The two costs the decision named did not appear
+either. The clock and leeway are constructor arguments the handler was already
+being given for other reasons, and O4 never reads a `RejectionReason` at all:
+Symfony maps every token failure to `invalid_token`, so nothing about
+`WWW-Authenticate` had to be special-cased. The refusal carries its own
+`too_old` instead, which is the distinction an operator needs and the one an
+upstream `withMaxAge()` could not have made.
 
 **DEC-5 — `kid`: explicit, never derived from key material, and mandatory once two
 keys share an algorithm.** Deriving a `kid` by hashing an HMAC secret would

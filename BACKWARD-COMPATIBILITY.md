@@ -141,9 +141,9 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
   dashboard, and a new kind of refusal has to be nameable, so `match` on it without a `default`
   and a new case is a fatal error — a good reason to write the `default`, and the reason this is
   said here rather than discovered. What a dashboard actually stores is the backed value, and
-  those do not move: `expired`, `not_yet_valid`, `signature_invalid`, `unknown_key`,
+  those do not move: `expired`, `not_yet_valid`, `too_old`, `signature_invalid`, `unknown_key`,
   `algorithm_refused`, `wrong_issuer`, `wrong_audience`, `revoked`, `malformed`,
-  `claims_refused`, `too_old`, `keys_unavailable`, `identity_refused`, `other`.
+  `claims_refused`, `keys_unavailable`, `identity_refused`, `other`.
 - **`JwtDataCollector`'s mutators are not yours.** The tracing decorator writes to it; an
   application reads it. The read side is what the table covers, and a panel of your own reads
   rows keyed `consumer`, `verdict` (`accepted` or `refused`), `reason`, `detail`, `identity`,

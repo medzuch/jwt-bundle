@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Security;
 
-use DateInterval;
 use DateTimeImmutable;
 use Medzuch\Jwt\Exception\JwtException;
 use Medzuch\Jwt\Profile\ProfileConsumer;
@@ -150,22 +149,34 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
             return;
         }
 
-        // RFC 9068 §2.2 makes `iat` required and the profile enforces it, so
-        // this is unreachable through the access-token path — and it is here
-        // for the reason the `jti` guard is: "no issuing time" and "young
-        // enough" are different answers, and reading the first as the second
-        // would exempt exactly the tokens whose age cannot be checked.
+        // RFC 9068 §2.2 makes `iat` required and the profile enforces it — as
+        // do the ID-token and SET profiles — so no consumer this bundle can
+        // build today reaches here. It is written for the reason the `jti`
+        // guard is: "no issuing time" and "young enough" are different answers,
+        // and reading the first as the second would exempt exactly the tokens
+        // whose age cannot be checked. C7's custom-`typ` consumer is what makes
+        // it reachable, and where it becomes testable through configuration.
         if (null === $issuedAt) {
             throw new RejectedTokenException(RejectionReason::ClaimsRefused, 'Access token carries no "iat", so its age cannot be checked.');
         }
 
-        $oldestAccepted = $this->clock->now()->sub(new DateInterval(sprintf('PT%dS', $this->maxTokenAge + $this->leewaySeconds)));
+        // Whole seconds on both sides. `iat` is a NumericDate, so the claim set
+        // hands back an instant with no microseconds, while a PSR-20 clock
+        // reading wall time has them — and subtracting an interval from the
+        // second carries them into the comparison. A token exactly at the
+        // window would then be accepted under a frozen clock and refused under
+        // a real one, which is a boundary that moves depending on who is
+        // asking.
+        $age = $this->clock->now()->getTimestamp() - $issuedAt->getTimestamp();
+        $window = $this->maxTokenAge + $this->leewaySeconds;
 
-        if ($issuedAt < $oldestAccepted) {
+        if ($age > $window) {
             throw new RejectedTokenException(RejectionReason::TooOld, sprintf(
-                'Access token was issued at %s and this consumer accepts none older than %d seconds.',
-                $issuedAt->format(DateTimeImmutable::ATOM),
-                $this->maxTokenAge,
+                'Access token was issued %d seconds ago and this consumer accepts none older than %s.',
+                $age,
+                0 === $this->leewaySeconds
+                    ? sprintf('%d seconds', $this->maxTokenAge)
+                    : sprintf('%d seconds (max_token_age %d, plus %d of leeway)', $window, $this->maxTokenAge, $this->leewaySeconds),
             ));
         }
     }
