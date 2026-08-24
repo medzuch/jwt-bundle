@@ -10,10 +10,13 @@ use Medzuch\Jwt\Algorithm\Signing\Hs256;
 use Medzuch\Jwt\Jwt\JwtBuilder;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Primitives\FrozenClock;
+use Medzuch\JwtBundle\MedzuchJwtBundle;
+use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\RejectedTokenException;
 use Medzuch\JwtBundle\Security\RejectionReason;
 use Medzuch\JwtBundle\Security\Verification\CustomTokenVerifier;
+use Medzuch\JwtBundle\Security\Verification\CustomValidatorFactory;
 use Medzuch\JwtBundle\Security\Verification\ProfileTokenVerifier;
 use Medzuch\JwtBundle\Security\Verification\TokenVerifierInterface;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
@@ -36,6 +39,8 @@ use Symfony\Component\Security\Core\Exception\AuthenticationException;
 #[CoversClass(CustomTokenVerifier::class)]
 #[CoversClass(ProfileTokenVerifier::class)]
 #[CoversClass(AccessTokenHandler::class)]
+#[CoversClass(CustomValidatorFactory::class)]
+#[CoversClass(MedzuchJwtBundle::class)]
 final class CustomTokenTypeTest extends KernelTestCase
 {
     use RestoresExceptionHandler;
@@ -165,6 +170,101 @@ final class CustomTokenTypeTest extends KernelTestCase
         self::bootKernel(['medzuch_jwt' => self::configuration(tokenType: 'application/vnd.acme.session+jwt')]);
     }
 
+    #[TestDox('a compact string that is not a JWT at all is refused as malformed')]
+    public function testGarbageIsMalformed(): void
+    {
+        self::bootKernel();
+
+        // Refused before the validator sees it, by `JwtParser::parse()` — the
+        // one refusal on this path the library raises outside the validator,
+        // and the one the README says arrives without a log line.
+        self::assertSame(RejectionReason::Malformed, self::refusalReason('not-a-jwt'));
+    }
+
+    #[TestDox('a token whose header names no type at all is refused')]
+    public function testAMissingTypeIsRefused(): void
+    {
+        self::bootKernel();
+
+        // Naming a type is naming that type, which includes naming it against
+        // a header that names none.
+        self::assertSame(RejectionReason::Malformed, self::refusalReason(self::token(type: null)));
+    }
+
+    #[TestDox('leeway reaches a custom consumer, as it does a profile one')]
+    public function testLeewayReachesTheValidator(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(leeway: 60)]);
+
+        // Thirty seconds past its expiry, inside a minute of leeway.
+        self::assertSame(
+            'user-42',
+            self::handler()->getUserBadgeFrom(self::token(expiresAt: '-30 seconds'))->getUserIdentifier(),
+        );
+
+        self::assertSame(RejectionReason::Expired, self::refusalReason(self::token(expiresAt: '-90 seconds')));
+    }
+
+    #[TestDox('a denylist on a custom consumer revokes by jti, and requires it')]
+    public function testADenylistNeedsItsJti(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(
+            requiredClaims: ['exp', 'jti'],
+            denylist: 'test.denylist',
+        )]);
+
+        $denylist = self::getContainer()->get('test.denylist');
+        self::assertInstanceOf(TokenDenylistInterface::class, $denylist);
+        $denylist->revoke('withdrawn', new DateTimeImmutable('+1 hour'));
+
+        self::assertSame('user-42', self::handler()->getUserBadgeFrom(self::token(jwtId: 'still-good'))->getUserIdentifier());
+        self::assertSame(RejectionReason::Revoked, self::refusalReason(self::token(jwtId: 'withdrawn')));
+    }
+
+    #[TestDox('a denylist without jti among the required claims fails at container build')]
+    public function testADenylistWithoutJtiIsRefused(): void
+    {
+        // Otherwise it compiles and refuses every well-formed token, with a
+        // message about the token rather than about a consumer that can never
+        // revoke one.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('does not require "jti"');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(denylist: 'test.denylist')]);
+    }
+
+    #[TestDox('a token type the library has a profile for fails at container build')]
+    public function testAProfileTypeIsRefused(): void
+    {
+        // `at+jwt` would build a bare validator over the very tokens the
+        // access-token profile verifies — the same tokens, fewer rules, and a
+        // line of YAML that reads like the opposite.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('Leave "token_type" out for that posture');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(tokenType: 'at+jwt')]);
+    }
+
+    #[TestDox('a padded token type fails at container build')]
+    public function testAPaddedTypeIsRefused(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('padded with whitespace');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(tokenType: ' vnd.acme.session+jwt')]);
+    }
+
+    #[TestDox('a required claim that is not a name fails at container build')]
+    public function testARequiredClaimHasToBeAName(): void
+    {
+        // Otherwise it reaches `ClaimsSet::has(string)` under strict types,
+        // which is a 500 on the first request rather than a refusal.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('is not a claim name');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(requiredClaims: ['exp', 1])]);
+    }
+
     #[TestDox('a list that drops exp without bounding the age fails at container build')]
     public function testSomethingHasToBoundTheToken(): void
     {
@@ -213,7 +313,7 @@ final class CustomTokenTypeTest extends KernelTestCase
     }
 
     /**
-     * @param list<string>|null $requiredClaims
+     * @param list<mixed>|null $requiredClaims a list YAML could hold, which is why one entry below is not a string
      *
      * @return array<string, mixed>
      */
@@ -221,6 +321,8 @@ final class CustomTokenTypeTest extends KernelTestCase
         ?string $tokenType = self::TYPE,
         ?array $requiredClaims = null,
         ?int $maxTokenAge = null,
+        int $leeway = 0,
+        ?string $denylist = null,
     ): array {
         $consumer = [
             'issuer' => self::ISSUER,
@@ -241,6 +343,14 @@ final class CustomTokenTypeTest extends KernelTestCase
             $consumer['max_token_age'] = $maxTokenAge;
         }
 
+        if (0 !== $leeway) {
+            $consumer['leeway'] = $leeway;
+        }
+
+        if (null !== $denylist) {
+            $consumer['denylist'] = ['service' => $denylist];
+        }
+
         return [
             'clock' => 'test.frozen_clock',
             'keys' => ['default' => ['hmac' => self::SECRET]],
@@ -253,21 +363,30 @@ final class CustomTokenTypeTest extends KernelTestCase
      * @param array<string, mixed> $claims
      */
     private static function token(
-        string $type = self::TYPE,
+        ?string $type = self::TYPE,
         string $secret = self::SECRET,
         string $issuer = self::ISSUER,
         string|array $audience = self::AUDIENCE,
         bool $expires = true,
         ?string $issuedAt = '-1 minute',
+        ?string $expiresAt = null,
+        ?string $jwtId = null,
         array $claims = [],
     ): string {
         $now = new DateTimeImmutable(self::NOW);
 
         $builder = JwtBuilder::create(FrozenClock::at(self::NOW))
-            ->type($type)
             ->issuer($issuer)
             ->subject('user-42')
             ->audience($audience);
+
+        if (null !== $type) {
+            $builder = $builder->type($type);
+        }
+
+        if (null !== $jwtId) {
+            $builder = $builder->jwtId($jwtId);
+        }
 
         if (null !== $issuedAt) {
             $moment = $now->modify($issuedAt);
@@ -277,7 +396,13 @@ final class CustomTokenTypeTest extends KernelTestCase
             $builder = $builder->issuedAt($moment);
         }
 
-        if ($expires) {
+        if (null !== $expiresAt) {
+            $moment = $now->modify($expiresAt);
+
+            self::assertNotFalse($moment);
+
+            $builder = $builder->expiresAt($moment);
+        } elseif ($expires) {
             $builder = $builder->expiresIn(new DateInterval('PT1H'));
         }
 

@@ -53,7 +53,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
      *                                         the age window for the same reason it widens `exp`
      */
     public function __construct(
-        private readonly TokenVerifierInterface $consumer,
+        private readonly TokenVerifierInterface $verifier,
         private readonly string $name,
         private readonly UserResolverInterface $users,
         private readonly ClockInterface $clock,
@@ -67,7 +67,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
     public function getUserBadgeFrom(string $accessToken): UserBadge
     {
         try {
-            $claims = $this->consumer->parse($accessToken);
+            $claims = $this->verifier->parse($accessToken);
 
             $this->assertAddressedToNobodyElse($claims->audience());
             $this->assertFreshEnough($claims->issuedAt());
@@ -116,11 +116,12 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
             return;
         }
 
-        // RFC 9068 §2.2 makes `jti` required and the profile enforces it, so
-        // this is unreachable through the access-token path. It is here because
-        // "no id" and "not revoked" are different answers, and a denylist that
-        // silently accepted the first would be a revocation list that lets
-        // through exactly the tokens nobody can name.
+        // "No id" and "not revoked" are different answers, and a denylist that
+        // silently accepted the first would be a revocation list letting
+        // through exactly the tokens nobody can name. RFC 9068 §2.2 makes `jti`
+        // required, so a consumer on the access-token profile cannot get here;
+        // one naming its own `token_type` could, which is why that combination
+        // is refused when the container is built unless `jti` is required.
         if (null === $jti || '' === $jti) {
             throw new RejectedTokenException(RejectionReason::ClaimsRefused, 'Access token carries no "jti", so it cannot be checked against the denylist.');
         }
@@ -149,13 +150,12 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
             return;
         }
 
-        // RFC 9068 §2.2 makes `iat` required and the profile enforces it — as
-        // do the ID-token and SET profiles — so no consumer this bundle can
-        // build today reaches here. It is written for the reason the `jti`
-        // guard is: "no issuing time" and "young enough" are different answers,
-        // and reading the first as the second would exempt exactly the tokens
-        // whose age cannot be checked. C7's custom-`typ` consumer is what makes
-        // it reachable, and where it becomes testable through configuration.
+        // "No issuing time" and "young enough" are different answers, and
+        // reading the first as the second would exempt exactly the tokens whose
+        // age cannot be checked. All three of the library's profiles require
+        // `iat`, so this is unreachable for a consumer using one; a consumer
+        // naming its own `token_type` need not require it, which is where the
+        // branch is tested.
         if (null === $issuedAt) {
             throw new RejectedTokenException(RejectionReason::ClaimsRefused, 'Access token carries no "iat", so its age cannot be checked.');
         }

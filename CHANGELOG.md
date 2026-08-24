@@ -33,9 +33,15 @@ a class or method signature would be.
   Left out, `required_claims` is `["exp"]`, because the library checks `exp`, `nbf` and `iat`
   where a token carries them and nowhere else — a posture requiring none of them would take a
   bearer credential that never stops being valid. A list of your own replaces that, so one
-  omitting `exp` is refused at container build unless `max_token_age` bounds the token instead.
-  A type carrying the `application/` prefix is refused there too: RFC 7515 §4.1.9 puts the bare
-  form in the header, so it would match nothing a peer sends.
+  omitting `exp` is refused at container build unless `max_token_age` bounds the token instead,
+  and one omitting `jti` is refused beside a denylist, which is what a denylist looks a token up
+  by. The profiles all require `jti`, so that combination could not arise before this row.
+
+  Three spellings of `token_type` are refused for naming something other than what they look
+  like: `at+jwt` or `JWT`, which the library has profiles for — naming one here checks *fewer*
+  rules than leaving the key out — the `application/` prefix RFC 7515 §4.1.9 keeps off the wire,
+  and a value padded with whitespace. A `required_claims` entry that is not a string is refused
+  too, rather than reaching `ClaimsSet::has()` as a `TypeError` on the first request.
 
   One thing is thinner than on the RFC 9068 path: a token too malformed to parse at all is not
   logged, because the library does that from inside its profile consumers. The refusal still

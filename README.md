@@ -947,14 +947,35 @@ max_token_age: 300      # now something does
 Dropping `exp` is a real thing to want — a token bounded by its age instead of by a claim — and a
 token bounded by nothing at all is far likelier to be an oversight than a decision.
 
+**A denylist needs `jti`.** RFC 9068 requires it, so a denylist on the default posture always has
+something to look up; a type of your own need not carry one, and a consumer that cannot name a
+token cannot revoke it. Configuring both without `jti` in the list is refused at container build,
+rather than refusing every well-formed token at runtime with a message about the token.
+
+**Two spellings are refused for naming something other than what they look like.** `at+jwt` is
+what the default posture verifies — naming it here would check *fewer* rules than leaving the key
+out, while reading like an explicit opt-in to RFC 9068 — and `JWT` is RFC 7519's generic type.
+A `token_type` must also be a literal rather than an `%env()%` reference, the same as
+`consumers.*.realm`: Symfony reads a placeholder as the empty string while validating, and a
+service wiring is not a deployment variable.
+
 **Give the type as it goes on the wire.** RFC 7515 §4.1.9 puts the bare form in the header, so
 `application/vnd.acme.session+jwt` is refused at container build: it would match nothing any peer
 ever sends. `vnd.acme.session+jwt` is the same media type spelled the way it arrives.
 
+**`required_claims` is not where identity is decided.** `user.identity_claim` — `sub` by default
+— is read after verification, so a list omitting it builds a consumer that verifies a token and
+then refuses it for naming nobody. Add whatever your users are identified by.
+
+**`TestTokenFactory` mints `at+jwt` and nothing else**, so the helper shipped in `src/Test/`
+cannot produce a token this consumer accepts. Test a custom type by minting with the library's
+`JwtBuilder` directly, which is what this bundle's own suite does.
+
 **One thing is thinner than on the RFC 9068 path.** A token too malformed to parse at all is not
 written to your log — the library logs that from inside its profile consumers, and a custom
 posture is assembled from the layer below them. The refusal still reaches `JwtRejectedEvent` and
-the profiler as `malformed`; it is the log line that is missing.
+the profiler as `malformed`; it is the log line that is missing, and a listener on that event is
+where to put one back.
 
 ## How old a token may be
 
@@ -1494,9 +1515,12 @@ looking like rejected tokens at runtime:
   configuration or by the profile
 - a YAML map where a sequence is expected, an unknown algorithm name, leeway above the
   library's ceiling
-- a consumer that lists `required_claims` without a `token_type`, gives a `token_type` carrying
-  the `application/` prefix RFC 7515 §4.1.9 leaves off the wire, or requires no claims and sets
-  no `max_token_age` — a token nothing can make stale
+- a `token_type` that names a type the library has a profile for, carries the `application/`
+  prefix RFC 7515 §4.1.9 leaves off the wire, or is padded with whitespace — three spellings
+  that each verify something other than what they look like
+- a consumer that lists `required_claims` without a `token_type`, requires claims that do not
+  include `exp` and sets no `max_token_age` — a token nothing can make stale — or has a denylist
+  and does not require `jti`, which is what a denylist looks a token up by
 - a service this application does not have: `clock`, `logger`, a remote set's `http_client`,
   `request_factory`, `cache` or `cache_pool`, a consumer's `denylist.service`,
   `denylist.cache`, `denylist.cache_pool` or `user.factory`. The message names the
