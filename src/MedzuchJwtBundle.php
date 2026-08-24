@@ -21,6 +21,7 @@ use Medzuch\JwtBundle\Command\GenerateKeyCommand;
 use Medzuch\JwtBundle\Command\InspectTokenCommand;
 use Medzuch\JwtBundle\DataCollector\CollectVerdictsPass;
 use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
+use Medzuch\JwtBundle\DependencyInjection\CheckConfiguredServicesPass;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Issuer\ReservedClaims;
 use Medzuch\JwtBundle\Issuer\TokenClaimProviderInterface;
@@ -100,6 +101,89 @@ final class MedzuchJwtBundle extends AbstractBundle
         // After every extension, because whether there is a profiler to collect
         // for is another bundle's answer.
         $container->addCompilerPass(new CollectVerdictsPass());
+
+        // Same reason, other subject: whether `cache.app` or a factory of yours
+        // exists is answered by whichever extension registers it, and this one
+        // has no say in the order they run.
+        $container->addCompilerPass(new CheckConfiguredServicesPass());
+    }
+
+    /**
+     * Every service id the configuration names, keyed by the path that named
+     * it, for {@see CheckConfiguredServicesPass} to check once every extension
+     * has run.
+     *
+     * The defaults are in here too, and they are the entries that most need a
+     * hint: `psr18.http_client` and `cache.app` are ids this bundle chose, so
+     * an application missing one has written nothing wrong — it has enabled
+     * neither the client nor the cache the default assumes.
+     *
+     * @param array{
+     *     clock: string|null,
+     *     logger: string|null,
+     *     remote_jwks: array<string, array{http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, ...}>,
+     *     consumers: array<string, array{denylist: array{service: string|null, cache_pool: string|null, cache: string|null, ...}, user: array{factory: string|null, ...}, ...}>,
+     *     ...
+     * } $config
+     *
+     * @return array<string, array{id: string, hint: string|null}>
+     */
+    private static function configuredServices(array $config): array
+    {
+        $named = [];
+
+        foreach (['clock', 'logger'] as $option) {
+            if (null !== $config[$option]) {
+                $named['medzuch_jwt.' . $option] = ['id' => $config[$option], 'hint' => null];
+            }
+        }
+
+        foreach ($config['remote_jwks'] as $name => $set) {
+            $path = sprintf('medzuch_jwt.remote_jwks.%s', $name);
+
+            $named[$path . '.http_client'] = [
+                'id' => $set['http_client'],
+                'hint' => 'psr18.http_client' === $set['http_client']
+                    ? 'the default. Install `psr/http-client` and enable `framework.http_client`, or name a PSR-18 client of your own'
+                    : null,
+            ];
+
+            if (null !== $set['request_factory']) {
+                $named[$path . '.request_factory'] = ['id' => $set['request_factory'], 'hint' => null];
+            }
+
+            if (null !== $set['cache']) {
+                $named[$path . '.cache'] = ['id' => $set['cache'], 'hint' => null];
+
+                continue;
+            }
+
+            $named[$path . '.cache_pool'] = [
+                'id' => $set['cache_pool'] ?? 'cache.app',
+                'hint' => null === $set['cache_pool']
+                    ? 'the default. Enable `framework.cache`, or name a pool or a PSR-16 `cache` of your own'
+                    : null,
+            ];
+        }
+
+        foreach ($config['consumers'] as $name => $consumer) {
+            $path = sprintf('medzuch_jwt.consumers.%s', $name);
+
+            foreach (['service', 'cache_pool', 'cache'] as $option) {
+                if (null !== $consumer['denylist'][$option]) {
+                    $named[$path . '.denylist.' . $option] = ['id' => $consumer['denylist'][$option], 'hint' => null];
+                }
+            }
+
+            if (null !== $consumer['user']['factory']) {
+                $named[$path . '.user.factory'] = [
+                    'id' => $consumer['user']['factory'],
+                    'hint' => 'a service implementing ' . JwtUserFactoryInterface::class,
+                ];
+            }
+        }
+
+        return $named;
     }
 
     /**
@@ -128,6 +212,8 @@ final class MedzuchJwtBundle extends AbstractBundle
             // container holds exactly one medzuch_jwt.clock either way.
             $builder->setAlias('medzuch_jwt.clock', $config['clock']);
         }
+
+        $builder->setParameter(CheckConfiguredServicesPass::CONFIGURED, self::configuredServices($config));
 
         $keys = $this->keyEntries($config['keys']);
 

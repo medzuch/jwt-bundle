@@ -1392,6 +1392,12 @@ looking like rejected tokens at runtime:
   configuration or by the profile
 - a YAML map where a sequence is expected, an unknown algorithm name, leeway above the
   library's ceiling
+- a service this application does not have: `clock`, `logger`, a remote set's `http_client`,
+  `request_factory`, `cache` or `cache_pool`, a consumer's `denylist.service`,
+  `denylist.cache`, `denylist.cache_pool` or `user.factory`. The message names the
+  configuration key rather than the service id behind it, and says when the id is a default
+  you never wrote — `psr18.http_client` without `framework.http_client` enabled, or `cache.app`
+  without a cache
 
 A JWK is read when the key is first built rather than when the container is compiled — the
 document stays a path or an environment reference so it never lands in the compiled container —

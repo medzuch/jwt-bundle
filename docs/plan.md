@@ -19,7 +19,9 @@
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
 > in, and so are O4, the issuance hooks I3/I4, O3, the console commands D1/D2/D4/O5, the
 > test helpers D5, the profiler panel O2, and the documentation D7. The BC policy
-> is written and enforced by the suite; what is left before 1.0 is issue #3.
+> is written and enforced by the suite, and issue #3 is closed: a compiler pass
+> refuses a configuration naming a service this application does not have. The
+> T1+T2 set is complete.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -90,6 +92,7 @@ jwt-bundle/
 │   ├── Event/                     # dispatched events
 │   ├── Command/                   # console commands (jwt:key:generate)
 │   ├── DataCollector/             # profiler panel and the pass that wires it
+│   ├── DependencyInjection/       # the pass that checks configured service ids
 │   └── Test/                      # test helpers shipped to consumers
 ├── config/
 │   ├── services.yaml              # the clock, and nothing else
@@ -465,10 +468,18 @@ consumer and command:
 - Cross-reference validation (unknown key name, key/algorithm mismatch, an
   allowed algorithm with no key behind it, a JWKS entry with no public half or
   a symmetric one) happens in `loadExtension()` as the services are registered,
-  not in a compiler pass. The bundle has exactly one of those, and it wires the
-  profiler panel: whether a profiler exists to collect for is another
-  extension's answer, and passes run after all of them. What that cannot see is whether
-  a configured service id exists at all, which is issue #3.
+  rather than in a compiler pass: every one of those questions is answered by
+  this bundle's own configuration, and asking it where it is read gives the
+  clearest message.
+- The bundle has two compiler passes, and both exist because their question
+  belongs to another extension. `CollectVerdictsPass` asks whether a profiler
+  wants collecting for; `CheckConfiguredServicesPass` asks whether the services
+  the configuration names — `clock`, `logger`, an HTTP client, a cache, a
+  denylist, a user factory — exist at all, which is not knowable until every
+  extension has run. Symfony refuses a *referenced* service that is missing on
+  its own, so what the pass adds is the ids nothing happens to reference (a
+  `logger` with no consumer configured) and a message naming the configuration
+  key rather than the service id behind it (issue #3).
 
 ---
 

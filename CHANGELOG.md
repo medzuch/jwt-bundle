@@ -13,6 +13,28 @@ a class or method signature would be.
 
 ### Added
 
+- **A configuration naming a service nobody has is refused at container build
+  ([#3](https://github.com/medzuch/jwt-bundle/issues/3), D8).** `clock`, `logger`, a remote
+  set's `http_client`, `request_factory`, `cache` or `cache_pool`, and a consumer's
+  `denylist.service`, `denylist.cache`, `denylist.cache_pool` or `user.factory` are all service
+  ids the application supplies, and all of them are now checked once every extension has run —
+  which is the earliest the answer exists, since the service may belong to a bundle that has
+  not been read yet.
+
+  Symfony already refuses a *referenced* service that is missing, so most of what this adds is
+  the message. `The service "medzuch_jwt.consumer.api" has a dependency on a non-existent
+  service "app.jwt_logger"` names a service the application never wrote and never mentions
+  `medzuch_jwt.logger`, which it did. The refusal now names the configuration key, lists every
+  mistake at once rather than the first, and says when the id is a default nobody wrote:
+  `psr18.http_client` without `framework.http_client` enabled, or `cache.app` without a cache.
+
+  The part Symfony could not catch is an id nothing happens to reference. A `logger` with no
+  consumer, issuer, ID token or remote set configured is referenced by nothing, so a typo in it
+  compiled clean and the application ran without the logging it asked for; `clock` is the same
+  wherever `symfony/console` is absent, which is a supported way to deploy this bundle. That is
+  the shape the issue described, and the reason the check is a pass rather than one more
+  refusal in `loadExtension()`.
+
 - **A backward-compatibility policy.** [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md)
   says what 1.0 freezes and what it does not, across five surfaces: the `medzuch_jwt`
   configuration tree; eleven service ids, each with the type it answers; five console commands
