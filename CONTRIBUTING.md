@@ -71,15 +71,19 @@ Scopes in use: `di`, `security`, `issuer`, `key`, `jwks`, `command`, `config`,
 ## Mutation-testing a compiler pass
 
 Symfony's compiled container tracks configuration and class resources, not the
-file a compiler pass lives in. Change `CollectVerdictsPass` to prove a test
-catches it and the suite may keep passing against a container compiled before
-the change:
+file a compiler pass lives in. Change `CollectVerdictsPass` or
+`CheckConfiguredServicesPass` to prove a test catches it and the suite may keep
+passing against a container compiled before the change.
+
+Wipe the containers first, or the mutation you are testing never runs. The test
+kernels write to two directories:
 
 ```bash
-docker compose exec php rm -rf /tmp/medzuch-jwt-bundle-tests
+docker compose exec php rm -rf /tmp/medzuch-jwt-bundle-tests /tmp/medzuch-jwt-bundle-bare
 ```
 
-Wipe it first, or the mutation you are testing never runs.
+`medzuch-jwt-bundle-bare` is `BareKernel`, which the configured-service checks
+use because it is the one kernel that leaves the bundle's services private.
 
 ## GitHub Actions
 

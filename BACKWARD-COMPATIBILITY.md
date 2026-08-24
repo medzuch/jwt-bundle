@@ -248,8 +248,11 @@ the only way a document like this stays true:
 is `DocumentationExamplesTest`, which compiles every example in the README and the cookbook, so a
 renamed key breaks the documentation that teaches it — real coverage, and narrower than the
 promise: an option no example uses could be renamed and the suite would stay green. A committed
-`config:dump-reference` snapshot is the missing half, and it belongs with issue #3 rather than
-here.
+`config:dump-reference` snapshot is the missing half, and belongs with 1.0 rather than here.
+
+What *is* checked at container build is the other half of a configuration being wiring: every
+service id a `medzuch_jwt` option names has to exist, and the refusal names the option rather
+than the service.
 
 **The authorization names are not**, either: `SCOPE_` and `is_granted_scope()` are exercised by
 the functional suite, so renaming them breaks tests — but as a side effect of what those tests
