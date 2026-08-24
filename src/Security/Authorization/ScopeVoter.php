@@ -27,6 +27,8 @@ use Symfony\Component\Security\Core\Authorization\Voter\Voter;
  * to the access decision manager's default.
  *
  * @extends Voter<string, mixed>
+ *
+ * @internal
  */
 final class ScopeVoter extends Voter
 {

@@ -28,6 +28,8 @@ use Symfony\Component\HttpFoundation\JsonResponse;
  * serves its keys from a file or a CDN rather than from the endpoint needs the
  * document without needing the route, and writing it by hand is how a `kid`
  * comes to disagree with the key it names.
+ *
+ * @internal
  */
 #[AsCommand(
     name: 'jwt:jwks:dump',

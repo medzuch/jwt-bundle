@@ -28,6 +28,8 @@ use Symfony\Contracts\Service\ServiceProviderInterface;
  * `--raw` prints the token and nothing else, which is what a shell wants:
  *
  *     TOKEN=$(bin/console jwt:token:create alice --raw)
+ *
+ * @internal
  */
 #[AsCommand(
     name: 'jwt:token:create',

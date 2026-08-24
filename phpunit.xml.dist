@@ -25,10 +25,13 @@
     to separate our own deprecations from indirect ones — a Phase 1 task.
     Until then displayDetailsOnTestsThatTriggerDeprecations keeps them visible.
 
-    A `unit` suite joins this file when there is a unit to test; an empty one
-    would only make failOnEmptyTestSuite fire on every run.
+    The `unit` suite is for cases that need no kernel: the first of them reads
+    the BC policy back against `src/`.
   -->
   <testsuites>
+    <testsuite name="unit">
+      <directory>tests/Unit</directory>
+    </testsuite>
     <testsuite name="functional">
       <directory>tests/Functional</directory>
     </testsuite>

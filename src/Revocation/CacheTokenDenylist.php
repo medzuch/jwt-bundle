@@ -29,6 +29,8 @@ use Psr\SimpleCache\CacheInterface;
  * right way for a revocation check to fail — the alternative is accepting
  * tokens nobody can vouch for while the store is down — but it is a coupling
  * worth knowing about before an outage teaches it.
+ *
+ * @internal
  */
 final class CacheTokenDenylist implements TokenDenylistInterface
 {

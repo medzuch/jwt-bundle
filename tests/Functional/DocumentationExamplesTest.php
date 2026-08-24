@@ -32,7 +32,7 @@ final class DocumentationExamplesTest extends KernelTestCase
     /**
      * Documents scanned for service ids they tell the reader to use.
      */
-    private const DOCUMENTS = ['README.md', 'docs/cookbook.md', 'UPGRADE.md'];
+    private const DOCUMENTS = ['README.md', 'docs/cookbook.md', 'UPGRADE.md', 'BACKWARD-COMPATIBILITY.md'];
 
     /**
      * Documents whose job is to show a configuration that works, so each has to

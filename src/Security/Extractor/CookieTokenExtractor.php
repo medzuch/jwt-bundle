@@ -24,6 +24,8 @@ use Symfony\Component\Security\Http\AccessToken\AccessTokenExtractorInterface;
  * on cross-site request forgery in exchange, and neither this extractor nor
  * anything else in the bundle can close that on its own: the cookie needs
  * `SameSite`, and state-changing routes need their own defence.
+ *
+ * @internal
  */
 final class CookieTokenExtractor implements AccessTokenExtractorInterface
 {

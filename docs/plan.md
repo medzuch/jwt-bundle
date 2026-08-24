@@ -18,8 +18,8 @@
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
 > in, and so are O4, the issuance hooks I3/I4, O3, the console commands D1/D2/D4/O5, the
-> test helpers D5, the profiler panel O2, and the documentation D7. What is left
-> before 1.0 is the BC policy and issue #3.
+> test helpers D5, the profiler panel O2, and the documentation D7. The BC policy
+> is written and enforced by the suite; what is left before 1.0 is issue #3.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -99,6 +99,7 @@ jwt-bundle/
 │   └── cookbook.md                # recipes: the features assembled into tasks
 ├── README.md                      # the reference: every feature, one at a time
 ├── UPGRADE.md                     # what each release asks of an application
+├── BACKWARD-COMPATIBILITY.md      # what 1.0 freezes, and how it may change
 └── tests/                         # unit + functional (real test kernel)
 ```
 

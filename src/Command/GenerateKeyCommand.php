@@ -29,6 +29,8 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  * Private material is written with mode 0600 and never overwrites: a key file
  * that appears where one already existed has invalidated every token in flight,
  * and the second run is the one that would do it silently.
+ *
+ * @internal
  */
 #[AsCommand(
     name: 'jwt:key:generate',

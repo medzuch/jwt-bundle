@@ -24,6 +24,8 @@ use Symfony\Component\Security\Http\EntryPoint\AuthenticationEntryPointInterface
  * right: `error="invalid_token"` for a request that sent no token describes a
  * failure that did not happen, and a client reading it would go looking for a
  * bad token it never had.
+ *
+ * @internal
  */
 final class BearerEntryPoint implements AuthenticationEntryPointInterface
 {

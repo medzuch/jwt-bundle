@@ -13,6 +13,27 @@ a class or method signature would be.
 
 ### Added
 
+- **A backward-compatibility policy.** [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md)
+  says what 1.0 freezes and what it does not: the `medzuch_jwt` configuration tree, the service
+  ids the documentation tells you to name, the console commands' names, arguments and exit
+  statuses, and nineteen classes and interfaces — each with what you may do with it, since an
+  interface you implement is a stricter promise than an event you receive.
+
+  Everything else in `src/` is now marked `@internal`: the handlers, the extractor, the voter,
+  the identity resolvers, the key loader, the controller, the compiler pass and the commands'
+  classes. Thirteen classes gained the marker, so the reachable surface is the service id or the
+  command name rather than the class behind it — which is what lets the class behind it move.
+
+  **The policy is enforced rather than asserted.** `tests/Unit/BackwardCompatibilityTest.php`
+  reads the table back and compares it to `src/` in both directions: a class that is neither
+  promised nor `@internal` fails the suite, so does a promised class that is gone, and so does
+  one that stopped being `final`. It is the first case in a new `unit` suite, which needs no
+  kernel.
+
+  What the policy deliberately does not cover is named too: what a command prints, what a log
+  line or an exception message says, the profiler template, the ordering of two claim providers
+  at equal priority, and behaviour a security fix has to change.
+
 - **A cookbook and upgrade notes (D7).** [`docs/cookbook.md`](docs/cookbook.md) carries the
   recipes that need several features at once and so fit no single README section: machine
   tokens between your own services, two issuers on one API, a deployment serving several

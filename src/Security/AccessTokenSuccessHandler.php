@@ -23,6 +23,8 @@ use Symfony\Component\Security\Http\Authentication\AuthenticationSuccessHandlerI
  * Only the three RFC 6750 fields are returned. Anything else an application
  * wants in that response — a refresh cookie above all — is its own concern, and
  * deliberately outside this bundle (§8 of the design).
+ *
+ * @internal
  */
 final class AccessTokenSuccessHandler implements AuthenticationSuccessHandlerInterface
 {

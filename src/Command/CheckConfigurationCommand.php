@@ -57,6 +57,8 @@ use Throwable;
  * which is the "first request without the request" idea working as intended: a
  * provider that cannot be constructed fails the deploy, and one that opens a
  * connection in its constructor will open it here.
+ *
+ * @internal
  */
 #[AsCommand(
     name: 'jwt:config:check',
