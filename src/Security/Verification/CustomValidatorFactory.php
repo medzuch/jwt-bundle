@@ -6,6 +6,7 @@ namespace Medzuch\JwtBundle\Security\Verification;
 
 use DateInterval;
 use Medzuch\Jwt\Algorithm\SigningAlgorithm;
+use Medzuch\Jwt\Diagnostics\LogLevels;
 use Medzuch\Jwt\Jwt\MediaType;
 use Medzuch\Jwt\Jwt\Validator;
 use Medzuch\Jwt\Jwt\ValidatorBuilder;
@@ -46,6 +47,7 @@ final class CustomValidatorFactory
         array $requiredClaims,
         ClockInterface $clock,
         ?LoggerInterface $logger,
+        ?LogLevels $logLevels,
         ?DateInterval $leeway,
     ): Validator {
         $builder = ValidatorBuilder::create()
@@ -62,7 +64,7 @@ final class CustomValidatorFactory
         }
 
         if (null !== $logger) {
-            $builder = $builder->withLogger($logger);
+            $builder = $builder->withLogger($logger, $logLevels);
         }
 
         return $builder->build();

@@ -6,6 +6,7 @@ namespace Medzuch\JwtBundle\Oidc;
 
 use DateInterval;
 use Medzuch\Jwt\Algorithm\SigningAlgorithm;
+use Medzuch\Jwt\Diagnostics\LogLevels;
 use Medzuch\Jwt\Exception\JwtException;
 use Medzuch\Jwt\Jwt\ClaimsSet;
 use Medzuch\Jwt\Key\JwkSet;
@@ -45,6 +46,7 @@ final class IdTokenVerifier
         private readonly ?ClockInterface $clock = null,
         private readonly ?LoggerInterface $logger = null,
         private readonly ?DateInterval $leeway = null,
+        private readonly ?LogLevels $logLevels = null,
     ) {}
 
     /**
@@ -66,7 +68,7 @@ final class IdTokenVerifier
             $nonce,
             $this->clock,
             $this->logger,
-            null,
+            $this->logLevels,
             $this->leeway,
         )->parse($idToken);
     }

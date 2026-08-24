@@ -13,6 +13,21 @@ a class or method signature would be.
 
 ### Added
 
+- **Log levels are configurable (O1).** `log_levels` sets the PSR-3 level the library emits each
+  kind of diagnostic at: `accepted`, `verification_failed`, `claim_rejected`, `key_resolution`
+  and `key_resolution_failed`. Until now the bundle passed a logger and no `LogLevels`, so every
+  application got the library's defaults and had no way to move them — which matters most for
+  `accepted`, a line per request on a busy API, and for `claim_rejected`, the one an operator
+  might want to alert on.
+
+  Each category is optional and keeps the library's default when left out. They are passed as
+  named arguments, so setting one does not restate the others at whatever this bundle believed
+  their defaults were — including the two JWE categories there is deliberately no option for,
+  since nothing here issues or consumes an encrypted token yet.
+
+  A level that is not one of the eight PSR-3 strings is refused at container build, and so are
+  levels configured with no `logger` to emit at them.
+
 - **A token type of your own (C7).** `consumers.<name>.token_type` names the `typ` a consumer
   expects, and `required_claims` what a token of that type must carry. Everything else about the
   consumer is unchanged — keys, algorithms, issuer, audience, `audience_policy`, `leeway`,

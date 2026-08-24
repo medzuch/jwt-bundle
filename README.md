@@ -801,6 +801,38 @@ after this bundle is done, so a token can be accepted here and the request still
 the store has no such user. That refusal is Symfony's `LoginFailureEvent`, not this bundle's.
 
 
+## What ends up in the log
+
+`logger` names a PSR-3 service and the library writes to it — a redacting log that never carries
+a token, a key or a claim value. What it does carry is an outcome per verification, and on a busy
+API that is a line per request. `log_levels` is where you decide which of those your logger
+keeps:
+
+```yaml
+medzuch_jwt:
+    logger: 'monolog.logger.jwt'
+
+    log_levels:
+        accepted: debug                  # a line per request; debug by default
+        verification_failed: warning     # bad signature, refused algorithm
+        claim_rejected: notice           # expired, wrong audience, missing claim
+        key_resolution: debug            # a remote set fetched or served from cache
+        key_resolution_failed: warning   # an issuer this application cannot reach
+```
+
+Every one of them is optional and each keeps the library's default when left out — the defaults
+above are those. **The library decides the level; your logger decides whether to record it**, so
+raising `claim_rejected` to `warning` is how a refusal becomes something Monolog will page on,
+and leaving `accepted` at `debug` is how it stays out of production.
+
+**Set them where they change what you keep, not everywhere.** `verification_failed` and
+`key_resolution_failed` are the two worth watching: one is somebody trying something, the other
+is an outage on the issuer's side rather than a verdict on any token.
+
+Levels with no `logger` are refused at container build — nothing would emit at them. There is no
+option for the library's two JWE categories, because nothing here issues or consumes an encrypted
+token yet.
+
 ## Revoking a token
 
 A JWT is valid because it verifies, not because anyone is still willing to accept it — that is
@@ -1521,6 +1553,8 @@ looking like rejected tokens at runtime:
 - a consumer that lists `required_claims` without a `token_type`, requires claims that do not
   include `exp` and sets no `max_token_age` — a token nothing can make stale — or has a denylist
   and does not require `jti`, which is what a denylist looks a token up by
+- a `log_levels` entry that is not one of the eight PSR-3 levels, or any level at all with no
+  `logger` to emit at it
 - a service this application does not have: `clock`, `logger`, a remote set's `http_client`,
   `request_factory`, `cache` or `cache_pool`, a consumer's `denylist.service`,
   `denylist.cache`, `denylist.cache_pool` or `user.factory`. The message names the
