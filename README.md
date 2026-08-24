@@ -28,7 +28,8 @@ composer require medzuch/jwt-bundle:^0.3
 ```
 
 The constraint is worth pinning that tightly: pre-1.0, a minor release may move the
-configuration surface, and the [changelog](CHANGELOG.md) records what changed and how.
+configuration surface. The [changelog](CHANGELOG.md) records what changed;
+[`UPGRADE.md`](UPGRADE.md) records what to do about it, version to version.
 
 Without Symfony Flex, register the bundle yourself in `config/bundles.php`:
 
@@ -183,6 +184,16 @@ medzuch_jwt:
             keys: [default]
             allowed_algorithms: [HS256]
 ```
+
+### The other two roles
+
+**An OIDC relying party** verifies a provider's ID tokens where they arrive — the login callback
+— rather than on a firewall, and is configured differently enough to have its own section:
+[Verifying an ID token](#verifying-an-id-token-oidc-relying-party).
+
+**Service-to-service** is the configuration above with no user behind the token: the caller is
+the subject, and the callee is the `audience`. The
+[cookbook](docs/cookbook.md#machine-tokens-between-your-own-services) walks both halves.
 
 ## Claims an application adds
 
@@ -1393,11 +1404,23 @@ Section 8 of [`docs/plan.md`](docs/plan.md) explains why for each.
 
 ## Documentation
 
+This file is the reference: every feature, one at a time, with what it costs and what it does
+not do. The rest:
+
+- [`docs/cookbook.md`](docs/cookbook.md) — recipes that assemble those features into a task an
+  application has: machine tokens between services, two issuers on one API, tenants, a browser
+  SPA on a cookie, gating a deploy.
+- [`UPGRADE.md`](UPGRADE.md) — what each release asks of an application already running the
+  previous one.
 - [`docs/plan.md`](docs/plan.md) — the design, the feature catalogue with priority tiers, the
   recorded decisions, and the roadmap.
 - [`CHANGELOG.md`](CHANGELOG.md) — what has landed so far.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to work on it.
 - [`SECURITY.md`](SECURITY.md) — how to report a vulnerability. Not through a public issue.
+
+Every `medzuch_jwt` example in this file and in the cookbook is compiled into a real container by
+the test suite, and every service id they name has to be one an example builds — so a renamed
+key cannot leave the documentation describing a bundle that no longer exists.
 
 ## License
 

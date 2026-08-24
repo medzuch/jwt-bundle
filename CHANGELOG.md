@@ -13,6 +13,32 @@ a class or method signature would be.
 
 ### Added
 
+- **A cookbook and upgrade notes (D7).** [`docs/cookbook.md`](docs/cookbook.md) carries the
+  recipes that need several features at once and so fit no single README section: machine
+  tokens between your own services, two issuers on one API, a deployment serving several
+  tenants, a browser SPA on a `__Host-` cookie, and gating a deploy on `jwt:config:check`.
+  Each says what the bundle does not do for it — there is no client-credentials grant, no
+  falling through consumers in turn, and a tenant is a claim rather than its own issuer until
+  C11's issuer dispatch (§3.1) exists.
+
+  [`UPGRADE.md`](UPGRADE.md) says what each release asks of an application already running the
+  previous one, which a changelog does not: the changelog says what changed. Nothing has been
+  removed or renamed in any release so far, so what it carries is behaviour an upgrade could
+  notice — the scope voter now voting beside one of your own under a non-`affirmative`
+  strategy, `IssuedToken`'s third constructor argument, the RFC 6750 answers being opt-in, and
+  the profiler decorating the handler the firewall calls wherever `framework.profiler` is on.
+
+  The README keeps its job as the reference and gains the two pointers its own introduction
+  implied but never gave: the OIDC relying party has a section of its own, and
+  service-to-service is a recipe.
+
+  **The suite holds all of it to the bundle.** `ReadmeExamplesTest` is now
+  `DocumentationExamplesTest`: every `medzuch_jwt` example in the README *and* the cookbook is
+  compiled into a real container, every `medzuch_jwt.*` service id any of the three documents
+  names has to be one an example builds, and every relative link resolves — file and heading
+  both. `UPGRADE.md` writes its before-and-after as `diff` rather than `yaml` precisely because
+  the half being migrated away from is configuration that no longer compiles.
+
 - **A profiler panel (O2).** Every token a consumer was shown during the request, with the
   verdict, the `RejectionReason` behind a refusal, the algorithm and key id the token named, the
   identity it would have authenticated as, and the milliseconds spent verifying. The reason is
