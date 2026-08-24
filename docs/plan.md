@@ -18,7 +18,8 @@
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
 > in, and so are O4, the issuance hooks I3/I4, O3, the console commands D1/D2/D4/O5, the
-> test helpers D5, and the profiler panel O2.
+> test helpers D5, the profiler panel O2, and the documentation D7. What is left
+> before 1.0 is the BC policy and issue #3.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -93,6 +94,11 @@ jwt-bundle/
 ├── config/
 │   ├── services.yaml              # the clock, and nothing else
 │                                  # (no routes.php: DEC-6 leaves routing to the app)
+├── docs/
+│   ├── plan.md                    # this file
+│   └── cookbook.md                # recipes: the features assembled into tasks
+├── README.md                      # the reference: every feature, one at a time
+├── UPGRADE.md                     # what each release asks of an application
 └── tests/                         # unit + functional (real test kernel)
 ```
 
@@ -261,7 +267,7 @@ default and adds no runtime cost when unconfigured.
 | D4 | `jwt:jwks:dump` — print the public JWK Set from the same `JwkSet` service K4 serves, so a document written to a file cannot drift from the one served over HTTP. `--compact` is byte for byte what the endpoint returns | T2 |
 | D5 | Test helpers shipped in `src/Test/`: `TestTokenFactory`, which mints the tokens an issuer will not — expired, not yet valid, addressed elsewhere, from another issuer — and reads no configuration, so a test cannot pass by agreeing with a mistake it shares; `AssertsBearerChallenges` for what a refusal carried. Time travel needs no helper: `clock` already takes any PSR-20 service | T2 |
 | D6 | Flex recipe: registers the bundle, writes a starter `config/packages/medzuch_jwt.yaml` and `.env` entries | T3 |
-| D7 | Documentation: quickstart per role (resource server / auth server / OIDC RP), config reference, cookbook (rotation, multi-tenant, SPA cookies), upgrade notes | T2 |
+| D7 | Documentation: the README as the feature reference with a quickstart per role, `docs/cookbook.md` for the recipes that assemble several features into one task (machine tokens, two issuers on one API, tenants, an SPA on a cookie, a deploy gate), `UPGRADE.md` for what a release asks of an application already running, and `config:dump-reference` for the exhaustive tree — generated rather than hand-written, since a copy drifts. Every example is compiled into a real container and every link resolved, by the suite | T2 |
 | D8 | Compile-time configuration validation: unknown algorithm names, key/algorithm mismatch (e.g. `RS256` with an HMAC key), missing `jwks_uri` dependencies — all fail at container build, not at first request | T1 |
 
 ### 3.6 Advanced / standards-track (T3)
