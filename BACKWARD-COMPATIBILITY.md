@@ -62,7 +62,8 @@ Any other id — anything not in that table, and anything with `.profile`, `.key
 suffix naming a part rather than a whole — is wiring, and moves without notice.
 
 **Three are deliberately absent although they look like they belong**: `medzuch_jwt.consumer.<consumer>`,
-the verifier the handler wraps; `medzuch_jwt.remote_jwks.<set>`, the resolver behind it; and
+which is a library consumer or a bare validator depending on whether the consumer names a
+`token_type`; `medzuch_jwt.remote_jwks.<set>`, the resolver behind it; and
 `medzuch_jwt.clock`, which every dated decision reads. All three are stable and none is
 documented as something to name, and promising an id nobody was told to use freezes the type
 behind it for no reader. Each joins the table as soon as the documentation gives it a use —

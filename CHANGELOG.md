@@ -13,6 +13,34 @@ a class or method signature would be.
 
 ### Added
 
+- **A token type of your own (C7).** `consumers.<name>.token_type` names the `typ` a consumer
+  expects, and `required_claims` what a token of that type must carry. Everything else about the
+  consumer is unchanged — keys, algorithms, issuer, audience, `audience_policy`, `leeway`,
+  `max_token_age`, the denylist, user resolution, the scope voter, the RFC 6750 answers, the
+  events and the profiler panel. What is replaced is the posture: the token is verified as a
+  plain JWT bearing that type, with your list in place of the access-token profile's own.
+
+  **Built on the library's lower-level API, which is where it belongs.** `04-api-surface.md`
+  calls `ValidatorBuilder` "for multi-tenant or custom flows" and freezes it as public, its three
+  profiles are the standardised postures, and its consumer constructors are `@internal`. So a
+  custom posture is a `Validator`, not a fourth profile — a `typ` only one application knows has
+  no posture to standardise, and reaching for the internal constructor to pretend otherwise would
+  break the upstream rule this package's own policy promises to keep.
+
+  Internally that is one small seam: `TokenVerifierInterface`, with the handler on one side and
+  either the library's profile consumer or a bare validator on the other.
+
+  Left out, `required_claims` is `["exp"]`, because the library checks `exp`, `nbf` and `iat`
+  where a token carries them and nowhere else — a posture requiring none of them would take a
+  bearer credential that never stops being valid. A list of your own replaces that, so one
+  omitting `exp` is refused at container build unless `max_token_age` bounds the token instead.
+  A type carrying the `application/` prefix is refused there too: RFC 7515 §4.1.9 puts the bare
+  form in the header, so it would match nothing a peer sends.
+
+  One thing is thinner than on the RFC 9068 path: a token too malformed to parse at all is not
+  logged, because the library does that from inside its profile consumers. The refusal still
+  reaches `JwtRejectedEvent` and the panel as `malformed`.
+
 - **A ceiling on how old a token may be (C10).** `consumers.<name>.max_token_age` refuses a
   token whose `iat` is further back than that many seconds, however long its `exp` says it
   lives. `exp` is the issuer's decision about a lifetime; this is the application's about what

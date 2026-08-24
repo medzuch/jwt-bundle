@@ -6,11 +6,11 @@ namespace Medzuch\JwtBundle\Security;
 
 use DateTimeImmutable;
 use Medzuch\Jwt\Exception\JwtException;
-use Medzuch\Jwt\Profile\ProfileConsumer;
 use Medzuch\JwtBundle\Event\JwtRejectedEvent;
 use Medzuch\JwtBundle\Event\JwtVerifiedEvent;
 use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\Identity\UserResolverInterface;
+use Medzuch\JwtBundle\Security\Verification\TokenVerifierInterface;
 use Psr\Clock\ClockInterface;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
@@ -53,7 +53,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
      *                                         the age window for the same reason it widens `exp`
      */
     public function __construct(
-        private readonly ProfileConsumer $consumer,
+        private readonly TokenVerifierInterface $consumer,
         private readonly string $name,
         private readonly UserResolverInterface $users,
         private readonly ClockInterface $clock,
