@@ -12,7 +12,7 @@ changes only in a major release, and only after a minor release has deprecated w
 
 ## The public surface
 
-Four kinds of thing, and they are not all promised in the same way.
+Five kinds of thing, and they are not all promised in the same way.
 
 ### Configuration
 
@@ -26,29 +26,37 @@ deprecated, but neither costs an application a rewrite.
 
 ### Service ids
 
-The ids the documentation tells you to name, all of them derived from a name you chose:
+The ids the documentation tells you to name, all of them derived from a name you chose. The type
+is the promise; the class behind it is not:
 
-| Id | What names it |
-|---|---|
-| `medzuch_jwt.handler.<consumer>` | a firewall's `access_token.token_handler` |
-| `medzuch_jwt.entry_point.<consumer>` | a firewall's `entry_point` |
-| `medzuch_jwt.access_denied.<consumer>` | a firewall's `access_denied_handler` |
-| `medzuch_jwt.denylist.<consumer>` | your code, to revoke a token |
-| `medzuch_jwt.issuer.<issuer>` | your code, to mint one |
-| `medzuch_jwt.login.<issuer>` | an authenticator's `success_handler` |
-| `medzuch_jwt.id_token.<registration>` | your code, to verify an ID token |
-| `medzuch_jwt.token_extractor.<extractor>` | a firewall's `access_token.token_extractors` |
-| `medzuch_jwt.key.<key>.signing`, `.verification` | your code, for a key you configured |
-| `medzuch_jwt.jwks_controller` | a route serving the JWK Set |
+| Id | Answers | What names it |
+|---|---|---|
+| `medzuch_jwt.handler.<consumer>` | `Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface` | a firewall's `access_token.token_handler` |
+| `medzuch_jwt.entry_point.<consumer>` | `Symfony\Component\Security\Http\EntryPoint\AuthenticationEntryPointInterface` | a firewall's `entry_point` |
+| `medzuch_jwt.access_denied.<consumer>` | `Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface` | a firewall's `access_denied_handler` |
+| `medzuch_jwt.denylist.<consumer>` | `Medzuch\JwtBundle\Revocation\TokenDenylistInterface` | your code, to revoke a token |
+| `medzuch_jwt.issuer.<issuer>` | `Medzuch\JwtBundle\Issuer\AccessTokenIssuer` | your code, to mint one |
+| `medzuch_jwt.login.<issuer>` | `Symfony\Component\Security\Http\Authentication\AuthenticationSuccessHandlerInterface` | an authenticator's `success_handler` |
+| `medzuch_jwt.id_token.<registration>` | `Medzuch\JwtBundle\Oidc\IdTokenVerifier` | your code, to verify an ID token |
+| `medzuch_jwt.token_extractor.<extractor>` | `Symfony\Component\Security\Http\AccessToken\AccessTokenExtractorInterface` | a firewall's `access_token.token_extractors` |
+| `medzuch_jwt.key.<key>.signing` | `Medzuch\Jwt\Key\PrivateKey` | your code, for a key you configured |
+| `medzuch_jwt.key.<key>.verification` | `Medzuch\Jwt\Key\PublicKey` | your code, for a key you configured |
+| `medzuch_jwt.jwks_controller` | `callable` | a route's `controller:` |
 
-A key answers by role because only one role may exist: an entry given a public half alone has a
-`.verification` service and no `.signing` one. The bare `medzuch_jwt.key.<key>` is where the
-half you configured is built and keeps working, but it is not in the table — which of the two it
-means depends on the entry.
+**`medzuch_jwt.jwks_controller` is the row where a type would say nothing.** Its class is
+`@internal`, and a route depends on behaviour rather than on a class name: it is invokable,
+takes nothing it is not given, and answers the JWK Set as JSON with an `ETag`. That is what is
+promised.
 
-An id that exists on 1.x resolves to a service of the same type on every later 1.x. What the
-*class* behind it is called is not part of that: `medzuch_jwt.handler.api` will answer
-`AccessTokenHandlerInterface`, and which of our classes implements it is ours to change.
+**A key answers by role because only one role may exist**: an entry given a public half alone
+has a `.verification` service and no `.signing` one, and a shared secret is both at once. The
+bare `medzuch_jwt.key.<key>` is where the half you configured is built and keeps working, but it
+is not in the table — which of the two it means depends on the entry.
+
+**Two ids also answer by argument name**, which is part of the promise: `IdTokenVerifier $partner`
+reaches `medzuch_jwt.id_token.partner`, and `TokenDenylistInterface $api` reaches
+`medzuch_jwt.denylist.api`. Issuers do not: only an issuer named `default` is reachable by type,
+and the rest are named explicitly.
 
 Any other id — anything not in that table, and anything with `.profile`, `.key_set` or a similar
 suffix naming a part rather than a whole — is wiring, and moves without notice.
@@ -62,13 +70,26 @@ verifying a token outside a firewall being the obvious one.
 
 ### Console commands
 
-`jwt:key:generate`, `jwt:token:create`, `jwt:token:inspect`, `jwt:jwks:dump` and
-`jwt:config:check`: the names, their arguments and options, and their exit statuses. A script
-that gates a deploy on `jwt:config:check` keeps working.
+The names, their arguments and options, and their exit statuses:
+
+| Command | Registered | Exit statuses |
+|---|---|---|
+| `jwt:key:generate` | always | `0` written, `1` refused |
+| `jwt:config:check` | always | `0` everything built, `1` something failed, `2` nothing configured |
+| `jwt:token:inspect` | always | `0` accepted, `1` refused, `2` not a JWT |
+| `jwt:token:create` | where an issuer is configured | `0` minted, `1` refused |
+| `jwt:jwks:dump` | where a JWK Set is published | `0` printed, `1` nothing to print |
+
+**A command is promised where the thing it operates on is configured**, not as a fixture of every
+container. A resource server that mints nothing has no `jwt:token:create`, and one that publishes
+no JWK Set has no `jwt:jwks:dump` — a command whose every run could only say "nothing is
+configured" has no business in `bin/console list`. All five need `symfony/console`, which is a
+`suggest` rather than a `require`.
 
 What they *print* is not covered. Tables, colours and wording are for a person reading a
-terminal; `--raw` and `--compact` exist because a script needs something stable, and those two
-are.
+terminal. Three options exist because a script needs something stable, and those three are:
+`--raw` on `jwt:token:create`, `--compact` on `jwt:jwks:dump`, and `--skip-remote` on
+`jwt:config:check`.
 
 ### Classes and interfaces
 
@@ -89,8 +110,8 @@ Only these, and each only in the way its row says:
 | `Security\RejectedTokenException` | catch it, throw it | yes | no | — |
 | `Security\User\JwtUser` | receive it | yes | no | — |
 | `Security\User\JwtUserFactoryInterface` | — | — | — | **yes** |
-| `Security\User\ProvidesScopes` | — | — | — | **yes** |
-| `Revocation\TokenDenylistInterface` | — | — | — | **yes** |
+| `Security\User\ProvidesScopes` | type-hint it | `scopes()` | — | **yes** |
+| `Revocation\TokenDenylistInterface` | inject it | `revoke()`, `isRevoked()` | — | **yes** |
 | `Oidc\IdTokenVerifier` | inject it | yes | no | — |
 | `DataCollector\JwtDataCollector` | read it, in a panel of your own | its readers | no | — |
 | `Test\TestTokenFactory` | use it in your tests | yes | no | — |
@@ -102,15 +123,31 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
 - **An interface you implement** is the strictest promise here. Adding a method to
   `TokenClaimProviderInterface`, `JwtUserFactoryInterface`, `ProvidesScopes` or
   `TokenDenylistInterface` breaks every implementation, so it happens in a major release only.
+  Two of them are called as well as implemented: `medzuch_jwt.denylist.<consumer>` is promised
+  as somewhere to revoke a token, which is `revoke()` and `isRevoked()`, and a user's `scopes()`
+  is what the voter reads and what your own code reads beside it. An id promised to resolve to a
+  type nobody may call would not be a promise.
 - **A class you receive** — an event, an `IssuedToken`, a `TokenIssuance` — may gain methods and
   readable properties in a minor release. Nothing you wrote against the old shape stops working;
-  you simply have more to read.
-- **`RejectionReason` may gain cases.** It is a vocabulary for a dashboard, and a new kind of
-  refusal has to be nameable. `match` on it without a `default` and a new case is a fatal error
-  — which is a good reason to write the `default`, and the reason this is said here rather than
-  discovered.
+  you simply have more to read. `JwtIssuingEvent` is the exception that is also written to:
+  `setClaim()` and `removeClaim()` are how a listener contributes, so their signatures are as
+  fixed as any interface method.
+- **A service is obtained, not constructed.** `AccessTokenIssuer` and `IdTokenVerifier` have
+  public constructors because PHP has no package-private, and what is promised is the id and the
+  methods, not the constructor's arguments. `IssuedToken` and `TokenIssuance` are the other way
+  round — you receive them from us, and a test fixture that builds one is building the same thing
+  we do, so their constructors are promised.
+- **`RejectionReason` may gain cases, and no case changes its value.** It is a vocabulary for a
+  dashboard, and a new kind of refusal has to be nameable, so `match` on it without a `default`
+  and a new case is a fatal error — a good reason to write the `default`, and the reason this is
+  said here rather than discovered. What a dashboard actually stores is the backed value, and
+  those do not move: `expired`, `not_yet_valid`, `signature_invalid`, `unknown_key`,
+  `algorithm_refused`, `wrong_issuer`, `wrong_audience`, `revoked`, `malformed`,
+  `claims_refused`, `keys_unavailable`, `identity_refused`, `other`.
 - **`JwtDataCollector`'s mutators are not yours.** The tracing decorator writes to it; an
-  application reads it. The read side is what the table covers.
+  application reads it. The read side is what the table covers, and a panel of your own reads
+  rows keyed `consumer`, `verdict` (`accepted` or `refused`), `reason`, `detail`, `identity`,
+  `alg`, `kid`, `duration` and `claims` — keys that may gain company and will not lose members.
 - **`AssertsBearerChallenges` is a trait**, so its methods land in your test case. A new
   assertion is additive unless you already have a method by that name, which is the one way
   adding to it can break you — new names are chosen to be unlikely, not guaranteed.
@@ -119,6 +156,38 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
 the handlers, the extractors, the voter, the resolvers, the key loader, the commands' classes,
 the compiler pass, the controller. They are reachable by service id or by command name, and those
 are covered above; the classes are not.
+
+### Authorization names, and one tag
+
+Three strings an application writes into its own configuration, and none of them a class:
+
+| Name | Where you write it |
+|---|---|
+| the `SCOPE_` prefix | `#[IsGranted('SCOPE_reports.read')]`, `access_control` rules, `is_granted()` |
+| `is_granted_scope()` | an expression, with `symfony/expression-language` installed |
+| the `medzuch_jwt.token_claim_provider` tag | a claim provider that needs a priority rather than autoconfiguration |
+
+They are as public as a service id and break the same way. A rule naming `SCOPE_reports.read`
+depends on that prefix exactly as `security.yaml` depends on `medzuch_jwt.handler.api`, and the
+expression function is compiled into the same file. The classes behind all three — `ScopeVoter`,
+`ScopeExpressionProvider`, and the interface's autoconfiguration — are `@internal`; the names are
+not.
+
+New names may be added. These three do not move.
+
+### The types `medzuch/jwt-php` owns
+
+Some of what this package hands you belongs to the library underneath it: a `ClaimsSet` from
+`JwtVerifiedEvent::$claims`, `JwtUser::claims()` and `IdTokenVerifier::verify()`; the
+`PrivateKey` and `PublicKey` a key service answers; the algorithms and keys `TestTokenFactory`
+takes; the `JwtException` hierarchy `RejectionReason::of()` reads.
+
+**They are promised as far as `medzuch/jwt-php` promises them**, which since its 1.0.0 is
+strictly: no incompatible change to its documented surface within 1.x. This package's `require`
+names one major of it, and **moving that constraint to a new major is a major release here** —
+the same rule as raising the PHP or Symfony floor, and for the same reason. An application
+holding to this policy is therefore holding to one library major at a time, deliberately, rather
+than to whatever a `^` happened to allow.
 
 ## Also not covered
 
@@ -152,15 +221,36 @@ there is at least one full minor cycle between the notice and the removal.
 ## Supported versions
 
 PHP `~8.3.0 || ~8.4.0` and Symfony `^6.4 || ^7.4 || ^8.0`, which is DEC-2 in
-[`docs/plan.md`](docs/plan.md).
+[`docs/plan.md`](docs/plan.md); `symfony/security-bundle` at `^6.4 || ^7.4 || ^8.0` is the hard
+requirement among them, and the library underneath is `medzuch/jwt-php` at `^1.2`.
 
 **Raising a floor is a major release** — dropping a PHP or Symfony version an application still
-runs on is a break like any other. Adding support for a new one is not, and happens whenever the
+runs on is a break like any other, and so is moving to a new major of `medzuch/jwt-php`, whose
+types this package hands you. Adding support for a new version is not, and happens whenever the
 new version works.
+
+These are the constraints in `composer.json`, and the suite fails if the two disagree: a support
+window is the one thing a document like this can get wrong without anybody using it noticing.
 
 ## How this is enforced
 
-`tests/Unit/BackwardCompatibilityTest.php` reads the table above and compares it to `src/`. A
-class that is neither in the table nor marked `@internal` fails the suite, and so does a table
-row naming a class that no longer exists. The policy and the code cannot drift apart without
-somebody noticing, which is the only way a document like this stays true.
+Three of the five surfaces are read back out of this file and checked against the code, which is
+the only way a document like this stays true:
+
+| Surface | Held by | What fails |
+|---|---|---|
+| Classes | `tests/Unit/BackwardCompatibilityTest.php` | a class neither promised nor `@internal`; a promised class that is gone or was made internal; a class that stopped being `final`; a table row written in a shape the parser cannot read |
+| Service ids | `tests/Functional/PublicSurfaceTest.php` | an id the container no longer answers, or one that answers with something other than the type its row names |
+| Console commands | `tests/Functional/PublicSurfaceTest.php` | a command that is not registered where the policy says it is, or one that lost `--raw`, `--compact` or `--skip-remote` |
+| Supported versions | `tests/Unit/BackwardCompatibilityTest.php` | a constraint here that `composer.json` does not require |
+
+**The configuration tree is not**, and it is the largest surface of the five. What holds it today
+is `DocumentationExamplesTest`, which compiles every example in the README and the cookbook, so a
+renamed key breaks the documentation that teaches it — real coverage, and narrower than the
+promise: an option no example uses could be renamed and the suite would stay green. A committed
+`config:dump-reference` snapshot is the missing half, and it belongs with issue #3 rather than
+here.
+
+**The authorization names are not**, either: `SCOPE_` and `is_granted_scope()` are exercised by
+the functional suite, so renaming them breaks tests — but as a side effect of what those tests
+are for, not because anything compares them to this file.

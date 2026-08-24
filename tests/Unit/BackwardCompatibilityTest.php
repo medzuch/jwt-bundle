@@ -69,19 +69,23 @@ final class BackwardCompatibilityTest extends TestCase
     #[TestDox('every class in src is final, whichever side of the line it is on')]
     public function testEveryClassIsFinal(): void
     {
-        $checked = 0;
+        $declarations = [...self::sourceClasses(internal: true), ...self::sourceClasses(internal: false)];
+        $seen = 0;
 
-        foreach ([...self::sourceClasses(internal: true), ...self::sourceClasses(internal: false)] as $class) {
+        foreach ($declarations as $class) {
+            ++$seen;
+
             if (!self::isAClass($class)) {
                 continue;
             }
 
             self::assertTrue((new ReflectionClass($class))->isFinal(), $class . ' should be final');
-
-            ++$checked;
         }
 
-        self::assertGreaterThan(30, $checked, 'the sweep should reach the classes in src');
+        // Every declaration was considered — a floor would pass a sweep that
+        // silently stopped seeing half of `src/`.
+        self::assertCount($seen, $declarations, 'the sweep should reach every declaration in src');
+        self::assertCount(count(self::sources()), $declarations, 'src should hold one declaration per file');
     }
 
     /**
@@ -101,21 +105,50 @@ final class BackwardCompatibilityTest extends TestCase
     /**
      * The class names the policy's table promises, as fully-qualified names.
      *
-     * Only the first cell of a row is read, and only when it is a backticked
-     * name starting with a capital: the service-id table beside it is rows of
-     * lowercase ids, and the header and separator rows have no first cell at
-     * all.
+     * The regex *is* the table's format: a first cell that is one backticked
+     * name relative to this package's namespace. A row aligned with extra
+     * spaces, or written with a leading `Medzuch\JwtBundle\`, would not match
+     * — so the rows are counted as well as read, and a row that stops looking
+     * like a row fails rather than disappearing.
      *
      * @return list<string>
      */
     private static function promised(): array
     {
-        preg_match_all('/^\| `([A-Z][A-Za-z0-9\\\\]*)` \|/m', self::policy(), $matches);
+        $table = self::classTable();
+
+        preg_match_all('/^\| `([A-Z][A-Za-z0-9\\\\]*)` \|/m', $table, $matches);
+
+        $rows = preg_split('/\R/', trim($table));
+
+        self::assertIsArray($rows);
+
+        // Every line of the slice except the heading and the separator beneath
+        // it is a promise, and every promise has to have been read.
+        self::assertCount(count($rows) - 2, $matches[1], 'a row of the class table is written in a shape the test does not read');
 
         return array_values(array_unique(array_map(
             static fn(string $name): string => self::NAMESPACE . $name,
             $matches[1],
         )));
+    }
+
+    /**
+     * The class table, from its heading to the blank line that ends it.
+     */
+    private static function classTable(): string
+    {
+        $policy = self::policy();
+        $heading = '| | Use it | Call it | Extend it | Implement it |';
+        $start = strpos($policy, $heading);
+
+        if (false === $start) {
+            throw new RuntimeException('BACKWARD-COMPATIBILITY.md has no class table');
+        }
+
+        $end = strpos($policy, "\n\n", $start);
+
+        return substr($policy, $start, false === $end ? null : $end - $start);
     }
 
     /**
@@ -127,36 +160,92 @@ final class BackwardCompatibilityTest extends TestCase
     {
         $found = [];
 
-        /** @var iterable<string, \SplFileInfo> $files */
-        $files = new \RegexIterator(
-            new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(__DIR__ . '/../../src')),
-            '/\.php$/',
-        );
-
-        foreach ($files as $file) {
+        foreach (self::sources() as $file) {
             $source = (string) file_get_contents($file->getPathname());
 
             if (1 !== preg_match('/^namespace ([^;]+);/m', $source, $namespace)) {
                 continue;
             }
 
-            if (1 !== preg_match('/^(?:final |abstract |readonly )*(?:class|interface|enum|trait) (\w+)/m', $source, $declaration)) {
-                continue;
-            }
+            // Every declaration, not the first: a second type in one file would
+            // otherwise be neither promised nor disclaimed and pass anyway.
+            preg_match_all('/^(?:final |abstract |readonly )*(?:class|interface|enum|trait) (\w+)/m', $source, $declarations, \PREG_OFFSET_CAPTURE | \PREG_SET_ORDER);
 
-            // The docblock immediately before the declaration, which is the
-            // only one that says anything about the class itself.
-            $head = substr($source, 0, (int) strpos($source, $declaration[0]));
-            $block = str_contains($head, '/**') ? substr($head, (int) strrpos($head, '/**')) : '';
-
-            if (str_contains($block, '@internal') === $internal) {
-                $found[] = $namespace[1] . '\\' . $declaration[1];
+            foreach ($declarations as $declaration) {
+                if (self::saysInternal($source, $declaration[0][1]) === $internal) {
+                    $found[] = $namespace[1] . '\\' . $declaration[1][0];
+                }
             }
         }
 
         sort($found);
 
         return $found;
+    }
+
+    /**
+     * Whether the declaration at this offset carries `@internal` of its own.
+     *
+     * The docblock has to be the one immediately above it — attributes may sit
+     * between, nothing else. A class written with no docblock at all would
+     * otherwise inherit the previous one in the file, `@internal` included, and
+     * be disclaimed by a comment about something else.
+     */
+    private static function saysInternal(string $source, int $offset): bool
+    {
+        $head = rtrim(substr($source, 0, $offset));
+
+        // Attributes, which may be several lines and may hold anything.
+        while (str_ends_with($head, ')]') || str_ends_with($head, ']')) {
+            $head = rtrim(substr($head, 0, (int) strrpos($head, '#[')));
+        }
+
+        if (!str_ends_with($head, '*/')) {
+            return false;
+        }
+
+        $opens = strrpos($head, '/**');
+
+        return false !== $opens && str_contains(substr($head, $opens), '@internal');
+    }
+
+    /**
+     * @return list<\SplFileInfo>
+     */
+    private static function sources(): array
+    {
+        /** @var iterable<array-key, \SplFileInfo> $files */
+        $files = new \RegexIterator(
+            new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(__DIR__ . '/../../src')),
+            '/\.php$/',
+        );
+
+        return array_values(iterator_to_array($files));
+    }
+
+    #[TestDox('the supported versions the policy states are the ones composer requires')]
+    public function testSupportedVersionsMatchComposer(): void
+    {
+        $composer = json_decode((string) file_get_contents(__DIR__ . '/../../composer.json'), true, 512, \JSON_THROW_ON_ERROR);
+
+        self::assertIsArray($composer);
+        self::assertArrayHasKey('require', $composer);
+        self::assertIsArray($composer['require']);
+
+        $policy = self::policy();
+
+        foreach (['php', 'symfony/security-bundle', 'medzuch/jwt-php'] as $package) {
+            self::assertArrayHasKey($package, $composer['require']);
+
+            $constraint = $composer['require'][$package];
+
+            self::assertIsString($constraint);
+            self::assertStringContainsString(
+                '`' . $constraint . '`',
+                $policy,
+                sprintf('the policy states a support window; composer requires %s %s', $package, $constraint),
+            );
+        }
     }
 
     private static function policy(): string
