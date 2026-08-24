@@ -50,6 +50,8 @@ use Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface;
  * reaches this handler is the attribute list, so a rule mixing kinds is exactly
  * as invisible here as the votes are. It is documentation because it cannot be
  * anything else.
+ *
+ * @internal
  */
 final class InsufficientScopeHandler implements AccessDeniedHandlerInterface
 {

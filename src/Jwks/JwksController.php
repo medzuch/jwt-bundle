@@ -21,6 +21,8 @@ use Symfony\Component\HttpFoundation\Request;
  * the application's decision — under `/.well-known/`, behind a prefix, on a
  * separate host — and a route the bundle owns would either take that choice
  * away or duplicate it.
+ *
+ * @internal
  */
 final class JwksController
 {

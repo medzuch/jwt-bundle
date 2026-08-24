@@ -13,6 +13,42 @@ a class or method signature would be.
 
 ### Added
 
+- **A backward-compatibility policy.** [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md)
+  says what 1.0 freezes and what it does not, across five surfaces: the `medzuch_jwt`
+  configuration tree; eleven service ids, each with the type it answers; five console commands
+  with their exit statuses and the three options a script may rely on; the `SCOPE_` prefix,
+  `is_granted_scope()` and the claim-provider tag, which are names an application writes into its
+  own configuration and break like any id; and nineteen classes and interfaces, each with what
+  you may do with it — since an interface you implement is a stricter promise than an event you
+  receive.
+
+  Two rules the reader would otherwise have to guess: `RejectionReason` may gain cases and no
+  case changes its backed value, and the types `medzuch/jwt-php` owns — a `ClaimsSet`, a
+  `PrivateKey`, the exception hierarchy — are promised as far as that library promises them,
+  with a move to a new major of it being a major release here.
+
+  Everything else in `src/` is now marked `@internal`: the handlers, the extractor, the voter,
+  the identity resolvers, the key loader, the controller, the compiler pass and the commands'
+  classes. Thirteen classes gained the marker, so the reachable surface is the service id or the
+  command name rather than the class behind it — which is what lets the class behind it move.
+
+  **Three of the five surfaces are read back out of the document and checked against the code.**
+  `tests/Unit/BackwardCompatibilityTest.php` — the first case in a new `unit` suite, which needs
+  no kernel — compares the class table to `src/` in both directions, holds every class to
+  `final`, and fails if the support window here and the constraints in `composer.json` disagree.
+  `tests/Functional/PublicSurfaceTest.php` boots a container configured with one of everything
+  and resolves every promised id to the type its row names, then asserts every promised command
+  is registered where the policy says it is, with `--raw`, `--compact` and `--skip-remote` still
+  on it.
+
+  The configuration tree is the surface that is *not* held that way, and the document says so
+  rather than claiming otherwise: what covers it today is `DocumentationExamplesTest` compiling
+  every documented example, which is real and narrower than the promise.
+
+  What the policy deliberately does not cover is named too: what a command prints, what a log
+  line or an exception message says, the profiler template, the ordering of two claim providers
+  at equal priority, and behaviour a security fix has to change.
+
 - **A cookbook and upgrade notes (D7).** [`docs/cookbook.md`](docs/cookbook.md) carries the
   recipes that need several features at once and so fit no single README section: machine
   tokens between your own services, two issuers on one API, a deployment serving several

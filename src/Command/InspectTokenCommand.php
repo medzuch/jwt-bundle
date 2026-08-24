@@ -40,6 +40,8 @@ use Symfony\Contracts\Service\ServiceProviderInterface;
  * firewall accepts, and the events an application listens for are dispatched
  * here as they would be on a request — deliberately, because an answer arrived
  * at by a second, quieter route would be worth much less.
+ *
+ * @internal
  */
 #[AsCommand(
     name: 'jwt:token:inspect',

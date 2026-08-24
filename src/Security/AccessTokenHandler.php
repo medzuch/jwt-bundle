@@ -36,6 +36,8 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
  * a token is for us if `aud` names us, whoever else it also names. An
  * `exclusive` consumer adds the other half — that it names nobody else — which
  * RFC 9068 §3 asks of access tokens and which is not the same question.
+ *
+ * @internal
  */
 final class AccessTokenHandler implements AccessTokenHandlerInterface
 {

@@ -29,7 +29,9 @@ composer require medzuch/jwt-bundle:^0.3
 
 The constraint is worth pinning that tightly: pre-1.0, a minor release may move the
 configuration surface. The [changelog](CHANGELOG.md) records what changed;
-[`UPGRADE.md`](UPGRADE.md) records what to do about it, version to version.
+[`UPGRADE.md`](UPGRADE.md) records what to do about it, version to version. From 1.0 that stops
+being a risk you carry — [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) says what the
+package will and will not break, and the suite holds it to that.
 
 Without Symfony Flex, register the bundle yourself in `config/bundles.php`:
 
@@ -1412,6 +1414,8 @@ not do. The rest:
   SPA on a cookie, gating a deploy.
 - [`UPGRADE.md`](UPGRADE.md) — what each release asks of an application already running the
   previous one.
+- [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) — what counts as public API from 1.0,
+  and how anything in it is allowed to change.
 - [`docs/plan.md`](docs/plan.md) — the design, the feature catalogue with priority tiers, the
   recorded decisions, and the roadmap.
 - [`CHANGELOG.md`](CHANGELOG.md) — what has landed so far.

@@ -13,7 +13,7 @@ an application already running could notice rather than configuration it must re
 
 **Nothing in your configuration has to change**, and every new section — `token_extractors`,
 `consumers.*.denylist`, `consumers.*.user`, `consumers.*.realm` — is absent until you write it.
-Four things are worth knowing.
+Five things are worth knowing.
 
 **The RFC 6750 refusal answers are opt-in.** `medzuch_jwt.entry_point.<name>` and
 `medzuch_jwt.access_denied.<name>` exist for every consumer, but a firewall answers as it did
@@ -55,6 +55,18 @@ fixtures rather than application code:
 -new IssuedToken($value, 3600);
 +new IssuedToken($value, 3600, $jti);
 ```
+
+**Most of `src/` is now marked `@internal`**, which static analysis will start saying out loud.
+`AccessTokenHandler`, `AccessTokenSuccessHandler`, `BearerEntryPoint`, `InsufficientScopeHandler`,
+`CookieTokenExtractor`, `ScopeVoter`, `CacheTokenDenylist`, `JwksController` and the five command
+classes were never the documented way to reach any of that, and nothing about them changed — but
+code that imported or type-hinted one will now get an `@internal` notice from PHPStan or Psalm.
+
+The fix is the same in every case: name the service id or implement the interface.
+`medzuch_jwt.handler.<consumer>` instead of `AccessTokenHandler`,
+`medzuch_jwt.denylist.<consumer>` and `TokenDenylistInterface` instead of `CacheTokenDenylist`,
+the command's name instead of its class. [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md)
+is the full list of what is reachable and how.
 
 **The profiler panel decorates the handler your firewall calls**, wherever
 `framework.profiler` is enabled — so a `dev` container now shows a `TraceableAccessTokenHandler`
