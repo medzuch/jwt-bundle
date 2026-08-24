@@ -18,15 +18,15 @@
 > the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
 > the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
 > in, and so are O4, the issuance hooks I3/I4, O3, the console commands D1/D2/D4/O5, the
-> test helpers D5, the profiler panel O2, and the documentation D7. The BC policy
+> test helpers D5, the profiler panel O2, the documentation D7, C10's freshness ceiling and
+> C7's custom token types. The BC policy
 > is written and enforced by the suite, and issue #3 is closed: a compiler pass
 > refuses a configuration naming a service this application does not have.
 >
-> **One T2 row is still open**: C7, the handler for application-defined `typ`
-> values. It and C10's max-age half were never assigned to a phase and neither
-> was built; the freshness ceiling has since landed, and both are in 1.0. §7's
-> "1.0 = the T1+T2 set" is therefore still the definition, with C7 named as what
-> is left of it rather than left implicit.
+> **The T1+T2 set is complete.** The last two rows were C7 and C10's max-age
+> half, neither of which had been assigned to a phase; both are in Phase 4 now
+> and both have landed. §7's "1.0 = the T1+T2 set, documented, with a BC policy"
+> is met, so 1.0 is a release decision rather than a work item.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -218,7 +218,7 @@ default and adds no runtime cost when unconfigured.
 | C4 | Claim → role mapping (`scope`, `roles`, `groups`, custom), configurable prefix, separator and baseline. Only mode `claims` reads it: elsewhere the provider or the factory decides, and a mapping nothing reads is refused at build | `ClaimsSet::get()` | T2 |
 | C5 | Token extractors: the cookie one, which Symfony does not ship; `header`, `query_string` and `request_body` are native and re-spelling them would be names to learn for nothing. Ships with the CSRF trade documented, and an opt-in `Sec-Fetch-Site` check that is defence in depth rather than a defence | `CookieTokenExtractor` + native | T2 |
 | C6 | ID-token verifier for OIDC relying-party flows (`nonce`, `azp`). A service the application calls from its callback, **not** a firewall authenticator (DEC-8). `at_hash` is not checked: the library has no support for it, and the bundle does not reimplement crypto its library is missing | `IdTokenProfile::consumer()` | T2 |
-| C7 | Generic/custom-profile handler for app-defined `typ` values | `ValidatorBuilder`, `MediaType::custom()` | T2 |
+| C7 | Generic/custom-profile handler for app-defined `typ` values: `consumers.*.token_type` and `required_claims`, replacing the RFC 9068 posture and nothing else about a consumer. Built on `ValidatorBuilder` rather than as a fourth profile — the library documents that layer as the one for custom flows, and its consumer constructors are `@internal` | `ValidatorBuilder`, `MediaType::custom()` | T2 |
 | C8 | Security Event Token consumer (receiving RISC/CAEP-style events) | `SetProfile::consumer()` | T3 |
 | C9 | Revocation: `TokenDenylistInterface` checked on `jti`, PSR-16 cache implementation, and the denylist registered as a service the application can revoke through. No `NullDenylist`: unconfigured means no service and no lookup, which is the same default said with less | bundle | T2 |
 | C10 | Freshness policy: `max_token_age` (reject old `iat` even if `exp` is generous), configurable `leeway`, injectable PSR-20 clock. The max age is the handler's own check rather than the library's — `ValidatorBuilder` has no notion of one — and carries its own `RejectionReason`, since an application's ceiling and an issuer's expiry are different facts about different clocks | library validator + handler | T1 (leeway/clock), T2 (max age) |

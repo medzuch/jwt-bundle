@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle;
 
 use DateInterval;
+use Medzuch\Jwt\Jwt\MediaType;
+use Medzuch\Jwt\Jwt\Validator;
 use Medzuch\Jwt\Jwt\ValidatorBuilder;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\JwkSet;
@@ -44,6 +46,9 @@ use Medzuch\JwtBundle\Security\Identity\CustomUserResolver;
 use Medzuch\JwtBundle\Security\Identity\ProviderUserResolver;
 use Medzuch\JwtBundle\Security\User\ClaimRoles;
 use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
+use Medzuch\JwtBundle\Security\Verification\CustomTokenVerifier;
+use Medzuch\JwtBundle\Security\Verification\CustomValidatorFactory;
+use Medzuch\JwtBundle\Security\Verification\ProfileTokenVerifier;
 use Symfony\Component\Cache\Psr16Cache;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
@@ -77,6 +82,26 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_it
 final class MedzuchJwtBundle extends AbstractBundle
 {
     /** Named because the registration compares against it to catch a prefix nothing would read. */
+    /**
+     * Claims a custom consumer requires unless it says otherwise.
+     *
+     * `exp` and nothing else. The library checks `exp`, `nbf` and `iat` only
+     * where the token carries them, so a custom posture that required nothing
+     * would accept a credential with no expiry at all — one that lives until
+     * somebody rotates a key. The profiles all require more than this; they can,
+     * because they know what their tokens are for.
+     */
+    private const DEFAULT_REQUIRED_CLAIMS = ['exp'];
+
+    /**
+     * Types the library has a profile for, which `token_type` must not name:
+     * a consumer wanting one of these postures gets it by leaving the key out.
+     */
+    private const PROFILE_TOKEN_TYPES = [
+        'at+jwt' => 'the RFC 9068 access-token profile, which a consumer uses by default',
+        'JWT' => 'the generic RFC 7519 type',
+    ];
+
     private const DEFAULT_DENYLIST_PREFIX = 'medzuch_jwt.revoked.';
 
     public function configure(DefinitionConfigurator $definition): void
@@ -232,7 +257,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
-         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
+         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
          * } $config */
@@ -865,6 +890,20 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->info('Clock-skew tolerance in seconds for exp/nbf/iat. The ceiling is the library\'s.')
             ->end();
 
+        self::declareOptionalName(
+            $consumer,
+            'token_type',
+            'The `typ` this consumer expects, for a token whose posture is this application\'s rather than a standard. Naming one verifies the token as a plain JWT with the rules below instead of through the RFC 9068 access-token profile: same keys, algorithms, issuer, audience, leeway and clock, and none of the profile\'s own required claims. Omit it — the default — for the RFC 9068 posture. RFC 7515 §4.1.9 puts the bare form on the wire, so give it without the "application/" prefix.',
+            'vnd.acme.session+jwt',
+        );
+
+        $required = $consumer->arrayNode('required_claims');
+        $required->info('Claims a token must carry, for a consumer that names a `token_type`. Only the presence is checked; what a value means is the application\'s. Left out, it is `["exp"]`: the library checks `exp`, `nbf` and `iat` where a token carries them and nowhere else, so a posture requiring none of them would accept a credential that never stops being valid. A list of your own replaces that — and one omitting `exp` needs `max_token_age` to bound the token instead.');
+        $required->scalarPrototype()->cannotBeEmpty()->end();
+        $required->defaultValue([]);
+        $required->example(['exp', 'sub', 'session_id']);
+        self::rejectMaps($required, 'consumers.*.required_claims');
+
         $consumer->integerNode('max_token_age')
             ->defaultNull()
             ->min(1)
@@ -1422,7 +1461,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
-     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
+     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      */
     private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $sets, ?string $logger): void
@@ -1432,18 +1471,51 @@ final class MedzuchJwtBundle extends AbstractBundle
 
             self::registerLocalKeySet($services, 'medzuch_jwt.jwk_set.' . $name, $consumer);
 
-            $services->set('medzuch_jwt.consumer.' . $name, AccessTokenConsumer::class)
-                ->factory([AccessTokenProfile::class, 'consumer'])
-                ->args([
-                    $consumer['issuer'],
-                    array_values($consumer['audience']),
-                    self::keySource($services, 'medzuch_jwt.jwk_set.' . $name, 'medzuch_jwt.resolver.' . $name, $consumer),
-                    array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), array_values($consumer['allowed_algorithms'])),
-                    service('medzuch_jwt.clock'),
-                    null === $logger ? null : service($logger),
-                    null,
-                    0 === $consumer['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $consumer['leeway'])]),
-                ]);
+            self::assertTokenTypeIsUsable($name, $consumer);
+
+            $keySource = self::keySource($services, 'medzuch_jwt.jwk_set.' . $name, 'medzuch_jwt.resolver.' . $name, $consumer);
+            $algorithms = array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), array_values($consumer['allowed_algorithms']));
+            $leeway = 0 === $consumer['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $consumer['leeway'])]);
+
+            if (null === $consumer['token_type']) {
+                $services->set('medzuch_jwt.consumer.' . $name, AccessTokenConsumer::class)
+                    ->factory([AccessTokenProfile::class, 'consumer'])
+                    ->args([
+                        $consumer['issuer'],
+                        array_values($consumer['audience']),
+                        $keySource,
+                        $algorithms,
+                        service('medzuch_jwt.clock'),
+                        null === $logger ? null : service($logger),
+                        null,
+                        $leeway,
+                    ]);
+
+                $services->set('medzuch_jwt.verifier.' . $name, ProfileTokenVerifier::class)
+                    ->args([service('medzuch_jwt.consumer.' . $name)]);
+            } else {
+                // The lower-level API, which `04-api-surface.md` calls the one
+                // for custom flows and freezes as public. There is no fourth
+                // profile to build this from: a `typ` only this application
+                // knows has no posture to standardise, and the library's own
+                // consumer constructors are `@internal`.
+                $services->set('medzuch_jwt.consumer.' . $name, Validator::class)
+                    ->factory([CustomValidatorFactory::class, 'forTokenType'])
+                    ->args([
+                        $consumer['token_type'],
+                        $consumer['issuer'],
+                        array_values($consumer['audience']),
+                        $keySource,
+                        $algorithms,
+                        [] === $consumer['required_claims'] ? self::DEFAULT_REQUIRED_CLAIMS : array_values($consumer['required_claims']),
+                        service('medzuch_jwt.clock'),
+                        null === $logger ? null : service($logger),
+                        $leeway,
+                    ]);
+
+                $services->set('medzuch_jwt.verifier.' . $name, CustomTokenVerifier::class)
+                    ->args([service('medzuch_jwt.consumer.' . $name)]);
+            }
 
             // The two answers RFC 6750 asks for that Symfony has none of: the
             // challenge for a request carrying no credentials, and the 403 that
@@ -1465,7 +1537,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                 // would otherwise have to parse back out of the service id.
                 ->tag('medzuch_jwt.token_handler', ['consumer' => $name])
                 ->args([
-                    service('medzuch_jwt.consumer.' . $name),
+                    service('medzuch_jwt.verifier.' . $name),
                     $name,
                     self::userResolver($name, $consumer['user']),
                     service('medzuch_jwt.clock'),
@@ -1672,6 +1744,83 @@ final class MedzuchJwtBundle extends AbstractBundle
             ]);
 
         return service($resolverId);
+    }
+
+    /**
+     * @param array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string} $denylist
+     */
+    private static function hasDenylist(array $denylist): bool
+    {
+        return null !== $denylist['service'] || null !== $denylist['cache_pool'] || null !== $denylist['cache'];
+    }
+
+    /**
+     * The ways a `token_type` and what it implies can disagree.
+     *
+     * @param array{token_type: string|null, required_claims: list<mixed>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, ...} $consumer
+     */
+    private static function assertTokenTypeIsUsable(string $name, array $consumer): void
+    {
+        if (null === $consumer['token_type']) {
+            // A list of required claims with no type to require them for is a
+            // setting nothing will read: the RFC 9068 profile brings its own,
+            // and they are not this bundle's to widen. Emptiness is how the
+            // tree spells "not written" — Symfony 6.4 refuses a null default on
+            // an array node — which is the same reading `roles.defaults` takes.
+            if ([] !== $consumer['required_claims']) {
+                throw new InvalidConfigurationException(sprintf('Consumer "%s" lists "required_claims" without a "token_type". The RFC 9068 profile decides its own required claims; the list is read only for a token type you define.', $name));
+            }
+
+            return;
+        }
+
+        // RFC 7515 §4.1.9 puts the bare form on the wire, so a configured value
+        // carrying the prefix would match nothing a peer ever sends. The library
+        // refuses it too, when the validator is built — which is the first
+        // request rather than the deploy.
+        if (0 === stripos($consumer['token_type'], 'application/')) {
+            throw new InvalidConfigurationException(sprintf('Consumer "%s" gives a "token_type" of "%s". RFC 7515 §4.1.9 puts the bare form in the header, so drop the "application/" prefix or no token will ever match it.', $name, $consumer['token_type']));
+        }
+
+        if ($consumer['token_type'] !== trim($consumer['token_type'])) {
+            throw new InvalidConfigurationException(sprintf('Consumer "%s" gives a "token_type" padded with whitespace ("%s"). A `typ` header is compared as it arrives, so the padding would match nothing a peer sends.', $name, $consumer['token_type']));
+        }
+
+        // A type the library already has a profile for is a type this bundle
+        // already verifies properly. Naming it here builds a bare validator
+        // instead — the same tokens, checked against `required_claims` rather
+        // than against the profile's own rules — which reads in YAML as being
+        // explicit about RFC 9068 and is the weaker posture of the two.
+        foreach (self::PROFILE_TOKEN_TYPES as $reserved => $profile) {
+            if (MediaType::equivalent($consumer['token_type'], $reserved)) {
+                throw new InvalidConfigurationException(sprintf('Consumer "%s" names "%s" as its "token_type", which is what %s verifies — and this would verify those tokens with fewer rules, not more. Leave "token_type" out for that posture.', $name, $consumer['token_type'], $profile));
+            }
+        }
+
+        $required = [] === $consumer['required_claims'] ? self::DEFAULT_REQUIRED_CLAIMS : $consumer['required_claims'];
+
+        foreach ($required as $claim) {
+            if (!is_string($claim)) {
+                throw new InvalidConfigurationException(sprintf('Consumer "%s" lists a "required_claims" entry that is not a claim name (%s). A claim is named by a string.', $name, get_debug_type($claim)));
+            }
+        }
+
+        // A list of your own replaces the default, `exp` included, and the
+        // library checks an expiry only where the token carries one. Dropping
+        // it is a real thing to want — a token bounded by its age instead — and
+        // a token bounded by nothing at all is not.
+        if (!in_array('exp', $required, true) && null === $consumer['max_token_age']) {
+            throw new InvalidConfigurationException(sprintf('Consumer "%s" requires claims that do not include "exp" and sets no "max_token_age", so a token it accepts need never stop being valid. Add "exp" to the list, or bound the age instead.', $name));
+        }
+
+        // The profiles all require `jti`, so a denylist on one always has
+        // something to look up; a type this application defined need not carry
+        // one, and the handler refuses a token it cannot name. Unchecked, that
+        // is a consumer which compiles, revokes nothing, and refuses every
+        // well-formed token as though the token were at fault.
+        if (self::hasDenylist($consumer['denylist']) && !in_array('jti', $required, true)) {
+            throw new InvalidConfigurationException(sprintf('Consumer "%s" has a denylist and does not require "jti", which is what a denylist looks a token up by. Add "jti" to "required_claims", or drop the denylist.', $name));
+        }
     }
 
     /**
