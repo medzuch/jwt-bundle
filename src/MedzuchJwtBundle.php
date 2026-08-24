@@ -232,7 +232,7 @@ final class MedzuchJwtBundle extends AbstractBundle
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
-         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
+         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
          * } $config */
@@ -865,6 +865,13 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->info('Clock-skew tolerance in seconds for exp/nbf/iat. The ceiling is the library\'s.')
             ->end();
 
+        $consumer->integerNode('max_token_age')
+            ->defaultNull()
+            ->min(1)
+            ->info('Refuse a token older than this many seconds, counted from `iat`, however long its `exp` says it lives. A ceiling of your own on an issuer\'s generosity: a leaked token stops working when this runs out rather than when they decided it should. Off unless set, and `leeway` widens it as it widens every other dated check.')
+            ->example('300')
+            ->end();
+
         $denylist = $consumer->arrayNode('denylist')
             ->addDefaultsIfNotSet()
             ->info('Where this consumer asks whether a token has been withdrawn since it was issued. Configured, it costs a lookup per request; unconfigured, nothing is asked and nothing is registered.')
@@ -1415,7 +1422,7 @@ final class MedzuchJwtBundle extends AbstractBundle
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
-     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
+     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      */
     private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $sets, ?string $logger): void
@@ -1461,7 +1468,10 @@ final class MedzuchJwtBundle extends AbstractBundle
                     service('medzuch_jwt.consumer.' . $name),
                     $name,
                     self::userResolver($name, $consumer['user']),
+                    service('medzuch_jwt.clock'),
                     'exclusive' === $consumer['audience_policy'] ? array_values($consumer['audience']) : null,
+                    $consumer['max_token_age'],
+                    $consumer['leeway'],
                     self::registerDenylist($services, $builder, $name, $consumer['denylist'], $consumer['leeway']),
                     service('event_dispatcher')->nullOnInvalid(),
                 ]);

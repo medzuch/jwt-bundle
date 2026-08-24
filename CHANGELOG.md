@@ -13,6 +13,22 @@ a class or method signature would be.
 
 ### Added
 
+- **A ceiling on how old a token may be (C10).** `consumers.<name>.max_token_age` refuses a
+  token whose `iat` is further back than that many seconds, however long its `exp` says it
+  lives. `exp` is the issuer's decision about a lifetime; this is the application's about what
+  it will accept, and the two are not the same question — an issuer you do not control minting
+  day-long tokens is a token that keeps working for a day after it leaks.
+
+  The refusal is its own `RejectionReason`, **`too_old`**, rather than `expired`. They are
+  different facts about different clocks, and an operator watching them together would read a
+  policy of theirs as an incident. `leeway` widens the window exactly as it widens `exp`, `nbf`
+  and `iat`, because the age is computed across two clocks and inherits the skew.
+
+  Off unless configured, so nothing is asked of a token that nobody set a ceiling for. A token
+  carrying no `iat` is refused rather than exempted — unreachable through the access-token path,
+  which requires it, and the alternative would exempt exactly the tokens whose age cannot be
+  checked.
+
 - **A configuration naming a service nobody has is refused at container build
   ([#3](https://github.com/medzuch/jwt-bundle/issues/3), D8).** `clock`, `logger`, a remote
   set's `http_client`, `request_factory`, `cache` or `cache_pool`, and a consumer's
@@ -327,6 +343,17 @@ a class or method signature would be.
   In `custom` mode the factory names the user it builds — `identity_claim` is not
   consulted — so an identity assembled from several claims is fine and the badge cannot
   disagree with the user it loads.
+
+### Changed
+
+- **`AccessTokenHandler`'s constructor takes the freshness policy**, so `$clock` is now its
+  fourth argument and `$maxTokenAge`/`$leewaySeconds` sit ahead of `$denylist` and `$events`.
+  The class is `@internal` and
+  [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) promises
+  `medzuch_jwt.handler.<consumer>` as an `AccessTokenHandlerInterface` rather than as this class,
+  so nothing an application was told to write is affected — but positional construction or a
+  decoration of the concrete class is, and a release note that only says "Added" would not have
+  said so.
 
 ### Fixed
 

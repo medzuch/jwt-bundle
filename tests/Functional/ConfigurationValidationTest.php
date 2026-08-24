@@ -151,6 +151,21 @@ final class ConfigurationValidationTest extends KernelTestCase
         ]]);
     }
 
+    #[TestDox('a max token age of zero fails at container build, rather than meaning "off"')]
+    public function testMaxTokenAgeFloor(): void
+    {
+        // Off is the key left out. Zero would read as "accept nothing", which
+        // is a consumer that refuses every token it verifies — a configuration
+        // nobody means, and one that would look like a token problem at
+        // runtime rather than a configuration one at build.
+        $this->expectException(InvalidConfigurationException::class);
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'consumers' => ['api' => self::consumer(['max_token_age' => 0])],
+        ]]);
+    }
+
     #[TestDox('an unknown algorithm name fails at container build')]
     public function testUnknownAlgorithm(): void
     {

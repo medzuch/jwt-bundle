@@ -20,8 +20,13 @@
 > in, and so are O4, the issuance hooks I3/I4, O3, the console commands D1/D2/D4/O5, the
 > test helpers D5, the profiler panel O2, and the documentation D7. The BC policy
 > is written and enforced by the suite, and issue #3 is closed: a compiler pass
-> refuses a configuration naming a service this application does not have. The
-> T1+T2 set is complete.
+> refuses a configuration naming a service this application does not have.
+>
+> **One T2 row is still open**: C7, the handler for application-defined `typ`
+> values. It and C10's max-age half were never assigned to a phase and neither
+> was built; the freshness ceiling has since landed, and both are in 1.0. §7's
+> "1.0 = the T1+T2 set" is therefore still the definition, with C7 named as what
+> is left of it rather than left implicit.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -216,7 +221,7 @@ default and adds no runtime cost when unconfigured.
 | C7 | Generic/custom-profile handler for app-defined `typ` values | `ValidatorBuilder`, `MediaType::custom()` | T2 |
 | C8 | Security Event Token consumer (receiving RISC/CAEP-style events) | `SetProfile::consumer()` | T3 |
 | C9 | Revocation: `TokenDenylistInterface` checked on `jti`, PSR-16 cache implementation, and the denylist registered as a service the application can revoke through. No `NullDenylist`: unconfigured means no service and no lookup, which is the same default said with less | bundle | T2 |
-| C10 | Freshness policy: `max_token_age` (reject old `iat` even if `exp` is generous), configurable `leeway`, injectable PSR-20 clock | library validator + handler | T1 (leeway/clock), T2 (max age) |
+| C10 | Freshness policy: `max_token_age` (reject old `iat` even if `exp` is generous), configurable `leeway`, injectable PSR-20 clock. The max age is the handler's own check rather than the library's — `ValidatorBuilder` has no notion of one — and carries its own `RejectionReason`, since an application's ceiling and an issuer's expiry are different facts about different clocks | library validator + handler | T1 (leeway/clock), T2 (max age) |
 | C11 | Multi-issuer / multi-tenant: pick the consumer by the token's `iss` (or by host/tenant resolver) before validation, with a strict allowlist | `CompositeResolver`, bundle dispatcher | T3 |
 | C12 | Encrypted (JWE) and nested JWT support on the consumer side | `NestedJwtParser`, `Decrypter` | T3 |
 | C13 | `ScopeVoter` + `#[IsGranted('SCOPE_x')]`-style checks and an `is_granted_scope()` expression function. Scopes are read from the `scope` claim — the RFC's delimited string or a JSON list — through a `ProvidesScopes` user, so what decides is the user rather than the mode: `claims` builds one, a `custom` factory can, and so can a store-loaded user. The claim name is not configurable; `scp` and its like belong to a custom factory | Symfony voters | T2 |
@@ -567,8 +572,8 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   has a key behind it is suspended for a consumer with a remote set — the issuer
   publishes its algorithms at runtime, which is the "own reading of satisfied"
   the K5 row always implied.)*
-- **Phase 4 — DX & hardening (v0.4 → v1.0).** C4, C5, C9, C13, I2–I4,
-  O2–O5, D1–D5, D7: user modes, role mapping, extractors, denylist, scope
+- **Phase 4 — DX & hardening (v0.4 → v1.0).** C4, C5, C7, C9, C10's max age,
+  C13, I2–I4, O2–O5, D1–D5, D7: user modes, role mapping, extractors, denylist, scope
   voter, claim providers, events, profiler panel, console commands, test
   helpers, documentation, `WWW-Authenticate` handling. **1.0 = the T1+T2 set,
   documented, with a BC policy.**
@@ -678,15 +683,22 @@ audiences on `AccessTokenProfile::consumer()`, `?string $passphrase` on
 `RsaPrivateKey::fromPem()` and `EcPrivateKey::fromPem()`, and
 `"php": "~8.3.0 || ~8.4.0"`. 1.2.0 added the `expectAudience()`/`expectIssuer()`
 shape backstop that §4 now normalises for. The library is on Packagist, so it
-is an ordinary dependency rather than a VCS repository. One item is
-deliberately *asked upstream rather than built here*: `max_token_age` (C10)
-compares `iat` against the clock, which is temporal claim validation of the
-same family as `exp`/`nbf`. Implementing it in the handler would duplicate the
-clock and leeway wiring and would report failure with a different exception
-type than every other temporal check — which O4's `WWW-Authenticate` mapping
-would then have to special-case. Proposed upstream as
-`ValidatorBuilder::withMaxAge()` plus an appended profile parameter; it gates
-nothing before Phase 4.
+is an ordinary dependency rather than a VCS repository.
+
+*Reversed for `max_token_age` (C10), which this decision sent upstream and
+Phase 4 built here.* The reasoning was that comparing `iat` against a clock is
+temporal claim validation of the same family as `exp`/`nbf`, so it belonged
+with them. That reads the check as a claim rule, and it is not one: `exp` is
+the issuer's statement about a lifetime, while a maximum age is **this
+application's policy about what it will accept** — two applications verifying
+the same token are entitled to different answers, which is exactly what a
+profile must not encode. The two costs the decision named did not appear
+either. The clock and leeway are constructor arguments the handler was already
+being given for other reasons, and O4 never reads a `RejectionReason` at all:
+Symfony maps every token failure to `invalid_token`, so nothing about
+`WWW-Authenticate` had to be special-cased. The refusal carries its own
+`too_old` instead, which is the distinction an operator needs and the one an
+upstream `withMaxAge()` could not have made.
 
 **DEC-5 — `kid`: explicit, never derived from key material, and mandatory once two
 keys share an algorithm.** Deriving a `kid` by hashing an HMAC secret would
