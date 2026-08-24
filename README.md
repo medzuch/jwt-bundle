@@ -765,6 +765,7 @@ a listener that logs them logs whatever they hold: subjects, emails, tenant ids.
 |---|---|---|
 | `expired` | `exp` has passed | the ordinary cost of short lifetimes — worth a baseline, not an alert |
 | `not_yet_valid` | `nbf` or `iat` is in the future | clock skew; raise `leeway` if it is small and constant |
+| `too_old` | `iat` is further back than `max_token_age` allows, `exp` notwithstanding | this consumer's ceiling, not the issuer's lifetime |
 | `signature_invalid` | no accepted key verifies it | somebody is trying something |
 | `unknown_key` | no key matches the token's `kid` | a rotation that has not finished, or another issuer's token |
 | `algorithm_refused` | the `alg` is not in `allowed_algorithms` | a client misconfigured, or an algorithm-confusion attempt |
@@ -898,6 +899,44 @@ practices have to justify. Turn it on when you can influence what the issuer min
 
 Exclusivity is about audiences you did not configure, not about the token naming all of yours:
 an application answering to two names is addressed by either.
+
+## How old a token may be
+
+`exp` is the issuer's decision about how long a token lives. `max_token_age` is yours about how
+long you will accept one, counted from `iat`:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default: { hmac: '%env(JWT_SECRET)%', algorithm: HS256 }
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [default]
+            allowed_algorithms: [HS256]
+            max_token_age: 300      # seconds since `iat`; off unless set
+            leeway: 30
+```
+
+**It is a ceiling on somebody else's generosity.** An issuer you do not control minting
+twenty-four-hour tokens is a token that keeps working for a day after it leaks. Set this and it
+stops working when your ceiling runs out instead, without any conversation with the issuer and
+without touching what they mint.
+
+A token refused this way is **`too_old`, not `expired`**, on the event and in the profiler. They
+are different facts about different clocks — one is the issuer's lifetime running out, the other
+is this application refusing a lifetime the issuer thought reasonable — and an operator watching
+the two together would read a policy of theirs as an incident.
+
+`leeway` widens it, exactly as it widens `exp`, `nbf` and `iat`: the age is computed across two
+clocks and inherits the skew between them. Above, a token is refused at five minutes and thirty
+seconds old.
+
+**A token with no `iat` is refused rather than exempted.** RFC 9068 §2.2 requires it and the
+profile enforces it, so this cannot happen through the access-token path — but reading "no
+issuing time" as "young enough" would exempt exactly the tokens whose age cannot be checked.
 
 ## Rotating a key
 

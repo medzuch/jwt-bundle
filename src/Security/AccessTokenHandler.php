@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Security;
 
+use DateInterval;
+use DateTimeImmutable;
 use Medzuch\Jwt\Exception\JwtException;
 use Medzuch\Jwt\Profile\ProfileConsumer;
 use Medzuch\JwtBundle\Event\JwtRejectedEvent;
 use Medzuch\JwtBundle\Event\JwtVerifiedEvent;
 use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\Identity\UserResolverInterface;
+use Psr\Clock\ClockInterface;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
 use Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface;
@@ -42,15 +45,22 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
 final class AccessTokenHandler implements AccessTokenHandlerInterface
 {
     /**
-     * @param list<string>|null $exclusiveTo audiences this consumer answers to, when a token
-     *                                       naming any other is to be refused. Null accepts a
-     *                                       token addressed to us among others.
+     * @param list<string>|null $exclusiveTo   audiences this consumer answers to, when a token
+     *                                         naming any other is to be refused. Null accepts a
+     *                                         token addressed to us among others.
+     * @param int|null          $maxTokenAge   seconds since `iat` after which a token is refused
+     *                                         whatever its `exp` says. Null asks nothing.
+     * @param int               $leewaySeconds the consumer's clock-skew tolerance, which widens
+     *                                         the age window for the same reason it widens `exp`
      */
     public function __construct(
         private readonly ProfileConsumer $consumer,
         private readonly string $name,
         private readonly UserResolverInterface $users,
+        private readonly ClockInterface $clock,
         private readonly ?array $exclusiveTo = null,
+        private readonly ?int $maxTokenAge = null,
+        private readonly int $leewaySeconds = 0,
         private readonly ?TokenDenylistInterface $denylist = null,
         private readonly ?EventDispatcherInterface $events = null,
     ) {}
@@ -61,6 +71,7 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
             $claims = $this->consumer->parse($accessToken);
 
             $this->assertAddressedToNobodyElse($claims->audience());
+            $this->assertFreshEnough($claims->issuedAt());
             $this->assertNotRevoked($claims->jwtId());
 
             // Inside the try because naming the user reads claims, and
@@ -117,6 +128,45 @@ final class AccessTokenHandler implements AccessTokenHandlerInterface
 
         if ($this->denylist->isRevoked($jti)) {
             throw new RejectedTokenException(RejectionReason::Revoked, 'Access token has been revoked.');
+        }
+    }
+
+    /**
+     * A ceiling of this application's own on how long ago a token was minted.
+     *
+     * `exp` is the issuer's decision and this is ours, so the two are separate
+     * refusals: a token can be well inside its lifetime and still be older than
+     * a request here is willing to trust. What it buys is blast radius — a
+     * token that leaked stops working when this runs out rather than when an
+     * issuer who mints twenty-four-hour tokens decided it should.
+     *
+     * Leeway widens it, for the same reason the library applies leeway to `iat`
+     * itself: the two clocks are not the same clock, and an age computed across
+     * them inherits the skew.
+     */
+    private function assertFreshEnough(?DateTimeImmutable $issuedAt): void
+    {
+        if (null === $this->maxTokenAge) {
+            return;
+        }
+
+        // RFC 9068 §2.2 makes `iat` required and the profile enforces it, so
+        // this is unreachable through the access-token path — and it is here
+        // for the reason the `jti` guard is: "no issuing time" and "young
+        // enough" are different answers, and reading the first as the second
+        // would exempt exactly the tokens whose age cannot be checked.
+        if (null === $issuedAt) {
+            throw new RejectedTokenException(RejectionReason::ClaimsRefused, 'Access token carries no "iat", so its age cannot be checked.');
+        }
+
+        $oldestAccepted = $this->clock->now()->sub(new DateInterval(sprintf('PT%dS', $this->maxTokenAge + $this->leewaySeconds)));
+
+        if ($issuedAt < $oldestAccepted) {
+            throw new RejectedTokenException(RejectionReason::TooOld, sprintf(
+                'Access token was issued at %s and this consumer accepts none older than %d seconds.',
+                $issuedAt->format(DateTimeImmutable::ATOM),
+                $this->maxTokenAge,
+            ));
         }
     }
 

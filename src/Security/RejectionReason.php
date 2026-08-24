@@ -45,6 +45,15 @@ enum RejectionReason: string
     /** `nbf` or `iat` puts the token in the future: clock skew, usually. */
     case NotYetValid = 'not_yet_valid';
 
+    /**
+     * `exp` is still in the future and the token is older than this consumer
+     * accepts. Kept apart from {@see self::Expired} because they are different
+     * facts about different clocks: one is the issuer's lifetime running out,
+     * the other is this application refusing a lifetime the issuer thought
+     * reasonable.
+     */
+    case TooOld = 'too_old';
+
     /** The signature does not verify under a key this consumer accepts. */
     case SignatureInvalid = 'signature_invalid';
 
