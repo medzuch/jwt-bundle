@@ -560,9 +560,10 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   voter, claim providers, events, profiler panel, console commands, test
   helpers, documentation, `WWW-Authenticate` handling. **1.0 = the T1+T2 set,
   documented, with a BC policy.**
-- **Phase 5+ — Standards-track (post-1.0).** §3.6: DPoP, mTLS binding, token
-  exchange, introspection fallback, JWE/nested tokens, SET issue/consume,
-  multi-tenant issuer dispatch, discovery documents, Flex recipe.
+- **Phase 5+ — Standards-track (post-1.0).** §3.6, together with the T3 rows
+  that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1) and
+  D6's Flex recipe (§3.5): DPoP, mTLS binding, token exchange, introspection
+  fallback, JWE/nested tokens, SET issue/consume, discovery documents.
 
 Each phase is shippable on its own and adds no required configuration to
 applications already running the previous one.

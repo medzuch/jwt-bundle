@@ -19,7 +19,7 @@ a class or method signature would be.
   tenants, a browser SPA on a `__Host-` cookie, and gating a deploy on `jwt:config:check`.
   Each says what the bundle does not do for it — there is no client-credentials grant, no
   falling through consumers in turn, and a tenant is a claim rather than its own issuer until
-  §3.6's issuer dispatch exists.
+  C11's issuer dispatch (§3.1) exists.
 
   [`UPGRADE.md`](UPGRADE.md) says what each release asks of an application already running the
   previous one, which a changelog does not: the changelog says what changed. Nothing has been

@@ -73,9 +73,9 @@ final class LedgerClient
 }
 ```
 
-One issuer can address several callees: `issue('svc:billing', audience: ['https://ledger.internal'])`
-narrows `aud` for one token, so a caller talking to three services does not need three issuers —
-only three audiences.
+One issuer can address several callees. The configured `audience` is the default, and
+`issue('svc:billing', audience: ['https://ledger.internal'])` narrows `aud` for a single token —
+so a caller talking to three services needs one issuer and three audiences, not three issuers.
 
 **On the callee**, a consumer that trusts the caller's public key and builds the user from the
 token. There is nothing to look up: Ledger has no user store entry for Billing.
@@ -170,16 +170,21 @@ medzuch_jwt:
 security:
     firewalls:
         partner:
-            pattern: ^/partner
+            pattern: ^/partner(/|$)
             stateless: true
             access_token:
                 token_handler: medzuch_jwt.handler.partner_api
         api:
-            pattern: ^/api
+            pattern: ^/api(/|$)
             stateless: true
             access_token:
                 token_handler: medzuch_jwt.handler.own_api
 ```
+
+**The patterns end where the prefix does.** A `pattern` is an unanchored regular expression, so
+a bare `^/partner` also matches `/partners`, `/partnership` and anything else starting that way
+— which decides who verifies a token on a route nobody meant to include. It matters most where
+two prefixes sit beside each other, as they do here.
 
 **A catch-all pattern goes last.** Symfony stops at the first firewall whose `pattern` matches,
 so these two can be listed either way round — they are disjoint — while a firewall with
@@ -194,7 +199,7 @@ has already made.
 If the two token sources genuinely cannot be told apart by the request — the same route serves
 both — the bundle cannot do it today: a consumer verifies against one issuer's name and rejects
 every other `iss`. The answer is not fall-through but dispatch, choosing the consumer from the
-token's `iss` against an allowlist *before* verification, which is C11 in §3.3 of
+token's `iss` against an allowlist *before* verification, which is C11 in §3.1 of
 [`docs/plan.md`](plan.md) — T3, post-1.0.
 
 ## One deployment, several tenants
@@ -282,12 +287,18 @@ The user names itself in `custom` mode — `identity_claim` is not consulted —
 and audits per tenant without anything else being told about tenants.
 
 **Everything else is a normal authorization question.** The tenant is on the user, so a voter, a
-Doctrine filter or a `#[IsGranted]` expression reads it from there; scopes stay scopes and are
-answered by [`SCOPE_*` attributes](../README.md#scopes).
+Doctrine filter or a `#[IsGranted]` expression reads it from there.
+
+Scopes stay scopes, but in this mode your class has to say so: the voter behind
+[`SCOPE_*` attributes](../README.md#scopes) reads them off the user, so `TenantUser` has to
+implement `Medzuch\JwtBundle\Security\User\ProvidesScopes` and return them from `scopes()`.
+A user class that does not answers every `SCOPE_*` check with a 403 — the safe answer, and a
+confusing one if you were expecting the `scope` claim to be enough. `user.mode: claims` builds a
+`JwtUser` that already implements it; a `custom` factory builds whatever you wrote.
 
 **What is not here.** One signing key serves every tenant, and a tenant is a claim rather than
 its own issuer. Per-tenant issuers — a different `iss`, a different key, chosen per request — is
-C11 in §3.3 of [`docs/plan.md`](plan.md), T3 and post-1.0. Where tenants must not share a key
+C11 in §3.1 of [`docs/plan.md`](plan.md), T3 and post-1.0. Where tenants must not share a key
 today, they have to be separate consumers and issuers, named in configuration and selected by
 the firewall the request matched — which works when tenants are few and fixed, and does not when
 they are rows in a table.
@@ -336,7 +347,7 @@ final class SetsTheSessionCookie implements AuthenticationSuccessHandlerInterfac
 }
 ```
 
-**Reading it back**, with an extractor named beside Symfony's own:
+**Reading it back**, with an extractor named where Symfony's own would go:
 
 ```yaml
 medzuch_jwt:

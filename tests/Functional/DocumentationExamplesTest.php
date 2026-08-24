@@ -114,13 +114,22 @@ final class DocumentationExamplesTest extends KernelTestCase
             $available = [...$available, ...self::advertisedServices($configuration)];
         }
 
+        $checked = 0;
+
         foreach (self::DOCUMENTS as $document) {
             preg_match_all('/\bmedzuch_jwt\.[a-z0-9_]+\.[a-z0-9_]+\b/', self::document($document), $matches);
 
             foreach (array_unique($matches[0]) as $id) {
                 self::assertContains($id, $available, sprintf('%s tells the reader to use "%s"', $document, $id));
+
+                ++$checked;
             }
         }
+
+        // A regex that stopped matching — a renamed prefix, a fourth segment,
+        // every id turned into a placeholder — would leave the loop above empty
+        // and the case green, so the sweep asserts it swept.
+        self::assertGreaterThan(10, $checked, 'the documentation should name service ids for the reader to use');
     }
 
     #[TestDox('an autowired argument in a PHP example names a registration the README declares')]
