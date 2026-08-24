@@ -20,9 +20,11 @@ use Symfony\Component\DependencyInjection\Reference;
  * extensions run in an order no bundle should depend on. Passes run after all
  * of them.
  *
- * It is the bundle's only compiler pass, and it lives beside the collector
- * because the panel is the only thing it exists for — `DependencyInjection/`
- * would be a directory holding one file whose subject is here.
+ * It lives beside the collector because the panel is the only thing it exists
+ * for. The bundle's other pass,
+ * {@see \Medzuch\JwtBundle\DependencyInjection\CheckConfiguredServicesPass},
+ * is in `DependencyInjection/` for the same reason read the other way: its
+ * subject is the configuration, not anything in here.
  *
  * It must run before child definitions are resolved, which is what the default
  * `TYPE_BEFORE_OPTIMIZATION` gives it: by `TYPE_OPTIMIZE` every

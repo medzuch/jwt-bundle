@@ -35,6 +35,13 @@ a class or method signature would be.
   the shape the issue described, and the reason the check is a pass rather than one more
   refusal in `loadExtension()`.
 
+  The pass runs at `TYPE_BEFORE_REMOVING`, which is the last point ahead of Symfony's own
+  check and the first at which "does this service exist" has a final answer: a service can be
+  registered by another *pass* rather than by an extension, and `monolog.logger.<channel>` — the
+  id the `logger` option gives as its example — is exactly that. An `%env()%` in a service id is
+  refused like any other, because a service id has to exist while the container is built and a
+  placeholder in one never resolves to anything.
+
 - **A backward-compatibility policy.** [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md)
   says what 1.0 freezes and what it does not, across five surfaces: the `medzuch_jwt`
   configuration tree; eleven service ids, each with the type it answers; five console commands

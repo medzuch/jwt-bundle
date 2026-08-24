@@ -5,13 +5,18 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Tests\Functional;
 
 use Medzuch\JwtBundle\DependencyInjection\CheckConfiguredServicesPass;
+use Medzuch\JwtBundle\DependencyInjection\ConfiguredServices;
+use Medzuch\JwtBundle\MedzuchJwtBundle;
+use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
 use Medzuch\JwtBundle\Tests\Functional\App\BareKernel;
+use Medzuch\JwtBundle\Tests\Functional\App\InMemoryDenylist;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\HttpKernel\KernelInterface;
+use Throwable;
 
 /**
  * A configuration that names a service nobody has is refused while the
@@ -24,6 +29,8 @@ use Symfony\Component\HttpKernel\KernelInterface;
  * that kernel and would have looked like coverage this bundle did not have.
  */
 #[CoversClass(CheckConfiguredServicesPass::class)]
+#[CoversClass(ConfiguredServices::class)]
+#[CoversClass(MedzuchJwtBundle::class)]
 final class ConfiguredServicesTest extends KernelTestCase
 {
     use RestoresExceptionHandler;
@@ -109,6 +116,12 @@ final class ConfiguredServicesTest extends KernelTestCase
             'app.no_such_factory',
         ];
 
+        yield 'remote jwks cache pool' => [
+            ['remote_jwks' => ['idp' => ['uri' => 'https://idp.test/jwks', 'http_client' => 'test.http_client', 'cache_pool' => 'app.no_such_pool']]],
+            'medzuch_jwt.remote_jwks.idp.cache_pool',
+            'app.no_such_pool',
+        ];
+
         yield 'remote jwks cache' => [
             ['remote_jwks' => ['idp' => ['uri' => 'https://idp.test/jwks', 'http_client' => 'test.http_client', 'cache' => 'app.no_such_cache']]],
             'medzuch_jwt.remote_jwks.idp.cache',
@@ -158,18 +171,95 @@ final class ConfiguredServicesTest extends KernelTestCase
         }
     }
 
-    #[TestDox('a configuration naming services that exist compiles, and leaves no parameter behind')]
-    public function testWhatItLeavesBehind(): void
+    #[TestDox('a configuration naming services that all exist compiles')]
+    public function testServicesThatExistCompile(): void
     {
         self::bootKernel(['medzuch_jwt' => [
             'clock' => 'test.clock',
+            'logger' => 'test.logger',
             'keys' => self::KEYS,
             'consumers' => ['api' => self::CONSUMER + ['denylist' => ['cache' => 'test.cache']]],
+            'remote_jwks' => ['idp' => [
+                'uri' => 'https://idp.test/jwks',
+                'http_client' => 'test.http_client',
+                'request_factory' => 'test.http_client',
+                'cache' => 'test.cache',
+            ]],
         ]]);
 
-        // The parameter is how the extension reaches the pass. A compiled
-        // container still holding it would be this check leaking into every
-        // application's `debug:container`.
-        self::assertFalse(self::getContainer()->hasParameter(CheckConfiguredServicesPass::CONFIGURED));
+        self::assertTrue(self::getContainer()->has('medzuch_jwt.handler.api'));
+    }
+
+    #[TestDox('a service another compiler pass registers is found, not refused')]
+    public function testAServiceALaterPassRegisters(): void
+    {
+        // MonologBundle's extension records a channel; its LoggerChannelPass
+        // creates `monolog.logger.<channel>`, the id this bundle's own `logger`
+        // option gives as its example. Checked while extensions were the only
+        // thing that had run, this is refused or not depending on the order the
+        // bundles happen to sit in `bundles.php`.
+        $kernel = new BareKernel([
+            'keys' => self::KEYS,
+            'consumers' => ['api' => self::CONSUMER + ['denylist' => ['service' => 'test.late_denylist']]],
+        ], lateService: true);
+
+        $kernel->boot();
+
+        // Public, because revocation is half a feature if nothing can revoke —
+        // which is what makes it the one configured id a test can ask for.
+        self::assertInstanceOf(InMemoryDenylist::class, $kernel->getContainer()->get('medzuch_jwt.denylist.api'));
+
+        $kernel->shutdown();
+    }
+
+    #[TestDox('an id assembled from the environment is refused like any other')]
+    public function testAnEnvironmentIdIsRefused(): void
+    {
+        // A service id has to exist while the container is built, so an
+        // `%env()%` in one never resolves to anything. `http_client` is the
+        // only one of the ten that reaches the pass at all: `clock`, `logger`
+        // and every optional name are refused by the configuration tree, which
+        // reads a placeholder as the empty string.
+        $kernel = new BareKernel(['remote_jwks' => ['idp' => [
+            'uri' => 'https://idp.test/jwks',
+            'http_client' => '%env(JWT_HTTP_CLIENT)%',
+        ]]]);
+
+        try {
+            $kernel->boot();
+
+            self::fail('an env-named service id should not resolve');
+        } catch (Throwable $e) {
+            // Symfony resolves placeholders in an exception's message, so what
+            // the reader sees is what they wrote — with the option in front of
+            // it, which is the whole point of this pass.
+            self::assertStringContainsString(
+                'medzuch_jwt.remote_jwks.idp.http_client names "%env(JWT_HTTP_CLIENT)%"',
+                self::messages($e),
+            );
+        }
+    }
+
+    private static function messages(Throwable $e): string
+    {
+        $messages = [];
+
+        for ($current = $e; null !== $current; $current = $current->getPrevious()) {
+            $messages[] = $current->getMessage();
+        }
+
+        return implode("\n", $messages);
+    }
+
+    #[TestDox('a user factory is named as the interface it has to implement')]
+    public function testTheFactoryHintNamesTheInterface(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('— a service implementing ' . JwtUserFactoryInterface::class);
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => self::KEYS,
+            'consumers' => ['api' => self::CONSUMER + ['user' => ['mode' => 'custom', 'factory' => 'App\NoSuchFactory']]],
+        ]]);
     }
 }

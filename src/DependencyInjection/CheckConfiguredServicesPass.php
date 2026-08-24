@@ -26,8 +26,27 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
  * **The message names a service, never the configuration.** Symfony says
  * `medzuch_jwt.consumer.api has a dependency on a non-existent service
  * "app.no_such_logger"`, which sends the reader to a service they did not write
- * and does not mention `medzuch_jwt.logger`, which they did. Running before
- * Symfony's own check means ours is the message they get.
+ * and does not mention `medzuch_jwt.logger`, which they did.
+ *
+ * It runs at {@see \Symfony\Component\DependencyInjection\Compiler\PassConfig::TYPE_BEFORE_REMOVING},
+ * which is the latest point that is still ahead of Symfony's own check — that
+ * one is a removing pass — and the earliest at which "does this service exist"
+ * has a final answer. A service can be registered by *another pass* rather than
+ * by an extension, and `monolog.logger.jwt` is exactly that: MonologBundle's
+ * extension only records the channel, and its `LoggerChannelPass` creates the
+ * service. At the default before-optimization priority this pass would refuse
+ * the id its own configuration reference recommends, depending on the order
+ * bundles happen to sit in `bundles.php`.
+ *
+ * **An id assembled from the environment is refused like any other.** Unlike a
+ * `jwks_uri`, which is read at runtime and so cannot be judged here, a service
+ * id has to exist while the container is built — an `%env()%` in one never
+ * resolves to anything, whatever the environment says. Refusing it here names
+ * the option that wrote it; letting it through means Symfony refusing it a
+ * moment later about a service the application never wrote. Only `http_client`
+ * gets this far in the first place: `clock`, `logger` and every optional name
+ * are refused by the configuration tree, which reads a placeholder as the empty
+ * string and says a service id cannot be blank.
  *
  * Every problem is reported at once rather than the first: unlike the checks in
  * {@see \Medzuch\JwtBundle\MedzuchJwtBundle}, which throw while registering and
@@ -38,48 +57,21 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
  */
 final class CheckConfiguredServicesPass implements CompilerPassInterface
 {
-    /**
-     * Where {@see \Medzuch\JwtBundle\MedzuchJwtBundle::loadExtension()} leaves
-     * what it read, keyed by the configuration path that named it.
-     *
-     * A parameter rather than a constructor argument: `build()` runs before any
-     * extension does, so the pass exists before there is anything to give it.
-     * It is removed here, so nothing of it reaches the compiled container.
-     */
-    public const CONFIGURED = 'medzuch_jwt.configured_services';
+    public function __construct(private readonly ConfiguredServices $configured) {}
 
     public function process(ContainerBuilder $container): void
     {
-        if (!$container->hasParameter(self::CONFIGURED)) {
-            return;
-        }
-
-        /** @var array<string, array{id: string, hint: string|null}> $configured */
-        $configured = $container->getParameter(self::CONFIGURED);
-
-        $container->getParameterBag()->remove(self::CONFIGURED);
-
         $missing = [];
 
-        foreach ($configured as $path => $named) {
-            // A service id read from the environment cannot be checked while
-            // the container is being built, because the environment is not read
-            // until it is used. It is also a strange thing to write: the wiring
-            // of an application is not a deployment variable.
-            if (str_contains($named['id'], '%env(')) {
-                continue;
-            }
-
-            $id = $container->getParameterBag()->resolveValue($named['id']);
-
-            if (!is_string($id) || $container->has($id)) {
+        foreach ($this->configured->all() as $path => $named) {
+            if ($container->has($named['id'])) {
                 continue;
             }
 
             $missing[] = sprintf(
                 '  %s names "%s"%s',
                 $path,
-                $id,
+                $named['id'],
                 null === $named['hint'] ? '' : ' — ' . $named['hint'],
             );
         }

@@ -28,9 +28,14 @@ final class BareKernel extends Kernel
 {
     /**
      * @param array<array-key, mixed> $bundleConfig configuration under the `medzuch_jwt` root key
+     * @param bool                    $lateService  register `test.late_denylist` from a compiler pass
+     *                                              rather than from configuration, which is where
+     *                                              `monolog.logger.<channel>` comes from
      */
-    public function __construct(private readonly array $bundleConfig = [])
-    {
+    public function __construct(
+        private readonly array $bundleConfig = [],
+        private readonly bool $lateService = false,
+    ) {
         parent::__construct('test', true);
     }
 
@@ -46,6 +51,7 @@ final class BareKernel extends Kernel
             $container->loadFromExtension('framework', ['secret' => 'test-secret', 'test' => true]);
 
             $container->register('test.clock', SystemClock::class);
+            $container->register('test.logger', CollectingLogger::class);
             $container->register('test.cache', ArrayCache::class);
             $container->register('test.http_client', StubHttpClient::class);
 
@@ -53,9 +59,42 @@ final class BareKernel extends Kernel
         });
     }
 
+    protected function build(ContainerBuilder $container): void
+    {
+        if (!$this->lateService) {
+            return;
+        }
+
+        // Before-optimization at the default priority, which is where
+        // MonologBundle's LoggerChannelPass registers `monolog.logger.<channel>`
+        // — the service this bundle's own `logger` example names.
+        $container->addCompilerPass(new RegistersALateService());
+    }
+
+    /**
+     * Keyed by runtime as well as configuration, like the kernels beside it: a
+     * container compiled under one PHP or Symfony version is not the container
+     * the next one would compile, and reusing it is a pass that never ran.
+     */
     public function getCacheDir(): string
     {
-        return sys_get_temp_dir() . '/medzuch-jwt-bundle-bare/' . hash('xxh128', serialize($this->bundleConfig));
+        return sprintf(
+            '%s/medzuch-jwt-bundle-bare/php%d-sf%d-%s',
+            sys_get_temp_dir(),
+            \PHP_VERSION_ID,
+            Kernel::VERSION_ID,
+            hash('xxh128', serialize([$this->bundleConfig, $this->lateService])),
+        );
+    }
+
+    /**
+     * Points away from the repository, for the reason the other kernels give:
+     * a debug kernel writes generated artefacts under the project dir, and the
+     * default walks up to the package root.
+     */
+    public function getProjectDir(): string
+    {
+        return $this->getCacheDir();
     }
 
     public function getLogDir(): string
