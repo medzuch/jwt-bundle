@@ -45,13 +45,17 @@ a constraint may only claim what the matrix tests. Version-conditional code in
    the skeleton).
 4. Open the PR against `develop`. Reference the issue, and the feature-catalogue
    ID (C1, K3, I5 …) the change implements.
-5. Feature PRs are **squash-merged**; release and back-merge PRs use a **merge
-   commit**, so `main` and `develop` never diverge permanently.
+5. Feature PRs are **squash-merged**. Release PRs are not merged at all — see
+   below.
 
-Releases go `develop → main` as `chore(release): stamp X.Y.Z`, then `main` is
-back-merged into `develop`. Tags matching `v*` are protected: they cannot be
-moved or deleted, because Packagist serves them and a moved tag silently
-changes what a pinned version installs.
+A release is stamped on `develop` (`chore(release): stamp X.Y.Z`, merged like any
+other PR), and `main` is then advanced by **fast-forward promotion**:
+`git push origin develop:main`. No merge commit is created, `main` is always an
+ancestor of `develop` by construction, and the commit `main` lands on is the one
+CI already verified. A release PR is opened for visibility; GitHub marks it merged
+once `main` contains its head. Tags matching `v*` are protected: they cannot be
+moved or deleted, because Packagist serves them and a moved tag silently changes
+what a pinned version installs.
 
 ## Commit messages
 

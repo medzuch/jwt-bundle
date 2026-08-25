@@ -12,26 +12,27 @@ Works for any of these roles, in any combination:
 - **OIDC relying party** — verify a third-party IdP's tokens via cached, rotation-aware JWKS.
 - **Service-to-service** — machine tokens between your own services.
 
-> **Status: pre-1.0.** Issuing and verifying work end to end — mint a token on login, verify
-> it on a firewall, be authenticated — with HMAC, RSA, EC and Ed25519 keys from PEM or JWK
-> sources, key rotation, a JWK Set endpoint and a key-generation command. Federation works
-> too: keys fetched from an issuer's `jwks_uri`, with local fallback, and ID tokens verified
-> for an OIDC relying party. Nothing about it is stable yet; see
-> [`docs/plan.md`](docs/plan.md) for the full design and roadmap.
+> **Status: 1.0.** Issuing and verifying work end to end — mint a token on login, verify it on
+> a firewall, be authenticated — with HMAC, RSA, EC and Ed25519 keys from PEM or JWK sources,
+> key rotation, a JWK Set endpoint and a key-generation command. Federation works too: keys
+> fetched from an issuer's `jwks_uri`, with local fallback, and ID tokens verified for an OIDC
+> relying party. The surface is now covered by a policy rather than by good intentions —
+> [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) says what will and will not break,
+> and the suite holds the package to it. See [`docs/plan.md`](docs/plan.md) for the full design
+> and what comes after 1.0.
 
 Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
 
 ## Installation
 
 ```bash
-composer require medzuch/jwt-bundle:^0.3
+composer require medzuch/jwt-bundle:^1.0
 ```
 
-The constraint is worth pinning that tightly: pre-1.0, a minor release may move the
-configuration surface. The [changelog](CHANGELOG.md) records what changed;
-[`UPGRADE.md`](UPGRADE.md) records what to do about it, version to version. From 1.0 that stops
-being a risk you carry — [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) says what the
-package will and will not break, and the suite holds it to that.
+A caret is enough from here: [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) says what
+the package will and will not break within a major, and the suite holds it to that. The
+[changelog](CHANGELOG.md) records what changed; [`UPGRADE.md`](UPGRADE.md) records what to do
+about it, version to version.
 
 Without Symfony Flex, register the bundle yourself in `config/bundles.php`:
 

@@ -4,8 +4,8 @@
 
 | Version | Status |
 | ------- | ------ |
-| 0.x     | Pre-release. Best-effort fixes; no guarantees. |
-| 1.x     | Full security support once released. |
+| 1.x     | Supported. |
+| 0.x     | End of life. Upgrade to 1.x; the configuration needs no rewrite. |
 
 ## Reporting a vulnerability
 
@@ -30,9 +30,9 @@ Include:
 - Any suggested mitigation.
 
 This is a one-person project. I'll acknowledge reports as soon as I see them
-and fix when I can — usually quickly for anything high-severity, but there are
-no guaranteed timelines while the bundle is pre-1.0. If you don't hear back
-within a week, feel free to nudge in the advisory thread. :)
+and fix when I can — usually quickly for anything high-severity, though that is
+not a timeline I can promise. If you don't hear back within a
+week, feel free to nudge in the advisory thread. :)
 
 ## Disclosure
 

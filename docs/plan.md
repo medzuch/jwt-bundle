@@ -11,22 +11,23 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** v0.3.0 released. Phases 0 through 3 of §7 are shipped: PEM and JWK
-> key sources, named keys and rotation, the JWKS publisher, `jwt:key:generate`,
-> and federation — remote JWK Sets with local fallback (K5, K6), ID-token
-> verification (C6) and the audience policy (C14). EdDSA works end to end, since
-> the JWK source is the only one RFC 8037 gives it. Phase 4 — DX and hardening,
-> the road to 1.0 — is under way: C3's remaining modes, C4, C5, C9 and C13 are
-> in, and so are O4, the issuance hooks I3/I4, O3, the console commands D1/D2/D4/O5, the
-> test helpers D5, the profiler panel O2, the documentation D7, C10's freshness ceiling and
-> C7's custom token types. The BC policy
-> is written and enforced by the suite, and issue #3 is closed: a compiler pass
-> refuses a configuration naming a service this application does not have.
+> **Status.** This is v1.0.0. Phases 0 through 4 of §7 are shipped: PEM and JWK
+> key sources, named keys and rotation, the JWKS publisher, `jwt:key:generate`;
+> federation — remote JWK Sets with local fallback (K5, K6), ID-token
+> verification (C6) and the audience policy (C14); and Phase 4's DX and
+> hardening — C3's remaining modes, C4, C5, C9, C13, O4, the issuance hooks
+> I3/I4, O3, the console commands D1/D2/D4/O5, the test helpers D5, the profiler
+> panel O2, the documentation D7, C10's freshness ceiling, C7's custom token
+> types, O1's log levels and K9. EdDSA works end to end, since the JWK source is
+> the only one RFC 8037 gives it. Issue #3 is closed: a compiler pass refuses a
+> configuration naming a service this application does not have.
 >
-> **The T1+T2 set is complete.** The last two rows were C7 and C10's max-age
-> half, neither of which had been assigned to a phase; both are in Phase 4 now
-> and both have landed. §7's "1.0 = the T1+T2 set, documented, with a BC policy"
-> is met, so 1.0 is a release decision rather than a work item.
+> **The T1+T2 set is complete**, which is §7's own test for 1.0 — "the T1+T2 set,
+> documented, with a BC policy". The BC policy is written and enforced by the
+> suite; the last two capability rows were C7 and C10's max-age half, neither of
+> which had been assigned to a phase, and both landed in Phase 4. What remains is
+> Phase 5+: the T3 rows, off by default and additive, on the far side of a
+> promise that a 1.x release will not move what is already there.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -572,11 +573,14 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   has a key behind it is suspended for a consumer with a remote set — the issuer
   publishes its algorithms at runtime, which is the "own reading of satisfied"
   the K5 row always implied.)*
-- **Phase 4 — DX & hardening (v0.4 → v1.0).** C4, C5, C7, C9, C10's max age,
-  C13, I2–I4, O2–O5, D1–D5, D7: user modes, role mapping, extractors, denylist, scope
+- **Phase 4 — DX & hardening (v1.0).** C4, C5, C7, C9, C10's max age,
+  C13, I2–I4, O1–O5, D1–D5, D7, K9: user modes, role mapping, extractors, denylist, scope
   voter, claim providers, events, profiler panel, console commands, test
-  helpers, documentation, `WWW-Authenticate` handling. **1.0 = the T1+T2 set,
-  documented, with a BC policy.**
+  helpers, documentation, `WWW-Authenticate` handling, configurable log levels,
+  and key material held to where it may appear. **1.0 = the T1+T2 set,
+  documented, with a BC policy.** *(Shipped in v1.0.0. There was no v0.4: the
+  phase ran long enough that stamping an interim minor would have promised
+  nothing the BC policy did not already say better.)*
 - **Phase 5+ — Standards-track (post-1.0).** §3.6, together with the T3 rows
   that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1) and
   D6's Flex recipe (§3.5): DPoP, mTLS binding, token exchange, introspection

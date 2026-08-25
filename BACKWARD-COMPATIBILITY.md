@@ -2,13 +2,13 @@
 
 What this package promises not to break, and what it reserves the right to change.
 
-**The promise starts at 1.0.** Until then the surface is young enough that a minor release may
-move it, which is what every release note so far has said. What is written below is the shape
-1.0 freezes; [`UPGRADE.md`](UPGRADE.md) is where a release says what it asks of you, and
-[`CHANGELOG.md`](CHANGELOG.md) what it changed.
+**The promise is in force as of 1.0.0.** What is written below is the shape 1.0 froze;
+[`UPGRADE.md`](UPGRADE.md) is where a release says what it asks of you, and
+[`CHANGELOG.md`](CHANGELOG.md) what it changed. The releases before 1.0 made no such promise,
+which is what each of their release notes said.
 
-From 1.0 the package follows [semantic versioning](https://semver.org): the public surface below
-changes only in a major release, and only after a minor release has deprecated what it changes.
+The package follows [semantic versioning](https://semver.org): the public surface below changes
+only in a major release, and only after a minor release has deprecated what it changes.
 
 ## The public surface
 
@@ -250,7 +250,8 @@ the only way a document like this stays true:
 is `DocumentationExamplesTest`, which compiles every example in the README and the cookbook, so a
 renamed key breaks the documentation that teaches it — real coverage, and narrower than the
 promise: an option no example uses could be renamed and the suite would stay green. A committed
-`config:dump-reference` snapshot is the missing half, and belongs with 1.0 rather than here.
+`config:dump-reference` snapshot would be the missing half. It is not written yet; until it is,
+the examples suite is what holds the tree, and this paragraph is the honest size of that.
 
 What *is* checked at container build is the other half of a configuration being wiring: every
 service id a `medzuch_jwt` option names has to exist, and the refusal names the option rather

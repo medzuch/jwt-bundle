@@ -40,7 +40,7 @@ body:
     attributes:
       label: Versions
       description: Bundle, medzuch/jwt-php, Symfony and PHP.
-      placeholder: "jwt-bundle 0.1.0, jwt-php 1.2.0, Symfony 7.4.16, PHP 8.3.33"
+      placeholder: "jwt-bundle 1.0.0, jwt-php 1.2.0, Symfony 7.4.16, PHP 8.3.33"
     validations:
       required: true
 

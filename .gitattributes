@@ -1,7 +1,11 @@
 /.github            export-ignore
 /docker             export-ignore
 /tests              export-ignore
-/docs               export-ignore
+# `/docs` is not ignored wholesale: the README a `composer require` installs
+# links to the cookbook and the plan, and a link into a file the archive left
+# out is a broken link in every vendor directory. Review notes written there
+# are ignored by name so an accidental commit cannot ship one.
+/docs/*-review.md   export-ignore
 /.editorconfig      export-ignore
 /.gitattributes     export-ignore
 /.gitignore         export-ignore
@@ -11,8 +15,6 @@
 /infection.json5    export-ignore
 /docker-compose.yml export-ignore
 /Makefile           export-ignore
-/CHANGELOG.md       export-ignore
-/CONTRIBUTING.md    export-ignore
 
 # Force LF in the working tree for text files. Without this rule, Windows
 # git installs default to autocrlf=true and check out CRLF locally, which
