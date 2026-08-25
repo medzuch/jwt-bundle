@@ -145,7 +145,7 @@ final class KeyMaterialTest extends KernelTestCase
         )]);
 
         $parameters = json_encode(self::getContainer()->getParameterBag()->all(), \JSON_THROW_ON_ERROR);
-        $printed = self::runCommand('debug:container', ['--parameters' => true]);
+        $printed = self::outputOf('debug:container', ['--parameters' => true]);
 
         foreach ($secrets as $kind => $secret) {
             self::assertStringNotContainsString($secret, $parameters, sprintf('the %s is a container parameter', $kind));
@@ -203,7 +203,7 @@ final class KeyMaterialTest extends KernelTestCase
             ]],
         ]]);
 
-        $printed = self::runCommand('jwt:config:check');
+        $printed = self::outputOf('jwt:config:check');
 
         // It did report the failure — otherwise there is nothing to redact.
         self::assertStringContainsString('FAIL', $printed);
@@ -390,9 +390,15 @@ final class KeyMaterialTest extends KernelTestCase
     }
 
     /**
+     * What a console command printed.
+     *
+     * Not `runCommand()`: Symfony 8.1 added a `KernelTestCase::runCommand()`,
+     * and a private helper of that name silently becomes an override with the
+     * wrong visibility, arity and return type.
+     *
      * @param array<string, mixed> $input
      */
-    private static function runCommand(string $name, array $input = []): string
+    private static function outputOf(string $name, array $input = []): string
     {
         $kernel = self::$kernel;
         self::assertInstanceOf(KernelInterface::class, $kernel);

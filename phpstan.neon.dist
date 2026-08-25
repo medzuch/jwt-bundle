@@ -20,6 +20,20 @@ parameters:
     # one dependency set to satisfy.
     treatPhpDocTypesAsCertain: false
     reportUnmatchedIgnoredErrors: true
+    ignoreErrors:
+        # Symfony 8.1 deprecates HttpKernel's `BundleInterface` while its own
+        # `KernelInterface::registerBundles()` still documents
+        # `@return iterable<BundleInterface>` — so every kernel implementing it
+        # inherits the deprecated typehint, including the test kernels here,
+        # which name no interface at all. Nothing in this package can fix that;
+        # it goes when upstream stops pointing at what it deprecated.
+        #
+        # `reportUnmatched: false` because the error does not exist on the 6.4
+        # and 7.4 legs, where the interface is not deprecated.
+        -
+            message: '#has typehint with deprecated interface Symfony\\Component\\HttpKernel\\Bundle\\BundleInterface#'
+            path: tests/Functional/App
+            reportUnmatched: false
 
 includes:
     - vendor/phpstan/phpstan-strict-rules/rules.neon
