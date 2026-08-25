@@ -82,7 +82,6 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_it
  */
 final class MedzuchJwtBundle extends AbstractBundle
 {
-    /** Named because the registration compares against it to catch a prefix nothing would read. */
     /**
      * Claims a custom consumer requires unless it says otherwise.
      *
@@ -92,9 +91,14 @@ final class MedzuchJwtBundle extends AbstractBundle
      * somebody rotates a key. The profiles all require more than this; they can,
      * because they know what their tokens are for.
      */
+    private const DEFAULT_REQUIRED_CLAIMS = ['exp'];
+
     /**
      * The diagnostics this bundle can emit, as a configuration option, the
-     * constructor argument it sets on {@see LogLevels}, and what it covers.
+     * constructor argument it sets on {@see LogLevels}, what it covers, and
+     * the level somebody plausibly wants — which is not the same one for every
+     * category: raising an accepted token to `info` is auditing, raising a
+     * refusal to `warning` is alerting.
      *
      * Five of the library's seven. The other two are JWE — a token decrypted,
      * and one that would not decrypt — and nothing here issues or consumes an
@@ -102,14 +106,12 @@ final class MedzuchJwtBundle extends AbstractBundle
      * nothing is ever emitted at.
      */
     private const LOG_LEVELS = [
-        'accepted' => ['accepted', 'A token that passed every check. `debug` by default, because on a busy API this is one line per request.'],
-        'verification_failed' => ['verificationFailed', 'Signature, algorithm allowlist, or key resolution while verifying — an integrity problem rather than a policy one. `warning` by default.'],
-        'claim_rejected' => ['claimRejected', 'A properly signed token whose claims are refused: expired, not yet valid, wrong issuer or audience, a missing required claim, a profile rule. `notice` by default, because this is the ordinary cost of short lifetimes.'],
-        'key_resolution' => ['keyResolution', 'A remote JWK Set fetched, served from cache, or refreshed. `debug` by default.'],
-        'key_resolution_failed' => ['keyResolutionFailed', 'A remote JWK Set that could not be fetched or parsed — an outage on one side or the other. `warning` by default.'],
+        'accepted' => ['accepted', 'A token that passed every check. `debug` by default, because on a busy API this is one line per request.', 'info'],
+        'verification_failed' => ['verificationFailed', 'Signature, algorithm allowlist, or key resolution while verifying — an integrity problem rather than a policy one. `warning` by default.', 'error'],
+        'claim_rejected' => ['claimRejected', 'A properly signed token whose claims are refused: expired, not yet valid, wrong issuer or audience, a missing required claim, a profile rule. `notice` by default, because this is the ordinary cost of short lifetimes.', 'info'],
+        'key_resolution' => ['keyResolution', 'A remote JWK Set fetched, served from cache, or refreshed. `debug` by default.', 'info'],
+        'key_resolution_failed' => ['keyResolutionFailed', 'A remote JWK Set that could not be fetched or parsed — an outage on one side or the other. `warning` by default.', 'critical'],
     ];
-
-    private const DEFAULT_REQUIRED_CLAIMS = ['exp'];
 
     /**
      * Types the library has a profile for, which `token_type` must not name:
@@ -120,6 +122,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         'JWT' => 'the generic RFC 7519 type',
     ];
 
+    /** Named because the registration compares against it to catch a prefix nothing would read. */
     private const DEFAULT_DENYLIST_PREFIX = 'medzuch_jwt.revoked.';
 
     public function configure(DefinitionConfigurator $definition): void
@@ -293,7 +296,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         // Levels with nothing to log them are a setting nothing reads, the same
         // as a `factory` outside `user.mode: custom` or `required_claims`
         // without a `token_type`.
-        if (null === $config['logger'] && [] !== array_filter($config['log_levels'], static fn(?string $level): bool => null !== $level)) {
+        if (null === $config['logger'] && self::hasLevels($config['log_levels'])) {
             throw new InvalidConfigurationException('medzuch_jwt.log_levels is set and medzuch_jwt.logger is not, so nothing would emit at those levels. Name a PSR-3 service under "logger", or drop the levels.');
         }
 
@@ -509,11 +512,11 @@ final class MedzuchJwtBundle extends AbstractBundle
             ->info('The PSR-3 level each kind of diagnostic is emitted at. The library decides the level; your logger decides whether to record it — so this is how a resource server stops paying for a line per accepted token, or starts alerting on refusals. Unset, each keeps the library\'s default. Read only where a `logger` is configured.')
             ->children();
 
-        foreach (self::LOG_LEVELS as $option => [, $info]) {
+        foreach (self::LOG_LEVELS as $option => [, $info, $example]) {
             $levels->scalarNode($option)
                 ->defaultNull()
                 ->info($info)
-                ->example('notice')
+                ->example($example)
                 ->validate()
                     ->ifTrue(static fn(mixed $value): bool => null !== $value && !in_array($value, LogLevels::all(), true))
                     ->thenInvalid('medzuch_jwt.log_levels.' . $option . ' must be one of the eight PSR-3 levels (' . implode(', ', LogLevels::all()) . '). Got %s')
@@ -1810,19 +1813,33 @@ final class MedzuchJwtBundle extends AbstractBundle
      */
     private static function logLevels(array $levels): ?InlineServiceConfigurator
     {
-        $written = array_filter($levels, static fn(?string $level): bool => null !== $level);
-
-        if ([] === $written) {
+        if (!self::hasLevels($levels)) {
             return null;
         }
 
         $service = inline_service(LogLevels::class);
 
-        foreach ($written as $option => $level) {
-            $service = $service->arg('$' . self::LOG_LEVELS[$option][0], $level);
+        foreach ($levels as $option => $level) {
+            if (null !== $level) {
+                $service = $service->arg('$' . self::LOG_LEVELS[$option][0], $level);
+            }
         }
 
         return $service;
+    }
+
+    /**
+     * Whether any category was written at all.
+     *
+     * One rule in one place: the build-time refusal of levels without a logger
+     * and the early return here have to agree, or {@see logLevels()} could
+     * return a service on a configuration the refusal let past.
+     *
+     * @param array<string, string|null> $levels
+     */
+    private static function hasLevels(array $levels): bool
+    {
+        return [] !== array_filter($levels, static fn(?string $level): bool => null !== $level);
     }
 
     /**

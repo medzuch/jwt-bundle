@@ -829,6 +829,8 @@ and leaving `accepted` at `debug` is how it stays out of production.
 `key_resolution_failed` are the two worth watching: one is somebody trying something, the other
 is an outage on the issuer's side rather than a verdict on any token.
 
+The setting is application-wide: it reaches every consumer, every ID-token registration and every
+remote JWK Set at once, so two consumers in one application cannot be logged at different levels.
 Levels with no `logger` are refused at container build — nothing would emit at them. There is no
 option for the library's two JWE categories, because nothing here issues or consumes an encrypted
 token yet.
