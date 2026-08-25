@@ -477,6 +477,16 @@ container parameter and never appears in `debug:container` output. The flip side
 length cannot be checked when the container is built: too short a secret fails when the key is
 first used, not at deploy time.
 
+**Use the reference, not the value.** Every `hmac`, `pem_*` and `jwk_*` key accepts the material
+written out in full, and a `pem_*`/`jwk_*` one accepts a path — but only the reference and the
+path keep the material out of the compiled container. Written literally into
+`config/packages/`, it reaches the container as a factory argument and
+`debug:container --show-arguments` will print it, because it was already sitting in a file on the
+same disk. What holds either way: the bundle never copies key material into a container
+parameter, never logs it, never shows it in the profiler, and never quotes it back in an error —
+a value that is neither a readable path nor a recognisable document is reported by its size, so a
+key that lost its `-----BEGIN` line on the way through a pipeline does not end up in your logs.
+
 ## Who the token turns out to be
 
 By default the bundle hands the identifier to the firewall's user provider and your store
