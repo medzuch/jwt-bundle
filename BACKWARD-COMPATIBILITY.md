@@ -2,13 +2,13 @@
 
 What this package promises not to break, and what it reserves the right to change.
 
-**The promise starts at 1.0.** Until then the surface is young enough that a minor release may
-move it, which is what every release note so far has said. What is written below is the shape
-1.0 freezes; [`UPGRADE.md`](UPGRADE.md) is where a release says what it asks of you, and
-[`CHANGELOG.md`](CHANGELOG.md) what it changed.
+**The promise is in force as of 1.0.0.** What is written below is the shape 1.0 froze;
+[`UPGRADE.md`](UPGRADE.md) is where a release says what it asks of you, and
+[`CHANGELOG.md`](CHANGELOG.md) what it changed. The releases before 1.0 made no such promise,
+which is what each of their release notes said.
 
-From 1.0 the package follows [semantic versioning](https://semver.org): the public surface below
-changes only in a major release, and only after a minor release has deprecated what it changes.
+The package follows [semantic versioning](https://semver.org): the public surface below changes
+only in a major release, and only after a minor release has deprecated what it changes.
 
 ## The public surface
 

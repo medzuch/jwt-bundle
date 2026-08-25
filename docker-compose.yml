@@ -19,11 +19,11 @@ services:
     environment:
       COMPOSER_CACHE_DIR: /tmp/composer-cache
       COMPOSER_ALLOW_SUPERUSER: 1
-      # No tags exist yet and `develop` is not a version branch, so composer
-      # cannot infer the root version and warns on every command. Stating it
-      # here is the documented answer; it also keeps the guessed 1.0.0 out of a
-      # package whose first release is 0.1.0.
-      COMPOSER_ROOT_VERSION: 0.1.x-dev
+      # `develop` is not a version branch, so composer cannot infer the root
+      # version and warns on every command. Stating it here is the documented
+      # answer, and from 1.0.0 the guess composer would otherwise make is also
+      # the right one — this just says so without the warning.
+      COMPOSER_ROOT_VERSION: 1.0.x-dev
       XDEBUG_MODE: "${XDEBUG_MODE:-off}"
     extra_hosts:
       # Lets Xdebug reach the host on Linux Docker engines (incl. WSL2).
@@ -51,7 +51,7 @@ services:
     environment:
       COMPOSER_CACHE_DIR: /tmp/composer-cache
       COMPOSER_ALLOW_SUPERUSER: 1
-      COMPOSER_ROOT_VERSION: 0.1.x-dev
+      COMPOSER_ROOT_VERSION: 1.0.x-dev
       XDEBUG_MODE: "${XDEBUG_MODE:-off}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
