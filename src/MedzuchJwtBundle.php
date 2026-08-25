@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle;
 
 use DateInterval;
+use Medzuch\Jwt\Diagnostics\LogLevels;
 use Medzuch\Jwt\Jwt\MediaType;
 use Medzuch\Jwt\Jwt\Validator;
 use Medzuch\Jwt\Jwt\ValidatorBuilder;
@@ -81,7 +82,6 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_it
  */
 final class MedzuchJwtBundle extends AbstractBundle
 {
-    /** Named because the registration compares against it to catch a prefix nothing would read. */
     /**
      * Claims a custom consumer requires unless it says otherwise.
      *
@@ -94,6 +94,26 @@ final class MedzuchJwtBundle extends AbstractBundle
     private const DEFAULT_REQUIRED_CLAIMS = ['exp'];
 
     /**
+     * The diagnostics this bundle can emit, as a configuration option, the
+     * constructor argument it sets on {@see LogLevels}, what it covers, and
+     * the level somebody plausibly wants — which is not the same one for every
+     * category: raising an accepted token to `info` is auditing, raising a
+     * refusal to `warning` is alerting.
+     *
+     * Five of the library's seven. The other two are JWE — a token decrypted,
+     * and one that would not decrypt — and nothing here issues or consumes an
+     * encrypted token yet (C12/I8), so an option for them would be a level
+     * nothing is ever emitted at.
+     */
+    private const LOG_LEVELS = [
+        'accepted' => ['accepted', 'A token that passed every check. `debug` by default, because on a busy API this is one line per request.', 'info'],
+        'verification_failed' => ['verificationFailed', 'Signature, algorithm allowlist, or key resolution while verifying — an integrity problem rather than a policy one. `warning` by default.', 'error'],
+        'claim_rejected' => ['claimRejected', 'A properly signed token whose claims are refused: expired, not yet valid, wrong issuer or audience, a missing required claim, a profile rule. `notice` by default, because this is the ordinary cost of short lifetimes.', 'info'],
+        'key_resolution' => ['keyResolution', 'A remote JWK Set fetched, served from cache, or refreshed. `debug` by default.', 'info'],
+        'key_resolution_failed' => ['keyResolutionFailed', 'A remote JWK Set that could not be fetched or parsed — an outage on one side or the other. `warning` by default.', 'critical'],
+    ];
+
+    /**
      * Types the library has a profile for, which `token_type` must not name:
      * a consumer wanting one of these postures gets it by leaving the key out.
      */
@@ -102,6 +122,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         'JWT' => 'the generic RFC 7519 type',
     ];
 
+    /** Named because the registration compares against it to catch a prefix nothing would read. */
     private const DEFAULT_DENYLIST_PREFIX = 'medzuch_jwt.revoked.';
 
     public function configure(DefinitionConfigurator $definition): void
@@ -253,6 +274,7 @@ final class MedzuchJwtBundle extends AbstractBundle
         /** @var array{
          *     clock: string|null,
          *     logger: string|null,
+         *     log_levels: array<string, string|null>,
          *     keys: array<string, array{hmac?: string, pem_private?: string, pem_public?: string, jwk_private?: string, jwk_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}>,
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
@@ -271,6 +293,13 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $this->configured->record(self::configuredServices($config));
 
+        // Levels with nothing to log them are a setting nothing reads, the same
+        // as a `factory` outside `user.mode: custom` or `required_claims`
+        // without a `token_type`.
+        if (null === $config['logger'] && self::hasLevels($config['log_levels'])) {
+            throw new InvalidConfigurationException('medzuch_jwt.log_levels is set and medzuch_jwt.logger is not, so nothing would emit at those levels. Name a PSR-3 service under "logger", or drop the levels.');
+        }
+
         $keys = $this->keyEntries($config['keys']);
 
         // Implementing the interface is the whole registration: a claim
@@ -281,11 +310,11 @@ final class MedzuchJwtBundle extends AbstractBundle
 
         $services = $container->services();
         $this->registerKeys($services, $keys);
-        $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger']);
+        $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerIssuers($services, $keys, $config['issuers']);
-        $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['remote_jwks'], $config['logger']);
+        $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerTokenExtractors($services, $config['token_extractors']);
-        $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger']);
+        $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
 
         $this->registerConsoleCommands(
             $services,
@@ -477,6 +506,25 @@ final class MedzuchJwtBundle extends AbstractBundle
                 ->ifTrue(static fn(mixed $value): bool => null !== $value && (!\is_string($value) || '' === trim($value)))
                 ->thenInvalid('medzuch_jwt.clock must be a non-empty service id, got %s')
             ->end();
+
+        $levels = $children->arrayNode('log_levels')
+            ->addDefaultsIfNotSet()
+            ->info('The PSR-3 level each kind of diagnostic is emitted at. The library decides the level; your logger decides whether to record it — so this is how a resource server stops paying for a line per accepted token, or starts alerting on refusals. Unset, each keeps the library\'s default. Read only where a `logger` is configured.')
+            ->children();
+
+        foreach (self::LOG_LEVELS as $option => [, $info, $example]) {
+            $levels->scalarNode($option)
+                ->defaultNull()
+                ->info($info)
+                ->example($example)
+                ->validate()
+                    ->ifTrue(static fn(mixed $value): bool => null !== $value && !in_array($value, LogLevels::all(), true))
+                    ->thenInvalid('medzuch_jwt.log_levels.' . $option . ' must be one of the eight PSR-3 levels (' . implode(', ', LogLevels::all()) . '). Got %s')
+                ->end()
+                ->end();
+        }
+
+        $levels->end();
 
         $children->scalarNode('logger')
             ->defaultNull()
@@ -1231,8 +1279,9 @@ final class MedzuchJwtBundle extends AbstractBundle
      * container).
      *
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}> $sets
+     * @param array<string, string|null> $logLevels
      */
-    private function registerRemoteJwks(ServicesConfigurator $services, ContainerBuilder $builder, array $sets, ?string $logger): void
+    private function registerRemoteJwks(ServicesConfigurator $services, ContainerBuilder $builder, array $sets, ?string $logger, array $logLevels): void
     {
         foreach ($sets as $name => $set) {
             self::assertRemoteJwksIsUsable($name, $set, $builder);
@@ -1251,6 +1300,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                     $set['min_refresh'],
                     $set['max_body_bytes'],
                     null === $logger ? null : service($logger),
+                    self::logLevels($logLevels),
                 ]);
         }
     }
@@ -1463,8 +1513,9 @@ final class MedzuchJwtBundle extends AbstractBundle
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
      * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
+     * @param array<string, string|null> $logLevels
      */
-    private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $sets, ?string $logger): void
+    private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $sets, ?string $logger, array $logLevels): void
     {
         foreach ($consumers as $name => $consumer) {
             $this->assertCanVerify(sprintf('Consumer "%s"', $name), $consumer, $keys, $sets);
@@ -1487,7 +1538,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                         $algorithms,
                         service('medzuch_jwt.clock'),
                         null === $logger ? null : service($logger),
-                        null,
+                        self::logLevels($logLevels),
                         $leeway,
                     ]);
 
@@ -1510,6 +1561,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                         [] === $consumer['required_claims'] ? self::DEFAULT_REQUIRED_CLAIMS : array_values($consumer['required_claims']),
                         service('medzuch_jwt.clock'),
                         null === $logger ? null : service($logger),
+                        self::logLevels($logLevels),
                         $leeway,
                     ]);
 
@@ -1554,8 +1606,9 @@ final class MedzuchJwtBundle extends AbstractBundle
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
      * @param array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>                                                                                                                                         $registrations
      * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>                                                                                                     $sets
+     * @param array<string, string|null> $logLevels
      */
-    private function registerIdTokens(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $registrations, array $sets, ?string $logger): void
+    private function registerIdTokens(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $registrations, array $sets, ?string $logger, array $logLevels): void
     {
         foreach ($registrations as $name => $registration) {
             $this->assertCanVerify(sprintf('ID token registration "%s"', $name), $registration, $keys, $sets);
@@ -1572,6 +1625,7 @@ final class MedzuchJwtBundle extends AbstractBundle
                     service('medzuch_jwt.clock'),
                     null === $logger ? null : service($logger),
                     0 === $registration['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $registration['leeway'])]),
+                    self::logLevels($logLevels),
                 ])
                 // Public because the application calls it directly, from its
                 // OIDC callback: there is no firewall to inject it into.
@@ -1744,6 +1798,48 @@ final class MedzuchJwtBundle extends AbstractBundle
             ]);
 
         return service($resolverId);
+    }
+
+    /**
+     * The levels service, or null where every category was left alone.
+     *
+     * Named arguments rather than positional, so the two JWE categories this
+     * bundle has no option for keep the library's defaults instead of being
+     * restated here — a copy of somebody else's default is a copy that goes
+     * stale. A fresh definition per call site, because a `Definition` handed to
+     * two services is one object in two places.
+     *
+     * @param array<string, string|null> $levels
+     */
+    private static function logLevels(array $levels): ?InlineServiceConfigurator
+    {
+        if (!self::hasLevels($levels)) {
+            return null;
+        }
+
+        $service = inline_service(LogLevels::class);
+
+        foreach ($levels as $option => $level) {
+            if (null !== $level) {
+                $service = $service->arg('$' . self::LOG_LEVELS[$option][0], $level);
+            }
+        }
+
+        return $service;
+    }
+
+    /**
+     * Whether any category was written at all.
+     *
+     * One rule in one place: the build-time refusal of levels without a logger
+     * and the early return here have to agree, or {@see logLevels()} could
+     * return a service on a configuration the refusal let past.
+     *
+     * @param array<string, string|null> $levels
+     */
+    private static function hasLevels(array $levels): bool
+    {
+        return [] !== array_filter($levels, static fn(?string $level): bool => null !== $level);
     }
 
     /**
