@@ -32,7 +32,7 @@ final class DocumentationExamplesTest extends KernelTestCase
     /**
      * Documents scanned for service ids they tell the reader to use.
      */
-    private const DOCUMENTS = ['README.md', 'docs/cookbook.md', 'UPGRADE.md', 'BACKWARD-COMPATIBILITY.md'];
+    private const DOCUMENTS = ['README.md', 'docs/cookbook.md', 'UPGRADE.md', 'BACKWARD-COMPATIBILITY.md', 'docs/plan.md'];
 
     /**
      * Documents whose job is to show a configuration that works, so each has to
@@ -40,8 +40,13 @@ final class DocumentationExamplesTest extends KernelTestCase
      * deliberately `diff` rather than `yaml`, because the half being migrated
      * away from is configuration that no longer compiles — which is the point
      * of showing it.
+     *
+     * `docs/plan.md` was the last to join, and it is the reason the list is
+     * worth keeping honest: it was the one document with YAML nothing compiled,
+     * and by 1.0 its §4 tree had drifted into a configuration the bundle would
+     * refuse — options renamed, sections that never shipped, a duplicated key.
      */
-    private const TEACH_CONFIGURATION = ['README.md', 'docs/cookbook.md'];
+    private const TEACH_CONFIGURATION = ['README.md', 'docs/cookbook.md', 'docs/plan.md'];
 
     /**
      * Service ids the documentation names because an application has them: a Monolog
@@ -305,6 +310,16 @@ final class DocumentationExamplesTest extends KernelTestCase
     private static function advertisedServices(array $configuration): array
     {
         $ids = [];
+
+        // A published set is registered on a condition rather than on a name,
+        // so it is the one promised id an example advertises by what it says
+        // rather than by what it calls something.
+        $jwks = $configuration['jwks'] ?? [];
+        $published = is_array($jwks) ? $jwks['keys'] ?? [] : [];
+
+        if (is_array($published) && [] !== $published) {
+            $ids[] = 'medzuch_jwt.jwks.key_set';
+        }
 
         foreach (['consumers' => ['consumer', 'handler'], 'issuers' => ['issuer', 'login']] as $section => $prefixes) {
             $entries = $configuration[$section] ?? [];
