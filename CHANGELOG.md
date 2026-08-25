@@ -406,6 +406,14 @@ a class or method signature would be.
 
 ### Fixed
 
+- **A key whose armour was mangled is no longer printed in the error (K9).** A `pem_*` or `jwk_*`
+  value is read as a document or as a path depending on how it starts, and a value that is
+  neither — an inline key that lost its `-----BEGIN` line somewhere between the secret store and
+  the configuration — was quoted back in full by the exception naming both readings. That message
+  reaches the log, the error page and the profiler at once, which is exactly where key material
+  must never be. A value that cannot be a filename is now described by its size rather than
+  quoted; a path still is, because it is the whole of what the reader has to fix.
+
 - **A listener can no longer delete what it cannot write ([#31](https://github.com/medzuch/jwt-bundle/issues/31)).**
   `JwtIssuingEvent::setClaim()` refused the claims the issuer decides itself; `removeClaim()`
   refused nothing, so a listener could drop a `scope` that `issuers.*.claims` deliberately put

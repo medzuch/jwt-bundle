@@ -41,6 +41,12 @@ use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 final class KeyLoader
 {
     /**
+     * Longest value {@see nameSource()} will quote back. Comfortably above any
+     * real path and comfortably below any key document.
+     */
+    private const LONGEST_PRINTABLE_PATH = 255;
+
+    /**
      * The concrete class each half resolves to, so the container can declare
      * what a key service actually is. `PrivateKey` and `PublicKey` are
      * interfaces: naming one as a service class tells `debug:container` and
@@ -246,8 +252,9 @@ final class KeyLoader
      * a path is one question, and answering it in two places is how an error
      * ends up naming an inline document the loader read from a file.
      *
-     * A path is safe to print; the contents of an inline key are not, and never
-     * appear in a message.
+     * A path is safe to print; the contents of an inline key are not, and a
+     * value that turned out to be neither is described rather than quoted
+     * ({@see nameSource()}).
      *
      * @return array{content: string, origin: string}
      */
@@ -264,14 +271,46 @@ final class KeyLoader
             // a readable path is as likely to be a mangled inline document as a
             // wrong filename.
             throw new InvalidKeyException(sprintf(
-                'Cannot read the %s key from "%s": it is neither a readable file nor a %s (which begins with %s).',
+                'Cannot read the %s key from %s: it is neither a readable file nor a %s (which begins with %s).',
                 $algorithm,
-                $source,
+                self::nameSource($source),
                 $format,
                 $opening,
             ));
         }
 
         return ['content' => $contents, 'origin' => sprintf('%s %s in "%s"', $algorithm, $format, $source)];
+    }
+
+    /**
+     * A value that turned out to be neither armoured nor readable, named for
+     * an error message.
+     *
+     * A filename is the whole of what the reader has to fix, so it is printed.
+     * A value that cannot be one — too long, more than a line, or carrying the
+     * shape of a key — is far likelier to be a document whose armour was
+     * mangled on its way through the environment, and printing that would put
+     * key material into a log, an error page and the profiler, which is the one
+     * place it must never reach (K9). Those are described instead of quoted.
+     *
+     * The rule cannot be exact: a short single-line value is printed, because
+     * at that length it is a path or nothing usable. Every spelling of a PEM or
+     * a JWK is longer than that, or has newlines, or says so.
+     */
+    private static function nameSource(string $source): string
+    {
+        $printable = !str_contains($source, "\n")
+            && !str_contains($source, "\r")
+            && strlen($source) <= self::LONGEST_PRINTABLE_PATH
+            && !str_contains($source, '-----')
+            && !str_contains($source, '"d"');
+
+        return $printable
+            ? sprintf('"%s"', $source)
+            : sprintf(
+                'a %d-byte value spanning %d lines, not printed in case it is key material',
+                strlen($source),
+                substr_count($source, "\n") + 1,
+            );
     }
 }
