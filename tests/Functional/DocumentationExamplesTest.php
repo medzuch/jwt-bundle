@@ -207,6 +207,94 @@ final class DocumentationExamplesTest extends KernelTestCase
         self::assertGreaterThan(10, $checked, 'the documentation should carry relative links');
     }
 
+    #[TestDox('every document the distributed ones link to is distributed too')]
+    public function testLinkedDocumentsShipWithThePackage(): void
+    {
+        // `.gitattributes` decides what a `composer require` unpacks into
+        // `vendor/`, and the documents above are all in it. A link from one of
+        // them into a file the archive left out is a broken link in every
+        // installation — invisible here, where the whole repository is present,
+        // which is why this asks git rather than the filesystem.
+        $targets = [];
+
+        foreach (self::DOCUMENTS as $document) {
+            $directory = \dirname($document);
+
+            preg_match_all('/\]\(([^)\s]+)\)/', self::document($document), $matches);
+
+            foreach ($matches[1] as $link) {
+                if (str_starts_with($link, 'http') || str_starts_with($link, '#')) {
+                    continue;
+                }
+
+                [$path] = explode('#', $link, 2);
+
+                if ('' === $path) {
+                    continue;
+                }
+
+                $target = self::normalise(('.' === $directory ? '' : $directory . '/') . $path);
+                $targets[$target] = $document;
+            }
+        }
+
+        self::assertNotSame([], $targets, 'the distributed documents should link to something');
+
+        foreach (self::excludedFromTheArchive(array_keys($targets)) as $excluded) {
+            self::fail(sprintf(
+                '%s links to "%s", which .gitattributes keeps out of the distributed archive',
+                $targets[$excluded],
+                $excluded,
+            ));
+        }
+    }
+
+    /**
+     * Which of these paths `git archive` would leave out, a directory rule
+     * counting for everything under it.
+     *
+     * @param list<string> $paths
+     *
+     * @return list<string>
+     */
+    private static function excludedFromTheArchive(array $paths): array
+    {
+        $asked = [];
+
+        foreach ($paths as $path) {
+            for ($candidate = $path; '.' !== $candidate; $candidate = \dirname($candidate)) {
+                $asked[$candidate] = $path;
+            }
+        }
+
+        $command = 'git -C ' . escapeshellarg(\dirname(__DIR__, 2)) . ' check-attr export-ignore -- '
+            . implode(' ', array_map('escapeshellarg', array_keys($asked))) . ' 2>/dev/null';
+
+        $output = [];
+        $status = 0;
+        exec($command, $output, $status);
+
+        self::assertSame(0, $status, 'git check-attr could not answer; this test needs a git checkout');
+        self::assertCount(count($asked), $output, 'git check-attr answered for a different set of paths');
+
+        $excluded = [];
+
+        foreach ($output as $line) {
+            // "<path>: export-ignore: set" — the path may itself contain ": ",
+            // so the two known fields are taken off the end.
+            $fields = explode(': ', $line);
+            $verdict = array_pop($fields);
+            array_pop($fields);
+            $candidate = implode(': ', $fields);
+
+            if ('set' === $verdict && isset($asked[$candidate])) {
+                $excluded[$asked[$candidate]] = true;
+            }
+        }
+
+        return array_keys($excluded);
+    }
+
     /**
      * Service ids an example promises by declaring the sections it declares.
      *

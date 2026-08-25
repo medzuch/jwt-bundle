@@ -15,13 +15,13 @@ a class or method signature would be.
 
 Phase 4 of the roadmap in [`docs/plan.md`](docs/plan.md), and the end of the road to
 1.0: DX and hardening. The plan's own test for this release is
-"1.0 = the T1+T2 set, documented, with a BC policy", and all three halves are
+"1.0 = the T1+T2 set, documented, with a BC policy", and all three criteria are
 met — the last two capability rows (C7's custom token types and C10's freshness
 ceiling) landed in this cycle, [`docs/cookbook.md`](docs/cookbook.md) and
 [`UPGRADE.md`](UPGRADE.md) say how to use it and how to move between versions, and
 [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) says what will not break.
 
-**What 1.0 changes for you.** The configuration surface, ten service ids, five
+**What 1.0 changes for you.** The configuration surface, eleven service ids, five
 commands, the authorization names and nineteen classes are now covered by a
 policy rather than by good intentions: a rename or a removal is a major release
 with a deprecation path, and the suite holds the package to it — one test parses
@@ -30,9 +30,11 @@ boots a container with one of everything and resolves every promised id to the
 type its row names. What is deliberately *not* promised is written down too, so
 the four service ids nobody should reach for say so by name.
 
-**Upgrading from 0.3.0** takes no configuration change. Everything added here is
-inert until configured, and the one signature that moved
-(`AccessTokenHandler`'s constructor) is `@internal` and built by the container.
+**Upgrading from 0.3.0** takes no configuration change: everything added since is
+inert until configured. One promised signature moved — `IssuedToken` gained a
+third constructor argument, `$jti` — which costs a test double or a fixture that
+builds one by hand, and nothing else. (`AccessTokenHandler`'s constructor moved
+too, but it is `@internal` and the container builds it.)
 [`UPGRADE.md`](UPGRADE.md) has the details.
 
 ### Added

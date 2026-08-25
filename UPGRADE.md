@@ -4,16 +4,19 @@ The [changelog](CHANGELOG.md) says what changed. This file says what you have to
 version to version, and nothing else — if a release asks nothing of you, that is what its
 section says.
 
-**Pre-1.0, configuration keys are public API but the surface is young.** A minor release may
-move it. No configuration key has been removed or renamed yet: every release so far has been
-additive, with new sections inert until configured, so what the notes below carry is behaviour
-an application already running could notice rather than configuration it must rewrite.
+**Configuration keys are public API**, and from 1.0.0 a rename or a removal is a major release
+with a deprecation path ([`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) says what else
+is covered). No configuration key has been removed or renamed in any release so far: every one
+has been additive, with new sections inert until configured, so what the notes below carry is
+behaviour an application already running could notice rather than configuration it must
+rewrite.
 
-## 0.3.0 → 0.4.0 (unreleased)
+## 0.3.0 → 1.0.0
 
-**Nothing in your configuration has to change**, and every new section — `token_extractors`,
-`consumers.*.denylist`, `consumers.*.user`, `consumers.*.realm` — is absent until you write it.
-Five things are worth knowing.
+**Nothing in your configuration has to change**, and every option this release adds is absent
+until you write it: `token_extractors`, `log_levels`, and `consumers.*.denylist`,
+`.user`, `.realm`, `.max_token_age`, `.token_type` and `.required_claims`. Five things are
+worth knowing anyway.
 
 **The RFC 6750 refusal answers are opt-in.** `medzuch_jwt.entry_point.<name>` and
 `medzuch_jwt.access_denied.<name>` exist for every consumer, but a firewall answers as it did

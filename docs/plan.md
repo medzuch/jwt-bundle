@@ -11,7 +11,7 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** v1.0.0 released. Phases 0 through 4 of §7 are shipped: PEM and JWK
+> **Status.** This is v1.0.0. Phases 0 through 4 of §7 are shipped: PEM and JWK
 > key sources, named keys and rotation, the JWKS publisher, `jwt:key:generate`;
 > federation — remote JWK Sets with local fallback (K5, K6), ID-token
 > verification (C6) and the audience policy (C14); and Phase 4's DX and
