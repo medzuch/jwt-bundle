@@ -410,9 +410,16 @@ a class or method signature would be.
   value is read as a document or as a path depending on how it starts, and a value that is
   neither — an inline key that lost its `-----BEGIN` line somewhere between the secret store and
   the configuration — was quoted back in full by the exception naming both readings. That message
-  reaches the log, the error page and the profiler at once, which is exactly where key material
-  must never be. A value that cannot be a filename is now described by its size rather than
-  quoted; a path still is, because it is the whole of what the reader has to fix.
+  reaches the log, the error page, `jwt:config:check` and the profiler at once, which is exactly
+  where key material must never be.
+
+  What gets quoted is now decided by what a path looks like rather than by what a key looks like:
+  one line, no longer than `PATH_MAX`, and made of components no longer than 40 characters. A
+  negative rule would have to be told about every key shape in advance, and the first one it was
+  never told about is real — a P-256 PKCS#8 body folded onto one line is 184 bytes with no
+  armour, no newline and no `"d"`. The cost is a bare filename carrying no separator and no
+  suffix, which is described by its size like anything else; the message still names the
+  algorithm, and the container names the key.
 
 - **A listener can no longer delete what it cannot write ([#31](https://github.com/medzuch/jwt-bundle/issues/31)).**
   `JwtIssuingEvent::setClaim()` refused the claims the issuer decides itself; `removeClaim()`

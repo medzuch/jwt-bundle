@@ -41,10 +41,13 @@ use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 final class KeyLoader
 {
     /**
-     * Longest value {@see nameSource()} will quote back. Comfortably above any
-     * real path and comfortably below any key document.
+     * What {@see looksLikeAPath()} will accept: `PATH_MAX` on Linux, and a
+     * component ceiling sitting in the gap measured between the longest path
+     * component worth naming and the shortest run of encoded key material.
      */
-    private const LONGEST_PRINTABLE_PATH = 255;
+    private const LONGEST_PATH = 4096;
+
+    private const LONGEST_PATH_COMPONENT = 40;
 
     /**
      * The concrete class each half resolves to, so the container can declare
@@ -287,30 +290,67 @@ final class KeyLoader
      * an error message.
      *
      * A filename is the whole of what the reader has to fix, so it is printed.
-     * A value that cannot be one — too long, more than a line, or carrying the
-     * shape of a key — is far likelier to be a document whose armour was
-     * mangled on its way through the environment, and printing that would put
-     * key material into a log, an error page and the profiler, which is the one
-     * place it must never reach (K9). Those are described instead of quoted.
+     * Anything else is described by its size instead, because the value that
+     * reaches this branch is quite often the key itself: an environment
+     * variable cannot hold a real newline, so a PEM travels through one folded
+     * onto a single line, and the pipeline that folds it is the same one that
+     * eats the `-----BEGIN` header. Printing that would put key material into a
+     * log, an error page, `jwt:config:check` and the profiler at once, which is
+     * the one place it must never reach (K9).
      *
-     * The rule cannot be exact: a short single-line value is printed, because
-     * at that length it is a path or nothing usable. Every spelling of a PEM or
-     * a JWK is longer than that, or has newlines, or says so.
+     * So the test is what a path looks like rather than what a key looks like:
+     * a positive rule refuses the shapes nobody thought of, where a list of
+     * known-dangerous ones prints them. A path is short, one line, and made of
+     * short components — encoded key material is one long run. Measured over
+     * 3000 generated keys the shortest such run was 48 characters, for a
+     * compacted P-256 PKCS#8 body; the wordiest plausible path came to 33.
+     *
+     * The cost is a bare filename carrying no separator and no suffix, which is
+     * described rather than named. The message still says which algorithm, and
+     * the container says which key.
      */
     private static function nameSource(string $source): string
     {
-        $printable = !str_contains($source, "\n")
-            && !str_contains($source, "\r")
-            && strlen($source) <= self::LONGEST_PRINTABLE_PATH
-            && !str_contains($source, '-----')
-            && !str_contains($source, '"d"');
-
-        return $printable
+        return self::looksLikeAPath($source)
             ? sprintf('"%s"', $source)
-            : sprintf(
-                'a %d-byte value spanning %d lines, not printed in case it is key material',
-                strlen($source),
-                substr_count($source, "\n") + 1,
-            );
+            : sprintf('%s, not printed in case it is key material', self::describe($source));
+    }
+
+    /**
+     * Every clause is a way of being a path, and all of them must hold: a value
+     * failing any one is described rather than quoted.
+     */
+    private static function looksLikeAPath(string $source): bool
+    {
+        if ('' === $source || strlen($source) > self::LONGEST_PATH || 1 === preg_match('~\R~', $source)) {
+            return false;
+        }
+
+        $components = preg_split('~[/\\\\.]+~', $source);
+
+        if (!is_array($components) || 1 === count($components)) {
+            // No separator at all: a directory, an extension or neither, and
+            // the shapes that reach here without one are `{"kty":...` and a
+            // folded base64 body far more often than `jwtkey`.
+            return false;
+        }
+
+        foreach ($components as $component) {
+            if (strlen($component) > self::LONGEST_PATH_COMPONENT) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function describe(string $source): string
+    {
+        $lines = preg_split('~\R~', $source);
+        $count = is_array($lines) ? count($lines) : 1;
+
+        return 1 === $count
+            ? sprintf('a %d-byte single-line value', strlen($source))
+            : sprintf('a %d-byte value across %d lines', strlen($source), $count);
     }
 }

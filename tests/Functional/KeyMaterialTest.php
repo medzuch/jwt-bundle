@@ -38,6 +38,15 @@ use Symfony\Component\Security\Core\Exception\AuthenticationException;
  * disk, the parameters `debug:container` prints, the message an unreadable key
  * throws, and the records a logger collected.
  *
+ * The dumped-container half of K9 is a promise about the `%env()%` spelling,
+ * which is the one the documentation recommends. Material written literally
+ * into `config/packages/` is in the compiled container by construction — it
+ * reaches a factory argument, and `debug:container --show-arguments` will print
+ * it — because it was already in a file on the same disk. What holds for both
+ * spellings is everything else here: no container parameter, no error message,
+ * no log, no profiler. Hence the asymmetry below, where the env test reads the
+ * whole cache directory and the inline test reads the parameters.
+ *
  * Every secret below is generated per run and never leaves the test process.
  */
 #[CoversClass(MedzuchJwtBundle::class)]
@@ -61,6 +70,18 @@ final class KeyMaterialTest extends KernelTestCase
 
     /** @var array{private: string, public: string}|null */
     private static ?array $ed25519 = null;
+
+    /**
+     * Generated key material lives in static properties for the life of the
+     * class, which is what makes one RSA generation serve every test here. This
+     * is the one class that would rather not leave it there afterwards.
+     */
+    public static function tearDownAfterClass(): void
+    {
+        self::$secrets = [];
+        self::$encrypted = null;
+        self::$ed25519 = null;
+    }
 
     /**
      * @param array<array-key, mixed> $options
@@ -124,7 +145,7 @@ final class KeyMaterialTest extends KernelTestCase
         )]);
 
         $parameters = json_encode(self::getContainer()->getParameterBag()->all(), \JSON_THROW_ON_ERROR);
-        $printed = self::debugContainer(['--parameters' => true]);
+        $printed = self::runCommand('debug:container', ['--parameters' => true]);
 
         foreach ($secrets as $kind => $secret) {
             self::assertStringNotContainsString($secret, $parameters, sprintf('the %s is a container parameter', $kind));
@@ -151,12 +172,43 @@ final class KeyMaterialTest extends KernelTestCase
     }
 
     #[TestDox('a path that cannot be read is quoted back, because that is the thing to fix')]
-    public function testAnUnreadablePathIsStillNamed(): void
+    #[DataProvider('readablePaths')]
+    public function testAnUnreadablePathIsStillNamed(string $path): void
     {
         $this->expectException(InvalidKeyException::class);
-        $this->expectExceptionMessage('"/no/such/directory/private.pem"');
+        $this->expectExceptionMessage(sprintf('"%s"', $path));
 
-        KeyLoader::signingKey('/no/such/directory/private.pem', 'RS256', null, null);
+        KeyLoader::signingKey($path, 'RS256', null, null);
+    }
+
+    #[TestDox('jwt:config:check reports a key it cannot build without printing it')]
+    public function testTheConfigCheckCommandNeverPrintsTheKey(): void
+    {
+        // The one surface that reaches an operator by hand: the command builds
+        // each service and prints `getMessage()` for whatever refuses. A key
+        // whose armour was lost fails there, and the output is the thing that
+        // gets pasted into a ticket.
+        //
+        // Not the profiler: a local key is built when the consumer is, so it
+        // throws out of the container before any handler exists to trace.
+        $mangled = self::compact(self::freshKeypair()['private']);
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['bad' => ['pem_public' => $mangled, 'algorithm' => 'RS256']],
+            'consumers' => ['api' => [
+                'issuer' => self::ISSUER,
+                'audience' => self::AUDIENCE,
+                'keys' => ['bad'],
+                'allowed_algorithms' => ['RS256'],
+            ]],
+        ]]);
+
+        $printed = self::runCommand('jwt:config:check');
+
+        // It did report the failure — otherwise there is nothing to redact.
+        self::assertStringContainsString('FAIL', $printed);
+        self::assertStringContainsString('not printed in case it is key material', $printed);
+        self::assertStringNotContainsString(substr($mangled, 40, 60), $printed);
     }
 
     #[TestDox('nothing a verification logs carries the key it verified against')]
@@ -174,13 +226,17 @@ final class KeyMaterialTest extends KernelTestCase
 
         self::bootKernel(['medzuch_jwt' => $configuration]);
 
-        // Both verdicts: an acceptance names the key it used, and a refusal is
-        // where a message quoting whatever went wrong would be tempting.
-        self::handler('hs')->getUserBadgeFrom(self::issuer('hs')->issue('user-42')->value);
+        // Every key, and both verdicts on each: records that never mentioned a
+        // key are no evidence that a key is never mentioned. The refusal is a
+        // token minted by the wrong issuer of the three, so each consumer
+        // reaches its own key and then refuses.
+        foreach ([['hs', 'rs'], ['rs', 'ed'], ['ed', 'hs']] as [$consumer, $other]) {
+            self::handler($consumer)->getUserBadgeFrom(self::issuer($consumer)->issue('user-42')->value);
 
-        try {
-            self::handler('hs')->getUserBadgeFrom(self::issuer('rs')->issue('user-42')->value);
-        } catch (AuthenticationException) {
+            try {
+                self::handler($consumer)->getUserBadgeFrom(self::issuer($other)->issue('user-42')->value);
+            } catch (AuthenticationException) {
+            }
         }
 
         $logger = self::getContainer()->get('test.logger');
@@ -195,24 +251,110 @@ final class KeyMaterialTest extends KernelTestCase
     }
 
     /**
+     * One case per clause of the rule, so deleting any one of them turns this
+     * suite red — the previous fixtures each tripped three at once, which meant
+     * the suite pinned nothing.
+     *
      * @return iterable<string, array{string, string, callable(string): mixed}>
      */
     public static function mangledDocuments(): iterable
     {
+        // Newlines. The armour is gone but the folding survived, which is what
+        // a `sed`-ed key file looks like.
         $pem = self::freshKeypair()['private'];
-        $jwk = json_encode(['kty' => 'OKP', 'crv' => 'Ed25519', 'alg' => 'EdDSA', 'x' => 'unused', 'd' => 'the-seed-nobody-else-has'], \JSON_THROW_ON_ERROR);
 
-        yield 'a PEM that lost its armour' => [
-            ltrim($pem, '-'),
-            substr($pem, 40, 60),
+        yield 'a PEM that lost its header and footer' => [
+            self::stripArmour($pem),
+            substr(self::stripArmour($pem), 40, 60),
             static fn(string $material): mixed => KeyLoader::signingKey($material, 'RS256', null, null),
         ];
 
-        yield 'a JWK that lost its opening brace' => [
-            ltrim($jwk, '{'),
-            'the-seed-nobody-else-has',
-            static fn(string $material): mixed => KeyLoader::signingKeyFromJwk($material, 'EdDSA', null),
+        // Component length, and the case this rule was rewritten for: a
+        // compacted P-256 body is ~184 bytes on one line with no armour and no
+        // "d", so every clause of the old negative rule let it through.
+        $ec = self::compact(self::freshKeypair(['private_key_type' => \OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1'])['private']);
+
+        yield 'an ES256 key folded onto one line' => [
+            $ec,
+            substr($ec, 30, 60),
+            static fn(string $material): mixed => KeyLoader::signingKey($material, 'ES256', null, null),
         ];
+
+        // No separator at all: an `oct` JWK names its secret "k", so the old
+        // rule's check for "d" never saw it either.
+        $oct = ltrim(json_encode([
+            'kty' => 'oct',
+            'alg' => 'HS256',
+            'k' => rtrim(strtr(base64_encode('a-shared-secret-of-at-least-32-b'), '+/', '-_'), '='),
+        ], \JSON_THROW_ON_ERROR), '{');
+
+        yield 'an oct JWK that lost its opening brace' => [
+            $oct,
+            'YS1zaGFyZWQtc2VjcmV0',
+            static fn(string $material): mixed => KeyLoader::signingKeyFromJwk($material, 'HS256', null),
+        ];
+
+        // Newlines, on their own: two paths in one variable is what a
+        // heredoc-assigned env var looks like when it was meant to hold one,
+        // and every component here is short enough to pass the rest.
+        yield 'more than one line, path-shaped on each' => [
+            "/etc/jwt/private.pem\n/etc/jwt/public.pem",
+            '/etc/jwt/private.pem',
+            static fn(string $material): mixed => KeyLoader::signingKey($material, 'RS256', null, null),
+        ];
+
+        // No separator, on its own: short enough to clear every other clause,
+        // which is the secret parked in the wrong key that a length rule alone
+        // would print. It is also the documented cost — a bare filename is
+        // described rather than named.
+        yield 'a bare name carrying no separator' => [
+            'jwtkey',
+            'jwtkey',
+            static fn(string $material): mixed => KeyLoader::signingKey($material, 'RS256', null, null),
+        ];
+
+        // Length. Path-shaped throughout and still refused, because nothing
+        // this long can be opened.
+        $enormous = str_repeat('some/directory/', 400) . 'private.pem';
+
+        yield 'a path longer than PATH_MAX' => [
+            $enormous,
+            'some/directory/some/directory',
+            static fn(string $material): mixed => KeyLoader::signingKey($material, 'RS256', null, null),
+        ];
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function readablePaths(): iterable
+    {
+        yield 'an absolute path' => ['/no/such/directory/private.pem'];
+        // Over the 255 this rule used to cap at: a filename limit, not a path
+        // one, and a deep path is the reader's whole answer.
+        yield 'a deep path' => ['/var/lib/' . str_repeat('nested/', 40) . 'signing.pem'];
+        yield 'a Windows path' => ['C:\\Users\\marcin\\AppData\\Roaming\\jwt\\private.pem'];
+        yield 'a bare filename' => ['private.pem'];
+    }
+
+    /**
+     * A PEM with its `-----BEGIN`/`-----END` lines removed, folding intact.
+     */
+    private static function stripArmour(string $pem): string
+    {
+        return implode("\n", array_filter(
+            array_map('trim', explode("\n", $pem)),
+            static fn(string $line): bool => '' !== $line && !str_starts_with($line, '-----'),
+        ));
+    }
+
+    /**
+     * The same, folded onto one line — which is how a PEM arrives when it
+     * travels through an environment variable that cannot hold a newline.
+     */
+    private static function compact(string $pem): string
+    {
+        return str_replace("\n", '', self::stripArmour($pem));
     }
 
     /**
@@ -250,7 +392,7 @@ final class KeyMaterialTest extends KernelTestCase
     /**
      * @param array<string, mixed> $input
      */
-    private static function debugContainer(array $input): string
+    private static function runCommand(string $name, array $input = []): string
     {
         $kernel = self::$kernel;
         self::assertInstanceOf(KernelInterface::class, $kernel);
@@ -258,7 +400,7 @@ final class KeyMaterialTest extends KernelTestCase
         $application = new Application($kernel);
         $application->setAutoExit(false);
 
-        $tester = new CommandTester($application->find('debug:container'));
+        $tester = new CommandTester($application->find($name));
         $tester->execute($input + ['--no-debug' => true]);
 
         return $tester->getDisplay();
@@ -284,6 +426,7 @@ final class KeyMaterialTest extends KernelTestCase
         foreach (self::$environment as $name => $value) {
             putenv($name . '=' . $value);
             $_ENV[$name] = $value;
+            $_SERVER[$name] = $value;
         }
 
         return self::$environment;

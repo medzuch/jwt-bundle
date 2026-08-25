@@ -136,6 +136,41 @@ final class ProfilerPanelTest extends WebTestCase
         }
     }
 
+    #[TestDox('the key it verified against is in neither the data nor what is rendered (K9)')]
+    public function testNoKeyMaterialReachesTheProfiler(): void
+    {
+        // The token has two tests of its own above. This is the other half of
+        // K9 and the one nothing else covers: the key, and what is rendered
+        // rather than the data behind it — a template is free to print
+        // something the collector merely held, and `menu` reads the same
+        // collector as `panel`.
+        $client = self::createClient();
+        $client->enableProfiler();
+
+        $token = self::tokens()->token('alice', scopes: ['reports.read']);
+
+        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token]);
+
+        self::assertResponseIsSuccessful();
+
+        $panel = self::render($client);
+        $menu = self::render($client, 'menu');
+
+        // Rendered something first: a panel that collected nothing carries no
+        // secret either, and would pass everything below.
+        self::assertStringContainsString('alice', $panel);
+
+        // Serialized, because that is what the profiler writes to disk and
+        // what a later request reads back.
+        $stored = serialize(self::collector($client));
+
+        foreach (['the secret' => self::SECRET, 'the signature' => explode('.', $token)[2]] as $what => $material) {
+            self::assertStringNotContainsString($material, $stored, sprintf('%s was collected', $what));
+            self::assertStringNotContainsString($material, $panel, sprintf('%s is in the panel', $what));
+            self::assertStringNotContainsString($material, $menu, sprintf('%s is in the menu', $what));
+        }
+    }
+
     #[TestDox('something that is not a JWT is collected as what it is, and rendered as what it is not')]
     public function testGarbageIsCollectedAndRendered(): void
     {
@@ -285,13 +320,13 @@ final class ProfilerPanelTest extends WebTestCase
         self::assertInstanceOf(AccessTokenHandler::class, $container->get('medzuch_jwt.handler.api'));
     }
 
-    private static function render(KernelBrowser $client): string
+    private static function render(KernelBrowser $client, string $block = 'panel'): string
     {
         $twig = self::getContainer()->get('twig');
         self::assertInstanceOf(Environment::class, $twig);
 
         return $twig->load('@MedzuchJwt/data_collector/jwt.html.twig')
-            ->renderBlock('panel', ['collector' => self::collector($client)]);
+            ->renderBlock($block, ['collector' => self::collector($client)]);
     }
 
     /**
@@ -303,41 +338,6 @@ final class ProfilerPanelTest extends WebTestCase
         $configuration['consumers']['api']['user'] = ['mode' => 'custom', 'factory' => 'test.user_factory'];
 
         return $configuration;
-    }
-
-    #[TestDox('the key it verified against is in neither the data nor the panel (K9)')]
-    public function testNoKeyMaterialReachesTheProfiler(): void
-    {
-        // The token has two tests of its own above. This is the other half of
-        // K9 and the one nothing else covers: the key, and the rendered panel
-        // rather than the data behind it — a template is free to print
-        // something the collector merely held.
-        $client = self::createClient();
-        $client->enableProfiler();
-
-        $token = self::tokens()->token('alice', scopes: ['reports.read']);
-
-        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token]);
-
-        self::assertResponseIsSuccessful();
-
-        $collector = self::collector($client);
-
-        $twig = self::getContainer()->get('twig');
-        self::assertInstanceOf(Environment::class, $twig);
-
-        $panel = $twig->load('@MedzuchJwt/data_collector/jwt.html.twig')
-            ->renderBlock('panel', ['collector' => $collector]);
-
-        // Rendered something first: a panel that collected nothing carries no
-        // secret either, and would pass everything below.
-        self::assertStringContainsString('alice', $panel);
-
-        // Serialized, because that is what the profiler writes to disk and
-        // what a later request reads back.
-        self::assertStringNotContainsString(self::SECRET, serialize($collector));
-        self::assertStringNotContainsString(self::SECRET, $panel);
-        self::assertStringNotContainsString(explode('.', $token)[2], $panel);
     }
 
     private static function collector(KernelBrowser $client): JwtDataCollector
