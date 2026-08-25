@@ -72,39 +72,31 @@ final class KeyMaterialTest extends KernelTestCase
         return new TestKernel(is_array($config) ? $config : []);
     }
 
-    protected function tearDown(): void
-    {
-        foreach (array_keys(self::$environment) as $name) {
-            putenv($name);
-            unset($_ENV[$name], $_SERVER[$name]);
-        }
-
-        self::$environment = [];
-
-        parent::tearDown();
-    }
-
     #[TestDox('material given as an env reference never reaches the compiled container')]
     public function testEnvironmentMaterialStaysOutOfTheCompiledContainer(): void
     {
         $secrets = self::environment();
 
-        self::bootKernel(['medzuch_jwt' => self::configuration(
-            hmac: '%env(JWT_K9_SECRET)%',
-            pemPrivate: '%env(JWT_K9_PEM)%',
-            passphrase: '%env(JWT_K9_PASSPHRASE)%',
-            jwkPrivate: '%env(JWT_K9_JWK)%',
-        )]);
+        try {
+            self::bootKernel(['medzuch_jwt' => self::configuration(
+                hmac: '%env(JWT_K9_SECRET)%',
+                pemPrivate: '%env(JWT_K9_PEM)%',
+                passphrase: '%env(JWT_K9_PASSPHRASE)%',
+                jwkPrivate: '%env(JWT_K9_JWK)%',
+            )]);
 
-        // Round-tripped first, so what follows is a container that really did
-        // build working keys out of those references rather than one that
-        // dropped them: a container holding no secret because it holds no key
-        // would pass every assertion below.
-        foreach (['hs', 'rs', 'ed'] as $name) {
-            self::assertSame('user-42', self::handler($name)->getUserBadgeFrom(self::issuer($name)->issue('user-42')->value)->getUserIdentifier());
+            // Round-tripped first, so what follows is a container that really
+            // did build working keys out of those references rather than one
+            // that dropped them: a container holding no secret because it holds
+            // no key would pass every assertion below.
+            foreach (['hs', 'rs', 'ed'] as $name) {
+                self::assertSame('user-42', self::handler($name)->getUserBadgeFrom(self::issuer($name)->issue('user-42')->value)->getUserIdentifier());
+            }
+
+            $compiled = self::compiledContainer();
+        } finally {
+            self::forgetEnvironment();
         }
-
-        $compiled = self::compiledContainer();
 
         foreach ($secrets as $name => $secret) {
             self::assertStringNotContainsString($secret, $compiled, sprintf('%s reached the compiled container', $name));
@@ -295,6 +287,16 @@ final class KeyMaterialTest extends KernelTestCase
         }
 
         return self::$environment;
+    }
+
+    private static function forgetEnvironment(): void
+    {
+        foreach (array_keys(self::$environment) as $name) {
+            putenv($name);
+            unset($_ENV[$name], $_SERVER[$name]);
+        }
+
+        self::$environment = [];
     }
 
     /**
