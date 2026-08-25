@@ -7,6 +7,7 @@
 #   make qa          — quality gate (CS + PHPStan + tests)
 #   make qa-84       — the same gate on PHP 8.4 (own container, own vendor/)
 #   make symfony V=6.4.*  — re-resolve dependencies against one Symfony line
+#   make lowest      — the floor as an application installs it (CI's lowest leg)
 #
 # Pass extra args with ARGS="...":
 #   make test ARGS="--filter=BundleBootTest"
@@ -22,7 +23,7 @@ EXEC84  := $(DC84) exec -T php84
 # Symfony line to resolve against; matches the CI matrix (see DEC-2).
 V ?= 7.4.*
 
-.PHONY: help build up down sh install update test qa qa-84 test-84 phpstan cs cs-fix symfony clean
+.PHONY: help build up down sh install update test qa qa-84 test-84 lowest phpstan cs cs-fix symfony clean
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Available targets:\n\n"} \
@@ -63,6 +64,14 @@ qa: ## Quality gate: style + phpstan + tests
 
 symfony: ## Re-resolve against one Symfony line: make symfony V=6.4.*
 	$(DC) exec -T -e SYMFONY_REQUIRE=$(V) php composer update
+
+# Tests only, like the CI leg: PHPStan reads the dependency's docblocks, and an
+# old patch release states less than a current one — that is a fact about the
+# release, not about this code. Leaves the container resolved at the floor;
+# `make symfony V=*` puts it back.
+lowest: ## The floor as an application installs it: oldest 6.4, oldest jwt-php
+	$(DC) exec -T -e SYMFONY_REQUIRE=6.4.* php composer update --prefer-lowest --prefer-stable
+	$(EXEC) vendor/bin/phpunit $(ARGS)
 
 qa-84: ## Quality gate on PHP 8.4 (the ceiling of the supported window)
 	$(DC84) up -d php84

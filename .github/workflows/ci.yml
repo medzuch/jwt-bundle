@@ -66,7 +66,7 @@ jobs:
         run: composer cs:check
 
   qa:
-    name: QA (PHP ${{ matrix.php }}, Symfony ${{ matrix.symfony }})
+    name: QA (PHP ${{ matrix.php }}, Symfony ${{ matrix.symfony }}${{ matrix.dependencies == 'lowest' && ', lowest' || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -77,11 +77,21 @@ jobs:
         # The supported window from DEC-2 in docs/plan.md. Symfony 8 requires
         # PHP 8.4, and the library's ceiling is 8.4, so the corners are fixed:
         # oldest supported Symfony on the PHP floor, newest on the ceiling.
+        #
+        # `8.*`, not `8.0.*`: composer.json allows `^8.0`, so pinning the leg to
+        # the first minor would let 8.1 reach an application before it reaches
+        # CI. The LTS legs can be pinned because an LTS line does not move.
+        #
+        # `dependencies: lowest` is the floor as an application actually
+        # installs it — Symfony 6.4.0 rather than the newest 6.4 patch, and
+        # jwt-php 1.2.0 rather than the newest 1.x. Without it "we support 6.4"
+        # means "we support whatever 6.4 patch was newest on the day CI ran".
         include:
           - { php: '8.3', symfony: '6.4.*' }
+          - { php: '8.3', symfony: '6.4.*', dependencies: 'lowest' }
           - { php: '8.3', symfony: '7.4.*' }
           - { php: '8.4', symfony: '7.4.*' }
-          - { php: '8.4', symfony: '8.0.*' }
+          - { php: '8.4', symfony: '8.*' }
     env:
       XDEBUG_MODE: off
       SYMFONY_REQUIRE: ${{ matrix.symfony }}
@@ -120,19 +130,30 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.composer-cache.outputs.dir }}
-          key: composer-${{ runner.os }}-php${{ matrix.php }}-sf${{ matrix.symfony }}-${{ hashFiles('composer.json') }}
-          restore-keys: composer-${{ runner.os }}-php${{ matrix.php }}-sf${{ matrix.symfony }}-
+          key: composer-${{ runner.os }}-php${{ matrix.php }}-sf${{ matrix.symfony }}-${{ matrix.dependencies || 'highest' }}-${{ hashFiles('composer.json') }}
+          restore-keys: composer-${{ runner.os }}-php${{ matrix.php }}-sf${{ matrix.symfony }}-${{ matrix.dependencies || 'highest' }}-
 
       # `update`, not `install`: composer.lock is deliberately gitignored, so
       # the resolved tree is CI's own and always current. That is what surfaces
       # tooling drift early — see the schedule trigger above.
       - name: Resolve dependencies
-        run: composer update --no-interaction --no-progress --prefer-dist
+        run: |
+          composer update --no-interaction --no-progress --prefer-dist \
+            ${{ matrix.dependencies == 'lowest' && '--prefer-lowest --prefer-stable' || '' }}
 
       # Static analysis, unlike style, *is* per-leg: PHPStan resolves against
       # the Symfony version actually installed, so a signature that changed
       # between majors only shows up on the leg that has it.
+      #
+      # Except on the lowest leg, which asks a different question. PHPStan reads
+      # the *dependency's* docblocks, and an old patch release simply says less:
+      # `ServiceProviderInterface` had no `@template` until later in 6.4, and
+      # psr/log 3.0.0's `log()` declares a bare `array`. Satisfying that would
+      # mean weakening types in `src/` to match what a year-old release failed
+      # to state. What the floor has to answer is whether the bundle *works*
+      # there, and that is the suite below.
       - name: Static analysis (PHPStan level 9)
+        if: matrix.dependencies != 'lowest'
         run: composer phpstan -- --error-format=github
 
       - name: Tests
