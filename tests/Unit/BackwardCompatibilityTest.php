@@ -190,6 +190,11 @@ final class BackwardCompatibilityTest extends TestCase
      * between, nothing else. A class written with no docblock at all would
      * otherwise inherit the previous one in the file, `@internal` included, and
      * be disclaimed by a comment about something else.
+     *
+     * The tag has to be on a line of its own, too. A docblock that *mentions*
+     * the tag — a public class pointing at the internal ones beside it — is
+     * describing its neighbours, not disclaiming itself, and reading that as a
+     * disclaimer would drop a promised class out of the policy silently.
      */
     private static function saysInternal(string $source, int $offset): bool
     {
@@ -206,7 +211,8 @@ final class BackwardCompatibilityTest extends TestCase
 
         $opens = strrpos($head, '/**');
 
-        return false !== $opens && str_contains(substr($head, $opens), '@internal');
+        return false !== $opens
+            && 1 === preg_match('~^\s*\*\s*@internal\b~m', substr($head, $opens));
     }
 
     /**

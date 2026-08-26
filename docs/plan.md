@@ -90,7 +90,7 @@ class.
 jwt-bundle/
 ├── composer.json                  # type: symfony-bundle, requires medzuch/jwt-php
 ├── src/
-│   ├── MedzuchJwtBundle.php       # AbstractBundle: configure() + loadExtension()
+│   ├── MedzuchJwtBundle.php       # AbstractBundle: what Symfony calls, and nothing else
 │   ├── Security/                  # token handlers, user resolution, voters, denylist
 │   ├── Issuer/                    # token-minting services, claim providers
 │   ├── Key/                       # key source loaders, key registry, rotation
@@ -98,7 +98,7 @@ jwt-bundle/
 │   ├── Event/                     # dispatched events
 │   ├── Command/                   # console commands (jwt:key:generate)
 │   ├── DataCollector/             # profiler panel and the pass that wires it
-│   ├── DependencyInjection/       # the pass that checks configured service ids
+│   ├── DependencyInjection/       # the config tree, the registration, the refusals, the passes
 │   └── Test/                      # test helpers shipped to consumers
 ├── config/
 │   ├── services.yaml              # the clock, and nothing else
@@ -129,9 +129,16 @@ Key mechanics that shape the design:
 - **Firewall integration** goes through Symfony's native `access_token` block
   and a token-handler service. The bundle deliberately does **not** implement
   `AuthenticatorFactoryInterface` and ships no firewall key of its own (DEC-1 in
-  §9). `AbstractBundle` puts the config tree and the service registration in the
-  bundle class, so `DependencyInjection/` holds neither: what lives there is the
-  compiler passes and the object they read, which have nowhere else to go.
+  §9).
+- **`DependencyInjection/` holds the work, the bundle class holds the hooks.**
+  `AbstractBundle` invites both the tree and the registration into the bundle
+  class, and taking that invitation cost 2,010 lines in one file. They live next
+  door instead, as `@internal` classes the bundle delegates to on the first line
+  of each hook: `ConfigurationTree` (the tree), `ServiceRegistrar` (definitions),
+  `ConsoleCommands` (the five commands, skipped whole where `symfony/console` is
+  absent), `ConfigurationGuard` (refusals that need more than one node to
+  decide) and `KeyEntries` (the normalised `keys:` section). The compiler passes
+  and the object they read were already there.
 
 ---
 
