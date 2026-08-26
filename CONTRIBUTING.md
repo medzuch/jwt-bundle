@@ -38,6 +38,73 @@ path, so the bar is the same as the library's. Read this before opening a PR.
    fenced as `yaml` — fence it as `text` — or it reddens the suite on the day
    it is written.
 
+## Comments
+
+About a third of `src/` is comments. They are well written, which is the
+problem: a second documentation set, stored where nothing checks it against the
+first. The README, the cookbook, `UPGRADE.md`,
+`BACKWARD-COMPATIBILITY.md` and [`docs/plan.md`](docs/plan.md) are the
+documentation. Three rules keep `src/` from becoming a copy of them.
+
+1. **Say why, not what.** The code says what it does. A comment earns its place
+   only where the reason is surprising — where the next reader would otherwise
+   delete the line, widen the type, or "simplify" the check. One to four lines,
+   next to what they explain — rule 3 is what governs the summary on a type,
+   not this. The test is not "is this true?" but "would someone get this wrong
+   without it?"
+
+2. **Don't paste the documentation.** If a docblock explains a *feature* — how
+   to configure it, what it is for, when to reach for it — that text already
+   exists in the README, and the copy drifts the day the README is edited
+   first. Quote the heading instead — `README "What a refusal tells the
+   caller"` — so that renaming it leaves something greppable rather than a
+   comment saying "see the README". A decision belongs in `docs/plan.md` §9 as
+   a `DEC-n`; once it is written there, the comment shrinks to a pointer.
+
+3. **Public API gets a summary; `@internal` gets the invariant.** The types
+   `BACKWARD-COMPATIBILITY.md` freezes are the exception to rule 1's
+   one-to-four: they carry three to eight lines — what it is, how you use it, a
+   link. An `@internal` class carries what a reviewer of the
+   wiring needs — the invariant, the failure mode, the RFC line — and not the
+   tutorial a user needs, because no user reads it.
+
+**Structural PHPDoc is not a comment.** `@param`, `@return`, `@throws`,
+`@internal`, `@extends`, a shaped `array{…}` — they stay wherever PHPStan or an
+IDE needs them, at whatever length that takes. This section is about the prose
+around them.
+
+**Length is a smell, not a limit.** A docblock that is all invariant stays
+however long it runs. A security rationale stays when it has *no other home* —
+why a key's contents never reach an exception message; why the `scope` a
+challenge names is filtered to RFC 6749 §3.3 scope-tokens on the way out. One
+the README already carries becomes a pointer like any other feature
+explanation. Keeping it because it is *also* a rationale is how this charter
+would freeze the copy it exists to stop, and cutting to a line count is how it
+would delete the rationale that has nowhere else to live. Both failures are
+this charter's to cause.
+
+The test that separates them: **could someone who never opens this file need to
+read this?** If yes it is about the product, and the product has a README. If it
+only means anything next to the code below it, it stays.
+
+Config-node `info()` strings are exempt in the other direction: they *are*
+`config:dump-reference`, so they stay tutorial and are written for an
+application developer reading their own console.
+
+A comment that belongs, from `src/Key/KeyLoader.php`:
+
+> A path is safe to print; the contents of an inline key are not, and a value
+> that turned out to be neither is described rather than quoted.
+
+Nobody configuring this bundle needs that sentence; it means something only to
+whoever next edits the message on the line below it. Getting it wrong leaks key
+material into an exception message, which it once did.
+
+Not enforced by a tool, deliberately. Neither php-cs-fixer nor PHPStan can tell
+a useful why from a lecture, and a line-count rule would delete the wrong half.
+Reviewers apply this; a custom rule is worth discussing only after a cleanup
+pass, not instead of one.
+
 ## Supported versions
 
 PHP 8.3 and 8.4; Symfony `^6.4 || ^7.4 || ^8.0`. The CI matrix is the promise —
