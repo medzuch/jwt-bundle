@@ -38,6 +38,54 @@ path, so the bar is the same as the library's. Read this before opening a PR.
    fenced as `yaml` — fence it as `text` — or it reddens the suite on the day
    it is written.
 
+## Comments
+
+About a third of `src/` is comments. They are well written, which is the
+problem: a second documentation set, stored where nothing checks it against the
+first. The README, the cookbook, `UPGRADE.md`,
+`BACKWARD-COMPATIBILITY.md` and [`docs/plan.md`](docs/plan.md) are the
+documentation. Three rules keep `src/` from becoming a copy of them.
+
+1. **Say why, not what.** The code says what it does. A comment earns its place
+   only where the reason is surprising — where the next reader would otherwise
+   delete the line, widen the type, or "simplify" the check. One to four lines,
+   next to what they explain. The test is not "is this true?" but "would
+   someone get this wrong without it?"
+
+2. **Don't paste the documentation.** If a docblock explains a *feature* — how
+   to configure it, what it is for, when to reach for it — that text already
+   exists in the README, and the copy drifts the day the README is edited
+   first. Name the section instead. A decision belongs in `docs/plan.md` §9 as
+   a `DEC-n`; once it is written there, the comment shrinks to a pointer.
+
+3. **Public API gets a summary; `@internal` gets the invariant.** The types
+   `BACKWARD-COMPATIBILITY.md` freezes carry three to eight lines: what it is,
+   how you use it, a link. An `@internal` class carries what a reviewer of the
+   wiring needs — the invariant, the failure mode, the RFC line — and not the
+   tutorial a user needs, because no user reads it.
+
+**Two things this does not license.** Length is a smell, not a limit: a long
+docblock that is all invariant stays, and a security rationale stays *whatever*
+it costs — why naming a missing scope is not a leak, why a key's contents never
+reach an exception message. Deleting one of those to hit a line count is the
+failure this charter is most likely to cause. And config-node `info()` strings
+are exempt in the other direction: they *are* `config:dump-reference`, so they
+stay tutorial and are written for an application developer reading their own
+console.
+
+A comment that belongs, from `src/Key/KeyLoader.php`:
+
+> A path is safe to print; the contents of an inline key are not, and a value
+> that turned out to be neither is described rather than quoted.
+
+That is an invariant the next line implements, and getting it wrong leaks key
+material into an exception message — which it once did.
+
+Not enforced by a tool, deliberately. Neither php-cs-fixer nor PHPStan can tell
+a useful why from a lecture, and a line-count rule would delete the wrong half.
+Reviewers apply this; a custom rule is worth discussing only after a cleanup
+pass, not instead of one.
+
 ## Supported versions
 
 PHP 8.3 and 8.4; Symfony `^6.4 || ^7.4 || ^8.0`. The CI matrix is the promise —
