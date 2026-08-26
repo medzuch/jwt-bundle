@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional\App;
 
+use FilesystemIterator;
 use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\JwtBundle\Event\JwtRejectedEvent;
 use Medzuch\JwtBundle\Event\JwtVerifiedEvent;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
+use SplFileInfo;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Config\Loader\LoaderInterface;
@@ -66,6 +70,7 @@ final class TestKernel extends Kernel
             // cannot be exercised without both.
             $container->register('test.http_client', StubHttpClient::class)->setPublic(true);
             $container->register('test.cache', ArrayCache::class)->setPublic(true);
+            $container->register('test.cache_that_throws', ThrowingCache::class)->setPublic(true);
             $container->register('test.cache_pool', ArrayAdapter::class)->setPublic(true);
             $container->register('test.user_factory', TenantUserFactory::class)->setPublic(true);
             $container->register('test.denylist', InMemoryDenylist::class)->setPublic(true);
@@ -107,18 +112,62 @@ final class TestKernel extends Kernel
     }
 
     /**
-     * Keyed by configuration *and* runtime, so two boots never share a
-     * container compiled for a different dependency set.
+     * Keyed by configuration, by runtime, and by the package's own source, so
+     * two boots never share a container compiled from something else.
+     *
+     * The last of those is the one that is easy to leave out and expensive to
+     * leave out. A compiled container tracks the *configuration files* it was
+     * built from and rebuilds when one changes; a PHP class is not one of them,
+     * so editing an extension and re-running would reuse the container the
+     * previous edit produced. CI never notices — it starts with an empty
+     * directory every time — and locally it is a green suite for code that was
+     * never compiled, which is the worst shape a green suite can take.
      */
     public function getCacheDir(): string
     {
         return sprintf(
-            '%s/medzuch-jwt-bundle-tests/php%d-sf%d-%s',
+            '%s/medzuch-jwt-bundle-tests/php%d-sf%d-%s-%s',
             sys_get_temp_dir(),
             \PHP_VERSION_ID,
             Kernel::VERSION_ID,
+            self::sourceFingerprint(),
             hash('xxh128', serialize([$this->bundleConfig, $this->aliases])),
         );
+    }
+
+    /**
+     * Size and modification time of everything the container is built from,
+     * hashed once per process.
+     *
+     * Contents would be exact and would mean reading the whole package on every
+     * boot; a file whose bytes change while its size and mtime do not is not
+     * something an editor, a checkout or a patch produces.
+     */
+    private static function sourceFingerprint(): string
+    {
+        static $fingerprint = null;
+
+        if (null !== $fingerprint) {
+            return $fingerprint;
+        }
+
+        $stamps = [];
+
+        foreach (['src', 'config'] as $directory) {
+            $files = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator(__DIR__ . '/../../../' . $directory, FilesystemIterator::SKIP_DOTS),
+            );
+
+            foreach ($files as $file) {
+                if ($file instanceof SplFileInfo && $file->isFile()) {
+                    $stamps[$file->getPathname()] = [$file->getSize(), $file->getMTime()];
+                }
+            }
+        }
+
+        ksort($stamps);
+
+        return $fingerprint = hash('xxh128', serialize($stamps));
     }
 
     /**
