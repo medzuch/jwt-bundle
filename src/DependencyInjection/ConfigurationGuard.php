@@ -66,20 +66,17 @@ final class ConfigurationGuard
     }
 
     /**
-     * Key resolution is first-match-wins in both directions and never falls
-     * back: {@see \Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver} matches a
-     * header `kid` exactly or throws, and a `kid`-less header takes the first
-     * key bound to the token's algorithm. So two keys a token cannot tell apart
-     * — sharing a `kid`, or sharing an algorithm with no `kid` at all — mean the
-     * second one verifies nothing, and rotation silently invalidates every
-     * token still in flight (DEC-5).
+     * Two keys a token cannot tell apart — sharing a `kid`, or sharing an
+     * algorithm with no `kid` at all — mean the second verifies nothing and
+     * rotation silently invalidates every token in flight. DEC-5 has why
+     * resolution is first-match-wins in both directions and never falls back.
      *
-     * The ambiguity is a property of one verification set, not of the
-     * configuration as a whole: the resolver only ever sees the keys of the
-     * consumer doing the verifying. Checking globally would reject the most
-     * ordinary asymmetric setup there is — a private entry and a public entry
-     * that are two halves of one keypair, bound to the same algorithm and
-     * carrying the same `kid` precisely because they are the same key.
+     * The ambiguity is a property of one verification set rather than of the
+     * configuration as a whole, and that is what makes checking per-consumer
+     * mandatory: the resolver only ever sees the keys of the consumer doing the
+     * verifying, and a global check would reject the most ordinary asymmetric
+     * setup there is — a private entry and a public entry that carry the same
+     * `kid` precisely because they are the same key.
      *
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
      */

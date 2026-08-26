@@ -149,17 +149,12 @@ final class ServiceRegistrar
      * it, for {@see CheckConfiguredServicesPass} to check once every extension
      * has run.
      *
-     * The defaults are in here too, and they are the entries that most need a
+     * The defaults are in here too, and they are the entries that need the
      * hint: `psr18.http_client` and `cache.app` are ids this bundle chose, so
-     * an application missing one has written nothing wrong — it has enabled
-     * neither the client nor the cache the default assumes.
-     *
-     * Only one of those two hints fires in practice. `psr18.http_client` exists
-     * where `psr/http-client` is installed and `framework.http_client` is
-     * enabled, which is a real thing to forget; `cache.app` is registered by
-     * FrameworkBundle unconditionally, so its hint is for a container that has
-     * no FrameworkBundle at all. The entry stays either way — an id this bundle
-     * chose is still an id it should not assume.
+     * an application missing one has written nothing wrong. Only the first of
+     * the two fires in practice — FrameworkBundle registers `cache.app`
+     * unconditionally — and the entry stays anyway, because an id this bundle
+     * chose is still one it should not assume.
      *
      * @param array{
      *     clock: string|null,

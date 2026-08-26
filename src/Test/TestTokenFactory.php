@@ -20,27 +20,14 @@ use Psr\Clock\ClockInterface;
 
 /**
  * Mints the tokens a functional test needs, including the ones an issuer will
- * not make.
+ * not make: expired, not yet valid, addressed elsewhere, signed by a stranger.
  *
- * `AccessTokenIssuer` mints tokens meant to work: it takes the configured key,
- * audience and lifetime, and refuses a negative TTL. Testing a firewall needs
- * the other half — a token that expired an hour ago, one addressed to another
- * service, one from an issuer nobody trusts — and building those by hand is a
- * dozen lines of library calls repeated in every test case that needs one.
+ * README "Testing an application that uses this" has the recipes and the reason
+ * it reads no configuration.
  *
- * **It reads no configuration, deliberately.** A test that mints from the same
- * container it verifies against cannot catch a configuration mistake: an
- * `audience` that is wrong in both halves agrees with itself, and the test
- * passes. Naming the issuer, the audience and the key here is what makes the
- * test an assertion about the contract rather than about the configuration's
- * agreement with itself.
- *
- * A token nobody should accept is a factory of its own — nothing to switch on:
- *
- *     $stranger = TestTokenFactory::hmac(self::ISSUER, self::AUDIENCE, 'another-secret-of-32-bytes-plus!!');
- *
- * Ships in `src/`, not in the test suite, because it is for applications using
- * this bundle. It calls no assertion library and needs none.
+ * Ships in `src/` rather than in this package's own test suite because it is
+ * for applications using the bundle. It calls no assertion library and needs
+ * none.
  */
 final class TestTokenFactory
 {

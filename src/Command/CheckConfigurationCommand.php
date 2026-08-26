@@ -20,43 +20,19 @@ use Throwable;
 /**
  * Builds everything the container left for later, and says what broke.
  *
- * A configuration mistake this bundle can see is refused when the container is
- * built. What it cannot see is whether the material behind the configuration is
- * there: a `pem_private` naming a file that was not deployed, an env variable
- * that arrived empty, a secret two bytes short of the algorithm it is bound to.
- * Those are factory arguments, and a factory runs when its service is first
- * used — which is to say, on somebody's first request.
+ * README "From the console" carries what it is for, its exit statuses, and why
+ * `ok` means built and not working. Two things about the remote probe are here
+ * because they are nowhere else.
  *
- * This command is that first request, without the request. It asks the
- * container for every key, consumer, issuer and verifier and reports what came
- * back, so a deploy can fail on the step that had one job rather than on the
- * traffic that arrived after it.
+ * It does not always reach the endpoint. The resolver reads its cache first, so
+ * a warm entry with the refresh window closed answers "reachable" without a
+ * request leaving the host — cache-reachable rather than issuer-reachable.
  *
- * Remote key sets are reached over the network, so `--skip-remote` exists for
- * the gate that runs without one. Probing costs a fetch — two, when the
- * refresh window is open and the throttle allows a retry — which is a fair
- * price at deploy time and would not be on every request. Two things the probe
- * does not answer. It does not say the set is *useful*: an empty document and a
- * populated one both miss a `kid` nobody published, and the resolver offers no
- * way to ask for the set itself. And it does not always reach the endpoint —
- * the resolver reads its cache first, so a warm entry with the refresh window
- * closed answers "reachable" without a request leaving the host. That is a
- * small window and a warm cache means production is being served, but it is
- * cache-reachable rather than issuer-reachable.
- *
- * It is also the one thing here with a side effect: a probe that does reach the
- * endpoint records the attempt, so the issuer's refresh-on-miss window closes
- * for as long as `min_refresh` says. The same trade every token bearing an
- * unknown `kid` already makes, and at deploy time it costs nothing worth
- * counting.
- *
- * `ok` means built, which is worth reading literally. Building a consumer
- * builds its denylist, but a denylist's constructor stores a cache adapter and
- * asks it nothing — a Redis that will fail on the first request looks ok here.
- * Building an issuer builds every `TokenClaimProviderInterface` behind it,
- * which is the "first request without the request" idea working as intended: a
- * provider that cannot be constructed fails the deploy, and one that opens a
- * connection in its constructor will open it here.
+ * And it is the one command here with a side effect: a probe that does reach
+ * the endpoint records the attempt, so the issuer's refresh-on-miss window
+ * closes for as long as `min_refresh` says. That is the same trade every token
+ * bearing an unknown `kid` already makes, and at deploy time it costs nothing
+ * worth counting.
  *
  * @internal
  */

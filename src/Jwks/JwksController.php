@@ -17,10 +17,8 @@ use Symfony\Component\HttpFoundation\Request;
  * that signs. That check lives at container build, because the one thing this
  * endpoint must never do is succeed at the wrong moment.
  *
- * The bundle deliberately registers no route. Where a JWKS document lives is
- * the application's decision — under `/.well-known/`, behind a prefix, on a
- * separate host — and a route the bundle owns would either take that choice
- * away or duplicate it.
+ * The bundle registers no route: DEC-6 has why that is the application's
+ * decision, and README "Publishing a JWK Set" has how to make it.
  *
  * @internal
  */

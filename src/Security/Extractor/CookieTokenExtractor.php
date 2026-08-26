@@ -12,18 +12,10 @@ use Symfony\Component\Security\Http\AccessToken\AccessTokenExtractorInterface;
  * anywhere better: a browser.
  *
  * Symfony ships extractors for the `Authorization` header, the query string and
- * a form-encoded body; this is the missing one. A single-page application that
- * keeps its token in JavaScript keeps it where any injected script can read it,
- * so a `HttpOnly` cookie is the safer place — and then something has to read
- * the token back off the request, which the header extractor cannot.
- *
- * **What the cookie costs.** The browser attaches it to requests this
- * application did not initiate, which is what CSRF is. A token in an
- * `Authorization` header is immune by construction, because nothing attaches
- * one for you. Moving to a cookie buys protection from script access and takes
- * on cross-site request forgery in exchange, and neither this extractor nor
- * anything else in the bundle can close that on its own: the cookie needs
- * `SameSite`, and state-changing routes need their own defence.
+ * a form-encoded body; this is the missing one. README "Where the token comes
+ * from" has the trade it asks you to take — script access bought, cross-site
+ * request forgery taken on — and what has to be true elsewhere for it to be
+ * safe.
  *
  * @internal
  */

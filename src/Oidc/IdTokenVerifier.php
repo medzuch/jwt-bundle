@@ -18,20 +18,14 @@ use Psr\Log\LoggerInterface;
 /**
  * Verifies an OIDC ID token for one relying-party registration.
  *
- * **Not a firewall authenticator, deliberately.** An ID token says who
- * authenticated to the client that requested it; it is not a bearer credential
- * for an API, and accepting one as such is the confusion RFC 9068 exists to
- * end — a token minted for a browser session would authorise a machine call.
- * So the bundle registers no `access_token` handler for it: the application
- * calls this service where it already is, in its OIDC callback, and decides
- * what a verified `sub` means locally.
+ * Not a firewall authenticator (DEC-8), and README "Verifying an ID token (OIDC
+ * relying party)" says why that matters to whoever writes the callback: an ID
+ * token is not a bearer credential for an API.
  *
- * The `nonce` is a per-request value, bound to one authentication request and
- * kept by the application (in the session, usually) until the callback comes
- * back. The library binds it when the consumer is built, so a consumer built
- * once at container time could only ever check a nonce fixed at deploy — which
- * is not a nonce. Hence a consumer per call, with the value the application
- * has, and the container holding what does not change.
+ * A consumer per call rather than one built at container time, because of the
+ * nonce: the library binds it when the consumer is built, so a container-built
+ * consumer could only ever check a value fixed at deploy — which is not a
+ * nonce. What does not change is what the container holds.
  */
 final class IdTokenVerifier
 {
