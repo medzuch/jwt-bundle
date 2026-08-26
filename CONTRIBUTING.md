@@ -29,6 +29,14 @@ path, so the bar is the same as the library's. Read this before opening a PR.
 6. **No new required dependency.** Optional integrations (HTTP client, cache,
    Doctrine, Monolog) are wired only when configured, and their packages stay
    in `require-dev` + `suggest`.
+7. **The documentation is compiled, `docs/plan.md` included.** Every ```yaml
+   block under `medzuch_jwt:` in the README, the cookbook, the upgrade notes,
+   the BC policy and the plan is booted into a real container by
+   `DocumentationExamplesTest`, and every `medzuch_jwt.*` service id they name
+   has to be one those examples build. The consequence worth knowing before you
+   edit the plan: a configuration it *proposes* rather than ships cannot be
+   fenced as `yaml` — fence it as `text` — or it reddens the suite on the day
+   it is written.
 
 ## Supported versions
 
