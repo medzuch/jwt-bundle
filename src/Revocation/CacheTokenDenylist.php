@@ -13,22 +13,14 @@ use Psr\SimpleCache\CacheInterface;
  * A denylist in a PSR-16 cache, where an entry expires with the token it
  * refuses.
  *
- * The store this asks for is the one whose semantics match the data: an entry
- * that must outlive one token and no longer is exactly `set($key, true, $ttl)`,
- * and a cache does the forgetting itself. A relational table would need a
- * schema, a migration and something to sweep it (DEC-3).
+ * The store matches the data: an entry that must outlive one token and no
+ * longer is exactly `set($key, true, $ttl)`, and a cache forgets on its own
+ * where a table would need a schema, a migration and a sweeper (DEC-3).
  *
- * What it gives up is durability: flush the cache and every revocation is
- * forgotten, while the tokens they refused are still valid. For a deployment
- * that cannot accept that, the interface is the extension point — an
- * application-owned implementation over its own store, named under
- * `denylist.service`.
- *
- * It also couples authentication to the cache being reachable: a store that
- * throws takes the request with it, as a 500 rather than a 401. That is the
- * right way for a revocation check to fail — the alternative is accepting
- * tokens nobody can vouch for while the store is down — but it is a coupling
- * worth knowing about before an outage teaches it.
+ * README "Revoking a token" has what that costs — a flush forgets every
+ * revocation, and a throwing store takes the request with it as a 500 rather
+ * than a 401 — and names the interface as the way out for a deployment that
+ * cannot accept either.
  *
  * @internal
  */

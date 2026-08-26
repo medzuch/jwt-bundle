@@ -29,24 +29,19 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\service_l
 final class ConsoleCommands
 {
     /**
-     * The console is a dependency of applications, not of bundles: a worker
-     * image that installs neither `symfony/console` nor a way to run it is a
-     * normal way to deploy this bundle, and a service definition for a class
-     * that cannot be loaded would break its container for a command it can
-     * never run.
+     * Registers nothing at all where `symfony/console` is absent: a worker image
+     * that installs no way to run a command is a normal deploy, and a definition
+     * for a class that cannot be loaded would break its container.
      *
-     * The same reasoning one level down: `jwt:token:create` is registered only
-     * where an issuer is, and `jwt:jwks:dump` only where there are keys to
-     * publish, because a command whose every run ends in "nothing is
-     * configured" is a line in `bin/console list` that promises something this
-     * application cannot do. `jwt:token:inspect` is registered either way — it
-     * decodes without configuration, which is exactly what a token from
-     * somewhere else needs.
+     * The same rule one level down — `jwt:token:create` only where an issuer is
+     * configured, `jwt:jwks:dump` only where there are keys to publish — because
+     * a command whose every run ends in "nothing is configured" promises
+     * something the application cannot do. `jwt:token:inspect` is registered
+     * either way; it decodes without configuration.
      *
      * The two that take a name reach their subjects through a service locator
-     * rather than a container: the names are known at build time, and a command
-     * that could fetch anything would be a command that can be asked for
-     * anything.
+     * rather than the container: the names are known at build time, and a
+     * command that could fetch anything could be asked for anything.
      *
      * @param array{keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, remote_jwks: array<string, mixed>, ...} $config
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys

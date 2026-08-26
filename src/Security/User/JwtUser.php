@@ -63,23 +63,14 @@ final class JwtUser implements ProvidesScopes, UserInterface
     }
 
     /**
-     * The `scope` claim, which RFC 6749 §3.3 makes a space-delimited string and
-     * RFC 9068 §2.2.3 carries into an access token under that name. Read
-     * directly rather than through configuration: an issuer sending scopes
-     * somewhere else is one whose grants the role mapping can pick up, and two
-     * configurable spellings of the same idea would be one too many.
+     * The `scope` claim, space-delimited as RFC 6749 §3.3 has it, or a list of
+     * strings, which no RFC asks for and issuers send anyway. README "Scopes"
+     * says why the name is not configurable.
      *
-     * A list of strings is read too, though no RFC asks for one: issuers send
-     * it, the intent is not ambiguous, and refusing it would deny every scope
-     * check for a token that authenticates perfectly — a failure mode with
-     * nothing to learn from. It is also what the role mapping does one file
-     * over, and two readings of "the claim holds several things" would be one
-     * too many.
-     *
-     * Read with `get()` rather than `getString()`, which throws on a claim that
-     * is present and not a string. This runs during authorization, outside the
-     * handler's try, so a claim of any other shape has to grant nothing rather
-     * than turn a 403 into a 500.
+     * `get()` rather than `getString()`, which throws on a claim that is present
+     * and not a string: this runs during authorization, outside the handler's
+     * try, so a claim of any other shape has to grant nothing rather than turn a
+     * 403 into a 500.
      *
      * @return list<string>
      */

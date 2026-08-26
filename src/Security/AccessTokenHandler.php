@@ -23,21 +23,15 @@ use Symfony\Component\Security\Http\Authenticator\Passport\Badge\UserBadge;
  *
  * Every failure becomes the same `BadCredentialsException`, carrying the
  * original as `previous` and a {@see RejectionReason} of its own: what refused
- * the token belongs in the log and on {@see JwtRejectedEvent}, not in the
+ * the token belongs in the log and on {@see JwtRejectedEvent}, never in the
  * response, where RFC 6750 §3.1 has three error codes and "which claim" is not
- * among them. A token that is accepted announces itself too, on
- * {@see JwtVerifiedEvent} — both are dispatched only where an application has
- * an event dispatcher, which outside a framework it may not.
+ * among them. Both events are dispatched only where the application has a
+ * dispatcher, which outside a framework it may not.
  *
- * Who the token names, and what that identity becomes, is a
- * {@see UserResolverInterface}: a lookup in the application's store, a user
- * built from the claims, or the application's own mapping — which may derive an
- * identity the token carries in no single claim.
- *
- * The audience check the library makes is the one RFC 7519 §4.1.3 describes:
- * a token is for us if `aud` names us, whoever else it also names. An
- * `exclusive` consumer adds the other half — that it names nobody else — which
- * RFC 9068 §3 asks of access tokens and which is not the same question.
+ * Who the token names, and what that becomes, is a
+ * {@see UserResolverInterface}. README "Who the token turns out to be" has the
+ * three modes; README "Audience policy" has why `exclusive` asks a different
+ * question of `aud` than RFC 7519 §4.1.3 does.
  *
  * @internal
  */

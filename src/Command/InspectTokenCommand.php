@@ -26,20 +26,14 @@ use Symfony\Contracts\Service\ServiceProviderInterface;
 
 /**
  * Decodes a token, and — given a consumer — says what that consumer would make
- * of it.
- *
- * Two halves, because they answer different questions and one of them works
- * without any configuration at all. Decoding shows what is in the token,
- * verified or not, which is what you want when the token came from somewhere
- * else. Verification says whether *this* application would accept it, and names
- * the reason when it would not — the reason RFC 6750 deliberately keeps off the
- * wire.
+ * of it. README "From the console" has both halves and when each is the one you
+ * want.
  *
  * Verification runs the real path: the configured consumer's handler, the same
- * one the firewall calls. So a token this command calls good is a token the
+ * one the firewall calls. A token this command calls good is a token the
  * firewall accepts, and the events an application listens for are dispatched
- * here as they would be on a request — deliberately, because an answer arrived
- * at by a second, quieter route would be worth much less.
+ * here exactly as on a request — which is deliberate, because an answer reached
+ * by a second, quieter route would be worth much less.
  *
  * @internal
  */

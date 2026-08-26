@@ -11,19 +11,16 @@ use Medzuch\JwtBundle\Issuer\TokenIssuance;
  * Dispatched with the claims assembled and nothing signed yet, so a listener
  * can still change what the token will say.
  *
- * The same hook a `TokenClaimProviderInterface` is, for the code that cannot be
- * one: a listener in another bundle, a subscriber that also listens for
- * something else, a decision that belongs to a class the application does not
- * own. It runs after the providers and after the caller's own `issue()` claims,
- * which makes it the last word — deliberately, since "adjust the claims" is
- * only possible for something that sees all of them.
+ * The same hook a `TokenClaimProviderInterface` is, for code that cannot be one
+ * — a listener in another bundle, a class the application does not own. README
+ * "Claims an application adds" has where it sits in the order and why it is
+ * last.
  *
- * The reserved names are refused here rather than after dispatch, so the
- * exception is thrown inside the listener that wrote one and the stack trace
- * names it. Both ways of writing are refused: setting a claim the issuer
- * decides, and removing one — a listener deleting the `scope` that
- * `issuers.*.claims` put there would mint a token granting less than the
- * configuration says, and the caller would never learn that it had.
+ * Reserved names are refused inside the listener that wrote one, so the stack
+ * trace names it, and both directions are refused: setting a claim the issuer
+ * decides, and *removing* one — deleting the `scope` that `issuers.*.claims`
+ * put there would mint a token granting less than the configuration says, and
+ * the caller would never learn that it had.
  */
 final class JwtIssuingEvent
 {

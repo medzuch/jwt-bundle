@@ -8,26 +8,16 @@ use PHPUnit\Framework\Assert;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Assertions about the `WWW-Authenticate` header a refusal carries.
+ * Assertions about the `WWW-Authenticate` header a refusal carries, so a test
+ * names the fact it is about instead of asserting the whole string.
  *
- * The alternative is asserting the whole string, which is what this bundle's
- * own suite did until the realm changed and every case had to be edited. A
- * refusal is a few facts — a challenge was made, this error was named, this
- * scope would have sufficed — and a test should say which of them it is about.
- *
- * The scheme and the parameter names are matched case-insensitively, because
- * RFC 9110 §11.6.1 says both are, and the spacing between parameters is ignored
- * because Symfony's own header and this bundle's differ in it — a test should
- * not fail over which of them answered.
- *
- * One challenge per header is assumed: every `name="value"` after the scheme is
- * read. A response carrying `Bearer …, Basic …` would have both schemes'
- * parameters in one map, and splitting that correctly is a parser rather than a
- * test helper. Symfony emits one challenge; if yours emits two, assert on the
- * header yourself.
- *
- * Used from a PHPUnit test case; it calls PHPUnit's assertions and is useless
- * anywhere else.
+ * README "Testing an application that uses this" has the recipes. Two things
+ * about the matching are only here. Scheme and parameter names are compared
+ * case-insensitively, as RFC 9110 §11.6.1 has them, and the spacing between
+ * parameters is ignored — Symfony's header and this bundle's differ in it, and
+ * a test should not fail over which of them answered. And one challenge per
+ * header is assumed: `Bearer …, Basic …` would put both schemes' parameters in
+ * one map, and splitting that correctly is a parser, not a test helper.
  */
 trait AssertsBearerChallenges
 {

@@ -28,13 +28,12 @@ use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
  * `-----BEGIN` nor `{`. Both spellings are normal: a path for a mounted key
  * file, the contents for a key delivered through the environment.
  *
- * A JWK states its own `alg`, `kid` and `use`, and so does the configuration
- * that points at it. The two must agree: the configuration is what the bundle
- * reasons about at build time — which algorithms a consumer can verify, which
- * keys a token can tell apart (DEC-5) — and a document that quietly said
- * something else would make that reasoning describe a different key than the
- * one in use. What the configuration states and the document omits is filled
- * in; a disagreement is refused, naming both readings.
+ * A JWK and the configuration pointing at it have to agree about `alg`, `kid`
+ * and `use`; README "JWK keys, and EdDSA" says what that means for whoever
+ * writes one. It is enforced here rather than trusted because of DEC-5: the
+ * container was built from the configuration, so a document quietly saying
+ * something else would make build-time reasoning describe a different key than
+ * the one actually in use.
  *
  * @internal
  */

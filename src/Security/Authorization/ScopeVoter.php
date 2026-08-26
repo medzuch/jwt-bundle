@@ -10,21 +10,15 @@ use Symfony\Component\Security\Core\Authorization\Voter\Voter;
 
 /**
  * Answers `SCOPE_x` checks — `#[IsGranted('SCOPE_users.write')]`,
- * `is_granted('SCOPE_read')` — from the scopes the token granted.
+ * `is_granted('SCOPE_read')` — from the scopes the token granted. README
+ * "Scopes" has why they stay their own namespace instead of becoming roles.
  *
- * Scopes are not roles wearing a different prefix. A role says what someone is
- * and outlives any one token; a scope says what the client holding this token
- * was allowed to ask for on their behalf, and two tokens naming the same person
- * can carry different ones. Mapping scopes into roles collapses that
- * distinction, so `SCOPE_` stays its own namespace.
- *
- * A user that carries no scopes is denied rather than passed over: "this user
- * has no such scope" is an answer, and under the default affirmative strategy a
- * voter of the application's own can still grant.
- *
- * The bare `SCOPE_` is answered too, and denied: no token grants the empty
- * scope, and an attribute nothing else will answer is better refused than left
- * to the access decision manager's default.
+ * Two answers that are decisions rather than defaults. A user carrying no
+ * scopes is denied rather than passed over: "this user has no such scope" is an
+ * answer, and under the affirmative strategy a voter of the application's own
+ * can still grant. And the bare `SCOPE_` is answered, and denied — no token
+ * grants the empty scope, and an attribute nothing else will answer is better
+ * refused than left to the access decision manager's default.
  *
  * @extends Voter<string, mixed>
  *

@@ -15,22 +15,16 @@ use Symfony\Component\DependencyInjection\Reference;
  * Puts a tracing decorator in front of the handler a firewall actually calls,
  * and only where somebody is watching.
  *
- * A pass rather than `loadExtension()`, because the question it asks —
- * "is the profiler enabled?" — is answered by another bundle's extension, and
- * extensions run in an order no bundle should depend on. Passes run after all
- * of them.
- *
- * It lives beside the collector because the panel is the only thing it exists
- * for. The bundle's other pass,
- * {@see \Medzuch\JwtBundle\DependencyInjection\CheckConfiguredServicesPass},
- * is in `DependencyInjection/` for the same reason read the other way: its
- * subject is the configuration, not anything in here.
+ * A pass rather than `loadExtension()`, because the question it asks — is the
+ * profiler enabled? — is answered by another bundle's extension, and extensions
+ * run in an order no bundle should depend on.
  *
  * It must run before child definitions are resolved, which is what the default
  * `TYPE_BEFORE_OPTIMIZATION` gives it: by `TYPE_OPTIMIZE` every
  * {@see ChildDefinition} has been flattened into a plain one, the loop below
  * would match nothing, and the panel would be empty against a container that
- * built cleanly.
+ * built cleanly. `ProfilerPanelTest` is what notices; it is the tripwire for
+ * this whole file.
  *
  * @internal
  */

@@ -16,27 +16,14 @@ use Psr\EventDispatcher\EventDispatcherInterface;
  * The profile supplies `iss`, `iat`, `jti` and the `at+jwt` header; this adds
  * the configured audience, client id and TTL, and whatever the caller passes.
  *
- * Four sources of claims, in the order they are applied, each able to override
- * the one before it:
+ * README "Claims an application adds" has the four claim sources, the order in
+ * which each overrides the one before, and why `client_id` and `scope` are
+ * closed to providers and listeners while configuration and `issue()` may still
+ * set them.
  *
- * 1. static claims from configuration — the same for every token;
- * 2. `TokenClaimProviderInterface` services, in tag priority order — the same
- *    for every token too, but decided by code that can look things up;
- * 3. the caller's `$claims` argument — this token, said explicitly;
- * 4. listeners on `JwtIssuingEvent` — last, because adjusting a claim set means
- *    seeing all of it.
- *
- * The builder is filled before any of them and the assembled map is applied on
- * top of it, so what protects the registered claims is the library: it refuses
- * them in `withClaim()` whoever sends them.
- *
- * Two claims deserve naming, because they are not registered claims and so the
- * library does not protect them: a static or per-call claim called `client_id`
- * or `scope` silently replaces the configured client id or the `$scopes`
- * argument. That follows from "a caller can override one deliberately", but
- * both carry RFC 9068 meaning, so overriding either should be a decision — and
- * only sources 1 and 3 are allowed to make it. A provider or a listener runs
- * for tokens it was not asked about; both are refused these names.
+ * The builder is filled before any of those sources run and the assembled map
+ * is applied on top of it, so nothing here guards the registered claims: the
+ * library refuses them in `withClaim()`, whoever sends them.
  */
 final class AccessTokenIssuer
 {

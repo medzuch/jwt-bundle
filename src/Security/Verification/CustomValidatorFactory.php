@@ -18,16 +18,15 @@ use Psr\Log\LoggerInterface;
 /**
  * Builds the `Validator` behind a consumer that names its own `typ`.
  *
- * A class of its own because Symfony can only call a public method, and the
- * one place a public method must not be is {@see \Medzuch\JwtBundle\MedzuchJwtBundle}:
- * that class is in the backward-compatibility table as something you register
- * in `bundles.php` and never call, and the suite reads `@internal` on classes
- * rather than on methods — so a factory living there would be promised by the
- * policy and disclaimed only by a docblock nothing checks.
+ * A factory rather than a chain of `inline_service()` calls: the builder is
+ * immutable and conditional in two places, which reads as PHP and does not read
+ * as a service definition.
  *
- * A factory rather than a chain of `inline_service()` calls because the builder
- * is immutable and conditional in two places, which reads as PHP and does not
- * read as a service definition.
+ * Its own class rather than a method on the bundle, because Symfony can only
+ * call a public one and `MedzuchJwtBundle` is in the backward-compatibility
+ * table — `BackwardCompatibilityTest` reads `@internal` on classes and not on
+ * methods, so a factory there would be promised by the policy and disclaimed
+ * only by a docblock nothing checks.
  *
  * @internal
  */
