@@ -1,6 +1,7 @@
 /.github            export-ignore
 /docker             export-ignore
 /tests              export-ignore
+/tools              export-ignore
 # `/docs` is not ignored wholesale: the README a `composer require` installs
 # links to the cookbook and the plan, and a link into a file the archive left
 # out is a broken link in every vendor directory. Review notes written there
@@ -12,7 +13,6 @@
 /.php-cs-fixer.dist.php export-ignore
 /phpstan.neon.dist  export-ignore
 /phpunit.xml.dist   export-ignore
-/infection.json5    export-ignore
 /docker-compose.yml export-ignore
 /Makefile           export-ignore
 

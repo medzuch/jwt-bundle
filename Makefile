@@ -23,7 +23,7 @@ EXEC84  := $(DC84) exec -T php84
 # Symfony line to resolve against; matches the CI matrix (see DEC-2).
 V ?= 7.4.*
 
-.PHONY: help build up down sh install update test qa qa-84 test-84 lowest phpstan cs cs-fix symfony clean
+.PHONY: help build up down sh install update test qa qa-84 test-84 lowest phpstan cs cs-fix symfony config-reference clean
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "Available targets:\n\n"} \
@@ -61,6 +61,9 @@ cs-fix: ## Apply code-style fixes
 
 qa: ## Quality gate: style + phpstan + tests
 	$(EXEC) composer qa
+
+config-reference: ## Regenerate docs/configuration-reference.md from the config tree
+	$(EXEC) php tools/dump-configuration-reference.php
 
 symfony: ## Re-resolve against one Symfony line: make symfony V=6.4.*
 	$(DC) exec -T -e SYMFONY_REQUIRE=$(V) php composer update

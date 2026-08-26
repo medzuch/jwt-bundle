@@ -131,6 +131,14 @@ A successful login now answers with RFC 6750 fields, under `Cache-Control: no-st
 { "access_token": "eyJ0eXAiOiJhdCtqd3QiLCJhbGciOiJIUzI1NiJ9...", "token_type": "Bearer", "expires_in": 900 }
 ```
 
+**The handler mints from the identity and nothing else.** It calls `issue()` with the user
+identifier, so the token carries what configuration decided — audience, TTL,
+`issuers.<name>.claims` — plus whatever your claim providers and `JwtIssuingEvent` listeners add.
+What it cannot do is give *this* login different scopes from the next one: per-user scopes are an
+argument to `issue()`, and this handler has no way to be told them. Static scopes for every token
+one issuer mints are configuration (`issuers.<name>.claims`); scopes that depend on who just
+logged in need a success handler of your own, calling the issuer as below.
+
 To mint a token yourself — a service account, a token for one specific audience — inject the
 issuer:
 
@@ -562,6 +570,19 @@ set outside `claims` mode is indistinguishable from one never written, and it is
 carries. If your access rules lean on a baseline like `ROLE_USER`, say so — nothing invents it
 for you.
 
+**An empty `prefix` is a statement about the issuer, not a formatting choice.** Roles are built
+by writing the prefix in front of what the claim says, so with the default `ROLE_` an issuer
+sending `admin` grants `ROLE_admin`, and one sending `ROLE_ADMIN` grants `ROLE_ROLE_ADMIN` —
+the prefix is a namespace your issuer cannot write its way out of. Set it to `''` and the claim
+names your roles directly: an issuer that can put `ROLE_ADMIN` in a token is an issuer that can
+make anybody an administrator of this application.
+
+That is the correct behaviour for `claims` mode, where the issuer *is* the authority and the
+token is the record — it is the reason the mode exists. It is worth setting deliberately rather
+than to make a role name look tidy, and it is worth asking, before you do, whether every party
+that can sign for this issuer is one you would hand that to. If the answer is no, keep a prefix
+and map the claim to roles you control, or use `custom` and decide in your own factory.
+
 ## Where the token comes from
 
 Symfony reads the `Authorization` header by default, and ships extractors for the query string
@@ -898,6 +919,11 @@ $denylist->revoke($token->jti, new DateTimeImmutable('+' . $token->expiresIn . '
 terms, so a revocation kept beyond that is a row nobody will ever read — which is why revoking
 takes the moment to hold until, and why the shipped implementation is a cache rather than a
 table with a schema, a migration and something to sweep it.
+
+The other side of that: **revoking with a moment already past writes nothing at all.** There is
+nothing to refuse — the token is expired and refused on its own terms — so the call returns
+without touching the store. Worth knowing if you are looping over a user's tokens and counting
+what you revoked; the expired ones are not in that count.
 
 Pass the token's own `exp`: the shipped denylist knows the consumer's `leeway` and keeps the
 entry that much longer, because a token is accepted until `exp` plus that tolerance and an entry

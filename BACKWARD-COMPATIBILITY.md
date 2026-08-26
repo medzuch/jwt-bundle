@@ -246,12 +246,15 @@ the only way a document like this stays true:
 | Console commands | `tests/Functional/PublicSurfaceTest.php` | a command that is not registered where the policy says it is, or one that lost `--raw`, `--compact` or `--skip-remote` |
 | Supported versions | `tests/Unit/BackwardCompatibilityTest.php` | a constraint here that `composer.json` does not require |
 
-**The configuration tree is not**, and it is the largest surface of the five. What holds it today
-is `DocumentationExamplesTest`, which compiles every example in the README and the cookbook, so a
-renamed key breaks the documentation that teaches it — real coverage, and narrower than the
-promise: an option no example uses could be renamed and the suite would stay green. A committed
-`config:dump-reference` snapshot would be the missing half. It is not written yet; until it is,
-the examples suite is what holds the tree, and this paragraph is the honest size of that.
+**The configuration tree is**, by two tests that answer different halves of it.
+`DocumentationExamplesTest` compiles every example in the README and the cookbook, so a renamed
+key breaks the documentation that teaches it; the functional suite configures the rest, and every
+one of the tree's options is reached by one or the other — measured, not assumed. What neither
+notices is the *printed* reference: the `info()` text, the defaults and the examples that
+`config:dump-reference` shows an application developer. Reword one and nothing else goes red.
+`ConfigurationReferenceTest` compares the committed
+[`docs/configuration-reference.md`](docs/configuration-reference.md) against what the command
+prints, which is byte for byte the same on Symfony 6.4, 7.4 and 8.x.
 
 What *is* checked at container build is the other half of a configuration being wiring: every
 service id a `medzuch_jwt` option names has to exist, and the refusal names the option rather
