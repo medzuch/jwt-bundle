@@ -15,8 +15,7 @@ use Symfony\Component\Security\Http\AccessToken\AccessTokenExtractorInterface;
  * a form-encoded body; this is the missing one. README "Where the token comes
  * from" has the trade it asks you to take — script access bought, cross-site
  * request forgery taken on — and what has to be true elsewhere for it to be
- * safe. Neither this class nor anything else in the bundle can close that on
- * its own.
+ * safe.
  *
  * @internal
  */

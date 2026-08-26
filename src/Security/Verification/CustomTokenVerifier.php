@@ -20,7 +20,9 @@ use Medzuch\Jwt\Jwt\Validator;
  * to parse at all is not, because that happens before the validator sees it and
  * the profile's own `parse()` is where the equivalent logging lives. The
  * refusal still reaches the application as `malformed`, on the event and in the
- * profiler; only the log line is missing.
+ * profiler; only the log line is missing. Do not put it back by logging the
+ * compact token here — that would mean reimplementing a redaction policy that
+ * belongs upstream.
  *
  * @internal
  */

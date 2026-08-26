@@ -18,9 +18,9 @@ use Psr\Log\LoggerInterface;
 /**
  * Verifies an OIDC ID token for one relying-party registration.
  *
- * Not a firewall authenticator, deliberately, and README "Verifying an ID token
- * (OIDC relying party)" says why: an ID token is not a bearer credential for an
- * API. The application calls this where it already is, in its callback.
+ * Not a firewall authenticator (DEC-8), and README "Verifying an ID token (OIDC
+ * relying party)" says why that matters to whoever writes the callback: an ID
+ * token is not a bearer credential for an API.
  *
  * A consumer per call rather than one built at container time, because of the
  * nonce: the library binds it when the consumer is built, so a container-built

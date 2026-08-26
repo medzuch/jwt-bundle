@@ -25,7 +25,12 @@ use RuntimeException;
 #[CoversNothing]
 final class DocumentationPointersTest extends TestCase
 {
-    private const ROOT = __DIR__ . '/../..';
+    /** `dirname()` rather than `__DIR__ . '/../..'`: the iterator below reports
+     * canonical pathnames, and a prefix carrying `..` would not strip off them. */
+    private static function root(): string
+    {
+        return dirname(__DIR__, 2);
+    }
 
     #[TestDox('every README heading a comment in src cites is a heading the README has')]
     public function testCitedHeadingsExist(): void
@@ -110,7 +115,7 @@ final class DocumentationPointersTest extends TestCase
     private static function sources(): array
     {
         $found = [];
-        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::ROOT . '/src'));
+        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::root() . '/src'));
 
         foreach ($files as $file) {
             if (!$file instanceof \SplFileInfo || 'php' !== $file->getExtension()) {
@@ -126,7 +131,7 @@ final class DocumentationPointersTest extends TestCase
 
             // Keyed by the path a failure message should name, not by basename:
             // two `KeyLoader.php` in different directories would collapse.
-            $found[substr($path, strlen(self::ROOT) + 1)] = $contents;
+            $found[substr($path, strlen(self::root()) + 1)] = $contents;
         }
 
         self::assertNotSame([], $found, 'src should hold PHP files');
@@ -136,7 +141,7 @@ final class DocumentationPointersTest extends TestCase
 
     private static function read(string $path): string
     {
-        $full = self::ROOT . '/' . $path;
+        $full = self::root() . '/' . $path;
         $contents = file_get_contents($full);
 
         if (false === $contents) {

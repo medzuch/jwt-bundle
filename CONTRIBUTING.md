@@ -100,10 +100,16 @@ Nobody configuring this bundle needs that sentence; it means something only to
 whoever next edits the message on the line below it. Getting it wrong leaks key
 material into an exception message, which it once did.
 
-Not enforced by a tool, deliberately. Neither php-cs-fixer nor PHPStan can tell
-a useful why from a lecture, and a line-count rule would delete the wrong half.
-Reviewers apply this; a custom rule is worth discussing only after a cleanup
-pass, not instead of one.
+**The judgement is not enforced by a tool**, deliberately. Neither php-cs-fixer
+nor PHPStan can tell a useful why from a lecture, and a line-count rule would
+delete the wrong half. Reviewers apply that part.
+
+**The citation format is**, because it is the half a machine can check and the
+half that rots on its own. `DocumentationPointersTest` holds every `README "…"`
+in `src/` to a heading the README carries, and every `DEC-n` to a decision
+`docs/plan.md` §9 records. What it cannot tell is whether the heading or the
+decision is the *right* one — a pointer at a real heading about something else
+passes — so that stays a reviewer's to catch, and it has been caught already.
 
 ## Supported versions
 

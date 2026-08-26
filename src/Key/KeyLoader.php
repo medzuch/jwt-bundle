@@ -30,10 +30,9 @@ use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
  *
  * A JWK and the configuration pointing at it have to agree about `alg`, `kid`
  * and `use`; README "JWK keys, and EdDSA" says what that means for whoever
- * writes one. It is enforced here rather than trusted because of DEC-5: the
- * container was built from the configuration, so a document quietly saying
- * something else would make build-time reasoning describe a different key than
- * the one actually in use.
+ * writes one, and DEC-7 has why the configuration wins: the container was built
+ * from it, so a document quietly saying something else would make build-time
+ * reasoning describe a different key than the one actually in use.
  *
  * @internal
  */
