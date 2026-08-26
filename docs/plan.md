@@ -648,18 +648,22 @@ unmaintained minors; 6.4 stays because its security window runs to November
 touches — `AbstractBundle` (6.1+), the `access_token` authenticator (6.2+),
 `AccessTokenHandlerInterface`, `UserBadge` — are unchanged across all three
 majors, so the cost is CI matrix breadth, not conditional code. Matrix: 6.4 on
-PHP 8.3 with lowest dependencies, 7.4 on 8.3 and 8.4, 8.x on 8.4 (Symfony 8
-requires PHP 8.4, and the library's ceiling is 8.4). If a version-conditional
-branch ever becomes necessary in `src/`, that is the signal to raise the floor
-rather than to add the branch.
+PHP 8.3 twice — once resolved highest, once with `--prefer-lowest`, which is
+the floor as an application installs it — 7.4 on 8.3 and 8.4, and 8.x on 8.4 as
+`8.*` rather than a pinned minor (Symfony 8 requires PHP 8.4, and the library's
+ceiling is 8.4). The LTS legs can be pinned because an LTS line does not move;
+the 8 leg cannot, or a minor would reach an application before it reaches CI.
+If a version-conditional branch ever becomes necessary in `src/`, that is the
+signal to raise the floor rather than to add the branch.
 
 *Reviewed 2026-08-20:* 6.4 stays until **November 2026**, when it leaves active
 support, and the floor rises to `^7.4` in the release after that. It is no
 consumer's requirement — the only application on this library pins `7.4.*` — so
 what holds it here is reach, and reach is what expires with the support window.
 Two things to know before doing it: `treatPhpDocTypesAsCertain` stays off either
-way, since that conflict is Symfony 8 against 7.4 as well, and the 6.4 leg is
-also the `--prefer-lowest` one, which has to move rather than disappear.
+way, since that conflict is Symfony 8 against 7.4 as well, and one of the two
+6.4 legs is the `--prefer-lowest` one, which has to move to the new floor
+rather than disappear with 6.4.
 
 **DEC-3 — Revocation: `TokenDenylistInterface`, a `NullDenylist` default and a
 PSR-16 implementation in-tree; no Doctrine entity, now or later.** A denylist

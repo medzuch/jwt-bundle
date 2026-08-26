@@ -68,8 +68,8 @@ symfony: ## Re-resolve against one Symfony line: make symfony V=6.4.*
 # Tests only, like the CI leg: PHPStan reads the dependency's docblocks, and an
 # old patch release states less than a current one — that is a fact about the
 # release, not about this code. Leaves the container resolved at the floor;
-# `make symfony V=*` puts it back.
-lowest: ## The floor as an application installs it: oldest 6.4, oldest jwt-php
+# `make symfony V=7.4.*` puts it back on the default line.
+lowest: ## The floor as an application installs it; leaves it resolved there (make symfony V=7.4.* restores)
 	$(DC) exec -T -e SYMFONY_REQUIRE=6.4.* php composer update --prefer-lowest --prefer-stable
 	$(EXEC) vendor/bin/phpunit $(ARGS)
 

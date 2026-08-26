@@ -152,6 +152,12 @@ jobs:
       # mean weakening types in `src/` to match what a year-old release failed
       # to state. What the floor has to answer is whether the bundle *works*
       # there, and that is the suite below.
+      #
+      # `--prefer-lowest` floors the whole graph, require-dev included, so that
+      # leg also runs the oldest allowed PHPUnit (12.5.8 today, against 12.5.33
+      # elsewhere). When that bites, the fix is to raise the `require-dev`
+      # floor: a red leg there says something about our tooling constraint, not
+      # about the supported Symfony window this matrix exists to test.
       - name: Static analysis (PHPStan level 9)
         if: matrix.dependencies != 'lowest'
         run: composer phpstan -- --error-format=github

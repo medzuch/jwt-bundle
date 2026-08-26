@@ -11,6 +11,17 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+### Changed
+
+- **CI now tests the edges of the window the package promises**, which the
+  legs above did not: `^8.0` was tested as `8.0.*`, and Symfony 8.1 had been
+  released since May 2026 without any leg resolving it. The Symfony 8 leg is
+  now `8.*`, so a minor reaches CI before it reaches an application, and a
+  second 6.4 leg resolves with `--prefer-lowest --prefer-stable` — the floor as
+  an application installs it, rather than whatever 6.4 patch was newest on the
+  day. `composer.json` is unchanged: the supported window is the same
+  `^6.4 || ^7.4 || ^8.0` DEC-2 set.
+
 ## [1.0.0] — 2026-08-25
 
 Phase 4 of the roadmap in [`docs/plan.md`](docs/plan.md), and the end of the road to
@@ -701,7 +712,7 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   repositories costs nothing: php-cs-fixer (same rule set), PHPStan level 9
   with strict rules, PHPUnit, a Docker dev image on the PHP floor with an
   opt-in 8.4 profile, and a `Makefile` wrapping both.
-- **CI across the DEC-2 support window** — Symfony 6.4 / 7.4 / 8.0 against PHP
+- **CI across the supported Symfony lines** — 6.4, 7.4 and 8.0 against PHP
   8.3 and 8.4, with `symfony/flex` pinning each leg to its Symfony line. Every
   action is pinned to a commit SHA, which the repository enforces. A weekly
   scheduled run re-resolves dependencies so upstream drift reports itself

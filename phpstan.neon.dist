@@ -29,7 +29,11 @@ parameters:
         # it goes when upstream stops pointing at what it deprecated.
         #
         # `reportUnmatched: false` because the error does not exist on the 6.4
-        # and 7.4 legs, where the interface is not deprecated.
+        # and 7.4 legs, where the interface is not deprecated. Which also means
+        # the entry goes silent rather than red when it becomes unnecessary, so
+        # #51 carries the check that removes it: read
+        # `KernelInterface::registerBundles()` when the 8.x leg first resolves
+        # Symfony 8.2.
         -
             message: '#has typehint with deprecated interface Symfony\\Component\\HttpKernel\\Bundle\\BundleInterface#'
             path: tests/Functional/App
