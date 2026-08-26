@@ -15,8 +15,6 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\HttpKernel\Bundle\AbstractBundle;
 
-use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
-
 /**
  * Wires `medzuch/jwt-php` into a Symfony application.
  *
@@ -24,10 +22,13 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
  * root key is `medzuch_jwt` and the namespace prefix is `Medzuch\JwtBundle\`.
  * Both are public API: renaming either is a breaking change.
  *
- * The work is three `@internal` classes next door — {@see ConfigurationTree}
- * declares the tree, {@see ServiceRegistrar} turns it into definitions, and
- * {@see ConfigurationGuard} holds the refusals that need more than one node to
- * decide. What is left here is what Symfony calls.
+ * What is left here is what Symfony calls. The work is next door, `@internal`:
+ * {@see ConfigurationTree} declares the tree, {@see ServiceRegistrar} turns it
+ * into definitions, {@see DependencyInjection\ConsoleCommands} registers the
+ * five commands where `symfony/console` is installed,
+ * {@see DependencyInjection\ConfigurationGuard} holds the refusals that need
+ * more than one node to decide, and {@see DependencyInjection\KeyEntries}
+ * normalises the `keys:` section they all read.
  *
  * @see https://github.com/medzuch/jwt-bundle/blob/main/docs/plan.md the design, the feature catalogue and the roadmap
  */

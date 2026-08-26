@@ -5,14 +5,11 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\DependencyInjection;
 
 use Medzuch\Jwt\Jwt\MediaType;
-use Medzuch\Jwt\Jwt\Validator;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
 use Symfony\Component\Cache\Psr16Cache;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
-
-use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
 
 /**
  * The refusals that take more than one configuration node to decide.
