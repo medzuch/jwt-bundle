@@ -190,6 +190,13 @@ final class BackwardCompatibilityTest extends TestCase
      * between, nothing else. A class written with no docblock at all would
      * otherwise inherit the previous one in the file, `@internal` included, and
      * be disclaimed by a comment about something else.
+     *
+     * The tag has to open a line, too. A docblock that *mentions* the tag — a
+     * public class pointing at the internal ones beside it — is describing its
+     * neighbours, not disclaiming itself, and reading that as a disclaimer
+     * would let a new public class vanish from the policy without a word.
+     * A docblock written on a single line, carrying only the tag, counts too:
+     * that is a tag as much as the three-line form is.
      */
     private static function saysInternal(string $source, int $offset): bool
     {
@@ -206,7 +213,23 @@ final class BackwardCompatibilityTest extends TestCase
 
         $opens = strrpos($head, '/**');
 
-        return false !== $opens && str_contains(substr($head, $opens), '@internal');
+        if (false === $opens) {
+            return false;
+        }
+
+        // Line by line, with the opening delimiter stripped, so a single-line
+        // docblock counts and a mid-sentence mention does not. A line that
+        // *starts* with the tag is a tag by PHPDoc's own rules, whatever
+        // follows it.
+        $docblock = str_replace(["\r\n", "\r"], "\n", substr($head, $opens));
+
+        foreach (explode("\n", $docblock) as $line) {
+            if (1 === preg_match('~^\s*(?:/\*\*|\*)\s*@internal\b~', $line)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

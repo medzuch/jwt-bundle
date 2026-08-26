@@ -7,6 +7,14 @@ parameters:
         - src
         - tests
     tmpDir: var/phpstan
+    # `service()`, `inline_service()` and the rest are functions, and Composer
+    # maps classes. PHPStan finds them only when something else in the run has
+    # already loaded the file that declares them, which made the analysis
+    # depend on the order `src/` is walked in: the calls used to sit in a file
+    # sorted late enough for that to be true. Named here instead, so it is true
+    # for whichever file makes them.
+    scanFiles:
+        - vendor/symfony/dependency-injection/Loader/Configurator/ContainerConfigurator.php
     parallel:
         maximumNumberOfProcesses: 4
     # Off, unlike medzuch/jwt-php, and for a reason that only applies to a
