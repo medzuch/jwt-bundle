@@ -129,9 +129,9 @@ Key mechanics that shape the design:
 - **Firewall integration** goes through Symfony's native `access_token` block
   and a token-handler service. The bundle deliberately does **not** implement
   `AuthenticatorFactoryInterface` and ships no firewall key of its own (DEC-1 in
-  §9). There is no `DependencyInjection/` directory either: `AbstractBundle`
-  puts the config tree and the registration in the bundle class, and a
-  directory holding neither would be ceremony.
+  §9). `AbstractBundle` puts the config tree and the service registration in the
+  bundle class, so `DependencyInjection/` holds neither: what lives there is the
+  compiler passes and the object they read, which have nowhere else to go.
 
 ---
 
@@ -247,7 +247,7 @@ default and adds no runtime cost when unconfigured.
 
 | # | Capability | Backed by | Tier |
 |---|---|---|---|
-| K1 | Key sources: inline/env secret, base64 secret, PEM file, JWK file, Symfony Secrets vault, custom service. A whole **JWKS file** is not one: a set says nothing at build time about which keys a consumer can verify with or which two a token could not tell apart, and consuming a set is what K5 does over HTTP | `HmacKey`, `RsaPrivateKey::fromPem()`, `JwkParser`, `JwkSet` | T1 (env secret), T2 (rest) |
+| K1 | Key sources: inline/env secret, base64 secret, PEM file, JWK file, Symfony Secrets vault. No custom key *service*: a secret arrives as an env reference and a document as a path, which is every case anyone brought, and a service id would be a seam with nothing behind it. A whole **JWKS file** is not one: a set says nothing at build time about which keys a consumer can verify with or which two a token could not tell apart, and consuming a set is what K5 does over HTTP | `HmacKey`, `RsaPrivateKey::fromPem()`, `JwkParser`, `JwkSet` | T1 (env secret), T2 (rest) |
 | K2 | Named key registry with `kid`, so config refers to keys by name | `JwkSet`, `KeyResolver` | T2 |
 | K3 | Rotation: an issuer signs with one key, a consumer accepts several; rotating = adding a key, accepting it, then signing with it, no downtime. Needs no `active` flag — `issuers.<name>.key` already says which key is active, and a second spelling could disagree with it | `StaticJwkSetResolver` | T2 |
 | K4 | JWKS publisher exposing public keys only, with cache headers and an `ETag`; the application routes to it (DEC-6). Publishing a symmetric key is refused at container build | `JwkSet::toArray()` + controller | T2 |
@@ -314,7 +314,7 @@ medzuch_jwt:
     default:
       issuer: '%env(APP_URL)%'
       key: default
-      algorithm: HS256
+      client_id: '%env(APP_CLIENT_ID)%'
       audience: '%env(APP_URL)%'
       ttl: 900
 
@@ -330,61 +330,86 @@ medzuch_jwt:
 
 ```yaml
 medzuch_jwt:
-  clock: null                       # service id of a PSR-20 clock; default SystemClock
-  logger: 'monolog.logger.jwt'      # null disables logging
-  log_levels: { failure: warning, success: debug }
+  clock: null                        # service id of a PSR-20 clock; default SystemClock
+  logger: 'monolog.logger.jwt'       # null disables logging
+
+  log_levels:                        # each optional; unset keeps the library's own default
+    accepted: info
+    claim_rejected: warning
+    key_resolution_failed: critical
 
   keys:
-    hmac_default:  { hmac: '%env(JWT_SECRET)%' }
-    rsa_2026:      { pem_private: '%kernel.project_dir%/config/jwt/private.pem',
-                     pem_passphrase: '%env(JWT_KEY_PASSPHRASE)%',   # optional (library 1.1+)
-                     pem_public:  '%kernel.project_dir%/config/jwt/public.pem',
-                     kid: '2026-01' }
-    rsa_2025:      { pem_public: '...', kid: '2025-01' }     # still accepted, no longer signing
-    idp_remote:    { jwks_uri: 'https://idp.example.com/.well-known/jwks.json',
-                     http_client: 'http_client', cache: 'cache.app',
-                     cache_ttl: 300, fallback_keys: [rsa_2025] }
+    rsa_2026:
+      pem_private: '%kernel.project_dir%/config/jwt/private.pem'
+      pem_passphrase: '%env(JWT_KEY_PASSPHRASE)%'
+      pem_public: '%kernel.project_dir%/config/jwt/public.pem'
+      algorithm: RS256
+      kid: '2026-01'
+    rsa_2025:                        # still accepted, no longer signing
+      pem_public: '%kernel.project_dir%/config/jwt/public-2025.pem'
+      algorithm: RS256
+      kid: '2025-01'
+
+  remote_jwks:                       # a set the issuer publishes, named once and shared
+    partner_idp:
+      uri: 'https://idp.example.com/.well-known/jwks.json'
+      http_client: psr18.http_client
+      cache_pool: cache.app
+      cache_ttl: 300
+      min_refresh: 60
 
   issuers:
     default:
-      profile: access_token          # access_token | id_token | set | custom
       issuer: '%env(APP_URL)%'
       key: rsa_2026
-      algorithm: RS256
+      client_id: '%env(APP_CLIENT_ID)%'
       audience: ['%env(APP_URL)%']
       ttl: 900
-      client_id: '%env(APP_CLIENT_ID)%'
       claims: { }                    # static extra claims; dynamic ones via I3/I4
 
   consumers:
     api:
-      profile: access_token
       issuer: '%env(APP_URL)%'
       audience: '%env(APP_URL)%'
+      audience_policy: exclusive     # any | exclusive
       keys: [rsa_2026, rsa_2025]
       allowed_algorithms: [RS256]
+      realm: api
       leeway: 0
-      max_token_age: null
-      denylist: null                 # service id implementing TokenDenylistInterface
+      max_token_age: 300
+      denylist: { cache_pool: cache.app }
       user:
-        mode: provider               # provider | claims | custom
+        mode: claims                 # provider (default) | claims | custom
         identity_claim: sub
-        roles: { claim: scope, prefix: 'ROLE_', separator: ' ' }   # omit to disable
-    partner_idp:
-      profile: id_token
+        roles: { claim: scope, prefix: 'ROLE_', separator: ' ' }   # claims mode only
+    partner:                         # a third party's tokens, verified against their keys
       issuer: 'https://idp.example.com'
-      audience: '%env(OIDC_CLIENT_ID)%'
-      keys: [idp_remote]
+      audience: '%env(APP_URL)%'
+      remote_jwks: partner_idp
       allowed_algorithms: [RS256, ES256]
-      user: { mode: custom, service: App\Security\ProvisionUserFromIdToken }
+      user: { mode: custom, factory: App\Security\TenantUserFactory }
 
-  jwks:
-    publish:
-      enabled: false
-      path: '/.well-known/jwks.json'
-      keys: [rsa_2026, rsa_2025]     # public halves only
-      cache_max_age: 300
+  token_extractors:
+    spa_cookie:
+      cookie: __Host-jwt
+      same_site_only: true
+
+  id_tokens:                         # OIDC relying party: a service, not a firewall (DEC-8)
+    partner_idp:
+      issuer: 'https://idp.example.com'
+      client_id: '%env(OIDC_CLIENT_ID)%'
+      remote_jwks: partner_idp
+      allowed_algorithms: [RS256]
+
+  jwks:                              # the application routes to the controller itself (DEC-6)
+    keys: [rsa_2026, rsa_2025]       # public halves only
+    cache_max_age: 300
 ```
+
+Both blocks are compiled into a real container by `DocumentationExamplesTest`,
+which is what keeps this section from describing a configuration the bundle
+stopped accepting. `config:dump-reference medzuch_jwt` prints the whole tree
+with defaults and per-option prose; this is the shape, not the reference.
 
 Design notes:
 
@@ -397,8 +422,9 @@ Design notes:
   impossible pairings before the app ever boots a request.
 - **A firewall names a consumer**, not a profile:
   `token_handler: medzuch_jwt.handler.api`. A shorthand firewall key
-  (`medzuch_jwt: { consumer: api }`) via an authenticator factory is a T2
-  convenience over the same service.
+  (`medzuch_jwt: { consumer: api }`) via an authenticator factory was considered
+  and refused: DEC-1 in §9 says why, and why a later DPoP or C15 authenticator
+  would be a new firewall key of its own rather than this one.
 - **No secret ever lands in a container parameter** that `debug:container`
   would print (K9): keys are built inside factory services from env references.
 - **`audience` is normalised to a list before it reaches the library.** jwt-php

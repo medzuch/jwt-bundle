@@ -11,6 +11,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestDox;
 use RuntimeException;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\ExpressionLanguage\ExpressionFunction;
 use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\Yaml\Exception\ParseException;
 use Symfony\Component\Yaml\Yaml;
@@ -32,7 +33,24 @@ final class DocumentationExamplesTest extends KernelTestCase
     /**
      * Documents scanned for service ids they tell the reader to use.
      */
-    private const DOCUMENTS = ['README.md', 'docs/cookbook.md', 'UPGRADE.md', 'BACKWARD-COMPATIBILITY.md'];
+    private const DOCUMENTS = ['README.md', 'docs/cookbook.md', 'UPGRADE.md', 'BACKWARD-COMPATIBILITY.md', 'docs/plan.md'];
+
+    /**
+     * Service ids that are one segment rather than two, listed because the
+     * sweep below cannot match them by shape. Loosening its regex to make the
+     * second segment optional looks cheaper and is wrong: `medzuch_jwt.key`,
+     * `medzuch_jwt.consumer` and `medzuch_jwt.denylist` are prefixes the
+     * documentation writes when it means "one per name", `medzuch_jwt.jwks` is
+     * a configuration section, and `medzuch_jwt.yaml` is a filename — twenty-two
+     * such matches across these five documents, none of them a service to
+     * resolve. So the exceptions are named.
+     */
+    private const SINGLE_SEGMENT_IDS = [
+        'medzuch_jwt.clock',
+        'medzuch_jwt.jwks_controller',
+        'medzuch_jwt.scope_voter',
+        'medzuch_jwt.scope_expression_provider',
+    ];
 
     /**
      * Documents whose job is to show a configuration that works, so each has to
@@ -40,8 +58,13 @@ final class DocumentationExamplesTest extends KernelTestCase
      * deliberately `diff` rather than `yaml`, because the half being migrated
      * away from is configuration that no longer compiles — which is the point
      * of showing it.
+     *
+     * `docs/plan.md` was the last to join, and it is the reason the list is
+     * worth keeping honest: it was the one document with YAML nothing compiled,
+     * and by 1.0 its §4 tree had drifted into a configuration the bundle would
+     * refuse — options renamed, sections that never shipped, a duplicated key.
      */
-    private const TEACH_CONFIGURATION = ['README.md', 'docs/cookbook.md'];
+    private const TEACH_CONFIGURATION = ['README.md', 'docs/cookbook.md', 'docs/plan.md'];
 
     /**
      * Service ids the documentation names because an application has them: a Monolog
@@ -117,9 +140,22 @@ final class DocumentationExamplesTest extends KernelTestCase
         $checked = 0;
 
         foreach (self::DOCUMENTS as $document) {
-            preg_match_all('/\bmedzuch_jwt\.[a-z0-9_]+\.[a-z0-9_]+\b/', self::document($document), $matches);
+            $text = self::document($document);
 
-            foreach (array_unique($matches[0]) as $id) {
+            preg_match_all('/\bmedzuch_jwt\.[a-z0-9_]+\.[a-z0-9_]+\b/', $text, $matches);
+
+            $mentioned = $matches[0];
+
+            foreach (self::SINGLE_SEGMENT_IDS as $id) {
+                // Not `\b`: that would also match the id as the prefix of a
+                // longer one, and the point of the list is the ids that end
+                // where they end.
+                if (1 === preg_match('/\b' . preg_quote($id, '/') . '(?![a-z0-9_.])/', $text)) {
+                    $mentioned[] = $id;
+                }
+            }
+
+            foreach (array_unique($mentioned) as $id) {
                 self::assertContains($id, $available, sprintf('%s tells the reader to use "%s"', $document, $id));
 
                 ++$checked;
@@ -305,6 +341,29 @@ final class DocumentationExamplesTest extends KernelTestCase
     private static function advertisedServices(array $configuration): array
     {
         $ids = [];
+
+        // A published set is registered on a condition rather than on a name,
+        // so it is the one promised id an example advertises by what it says
+        // rather than by what it calls something.
+        $jwks = $configuration['jwks'] ?? [];
+        $published = is_array($jwks) ? $jwks['keys'] ?? [] : [];
+
+        if (is_array($published) && [] !== $published) {
+            $ids[] = 'medzuch_jwt.jwks.key_set';
+            $ids[] = 'medzuch_jwt.jwks_controller';
+        }
+
+        // Registered by every example, because they are registered by every
+        // container: the clock is the extension's own default and the voter
+        // answers only `SCOPE_*`, so neither has a condition to meet. The
+        // expression provider does — `symfony/expression-language` is optional,
+        // and `suggest`ed rather than required.
+        $ids[] = 'medzuch_jwt.clock';
+        $ids[] = 'medzuch_jwt.scope_voter';
+
+        if (class_exists(ExpressionFunction::class)) {
+            $ids[] = 'medzuch_jwt.scope_expression_provider';
+        }
 
         foreach (['consumers' => ['consumer', 'handler'], 'issuers' => ['issuer', 'login']] as $section => $prefixes) {
             $entries = $configuration[$section] ?? [];
