@@ -89,7 +89,9 @@ only means anything next to the code below it, it stays.
 
 Config-node `info()` strings are exempt in the other direction: they *are*
 `config:dump-reference`, so they stay tutorial and are written for an
-application developer reading their own console.
+application developer reading their own console. Editing one changes what that
+command prints, which `docs/configuration-reference.md` records: run
+`make config-reference` in the same commit, or the snapshot test fails.
 
 A comment that belongs, from `src/Key/KeyLoader.php`:
 

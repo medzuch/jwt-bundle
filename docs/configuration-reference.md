@@ -12,17 +12,23 @@ bin/console config:dump-reference medzuch_jwt
 which prints the same thing against the version an application actually has
 installed. That command is the one to trust; this copy exists so that the
 configuration surface is *recorded*, and so a rename or a removal has something
-to fail against. `ConfigurationReferenceTest` regenerates it on every run and
-compares, so it cannot drift: change the tree and the suite says so, with the
-command that refreshes this file.
+to fail against. `ConfigurationReferenceTest` compares this file against that
+command and nothing else — it does not rewrite it, because a test able to
+rewrite its own expectation is a test an environment variable can silence.
+Recording a change is `make config-reference`, a command someone runs and a diff
+someone reads; the failure message names it.
 
 Fenced as `text` rather than `yaml` on purpose. It is a reference, not a
 configuration that compiles — required options appear here with their
 placeholders, so pasting the whole thing into an application would not boot
 (see CONTRIBUTING, ground rule 7).
 
-Byte for byte the same on Symfony 6.4, 7.4 and 8.x, which is what makes an exact
-comparison the right assertion rather than a normalised one.
+Byte for byte the same from Symfony 6.4.44 through 8.1.5, which is what makes an
+exact comparison the right assertion rather than a normalised one. Symfony 6.4.0
+renders an array node's examples differently — no `[]` for an empty default, the
+example items uncommented — so on a tree resolved with `--prefer-lowest` the
+comparison is skipped: what differs there is upstream's formatting, not this
+tree.
 
 ```text
 # Default configuration for extension with alias: "medzuch_jwt"

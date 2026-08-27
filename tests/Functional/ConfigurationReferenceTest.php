@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional;
 
-use Medzuch\JwtBundle\MedzuchJwtBundle;
+use Medzuch\JwtBundle\DependencyInjection\ConfigurationTree;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
@@ -28,12 +28,12 @@ use Symfony\Component\HttpKernel\KernelInterface;
  * what `config:dump-reference` prints to an application developer, so they are
  * documentation, and this is the only thing holding them.
  *
- * The comparison is exact rather than normalised because the command's output
- * is byte for byte the same on Symfony 6.4, 7.4 and 8.x — checked before the
- * snapshot was committed, since a format that moved between majors would have
- * made this a test that fails on one leg for no reason of ours.
+ * The comparison is exact rather than normalised because the output is byte for
+ * byte the same from Symfony 6.4.44 through 8.1.5. It is not the same on 6.4.0:
+ * the renderer moved inside the 6.4 line, which is narrower than the majors
+ * that were checked, and CI found it on the leg that resolves the true floor.
  */
-#[CoversClass(MedzuchJwtBundle::class)]
+#[CoversClass(ConfigurationTree::class)]
 final class ConfigurationReferenceTest extends KernelTestCase
 {
     use RestoresExceptionHandler;
@@ -60,15 +60,42 @@ final class ConfigurationReferenceTest extends KernelTestCase
     {
         self::bootKernel();
 
+        $dumped = self::dumped();
+
+        if (!self::rendersLikeTheSnapshot($dumped)) {
+            self::markTestSkipped(
+                'this Symfony renders config:dump-reference examples in the older shape; '
+                . 'what differs is upstream formatting, not the tree this case is about',
+            );
+        }
+
         self::assertSame(
             self::committed(),
-            self::dumped(),
+            $dumped,
             sprintf(
                 'docs/configuration-reference.md no longer matches the configuration tree. '
                 . 'If the tree changed on purpose, run `%s` to record it; the file is generated.',
                 self::REFRESH,
             ),
         );
+    }
+
+    /**
+     * Whether this Symfony prints the reference the way the snapshot records it.
+     *
+     * The renderer moved inside 6.4: the newer one prints an empty-list default
+     * as `[]` and comments each example item, the older prints neither. So a
+     * tree resolved with `--prefer-lowest` disagrees with the snapshot about
+     * upstream's formatting and about nothing else, and there is nothing here
+     * for that leg to hold — the same reason CI skips PHPStan on it.
+     *
+     * Detected from the output rather than from a version number, because the
+     * patch it changed in is not something to guess at, and the shape is what
+     * the comparison actually depends on.
+     */
+    private static function rendersLikeTheSnapshot(string $dumped): bool
+    {
+        return 1 !== preg_match('~# Examples:\n\s+- ~', $dumped);
     }
 
     private static function dumped(): string

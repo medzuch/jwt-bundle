@@ -254,7 +254,10 @@ notices is the *printed* reference: the `info()` text, the defaults and the exam
 `config:dump-reference` shows an application developer. Reword one and nothing else goes red.
 `ConfigurationReferenceTest` compares the committed
 [`docs/configuration-reference.md`](docs/configuration-reference.md) against what the command
-prints, which is byte for byte the same on Symfony 6.4, 7.4 and 8.x.
+prints, which is byte for byte the same from Symfony 6.4.44 through 8.1.5. The renderer moved
+inside 6.4, so on a `--prefer-lowest` tree the comparison is skipped rather than normalised —
+what differs there is upstream's formatting, and normalising it would hide the next change that
+is not.
 
 What *is* checked at container build is the other half of a configuration being wiring: every
 service id a `medzuch_jwt` option names has to exist, and the refusal names the option rather

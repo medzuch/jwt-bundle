@@ -1567,7 +1567,9 @@ bin/console config:dump-reference medzuch_jwt
 ```
 
 That output is always accurate for the version you have installed, which a hand-written
-reference in this file would not be.
+reference in this file would not be. A copy of it ships with the package as
+[`docs/configuration-reference.md`](docs/configuration-reference.md), for reading without a
+console; the suite holds the two together.
 
 ## Mistakes it refuses to boot with
 
