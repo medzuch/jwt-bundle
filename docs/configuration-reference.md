@@ -94,8 +94,11 @@ medzuch_jwt:
         # Prototype
         name:
 
-            # The issuer's `jwks_uri`. HTTPS only: fetching verification keys over a channel an attacker can rewrite defeats the point (RFC 8725 §3.10). Never taken from a token's `jku`.
-            uri:                  ~ # Required, Example: 'https://idp.example.com/.well-known/jwks.json'
+            # The issuer's `jwks_uri`. HTTPS only: fetching verification keys over a channel an attacker can rewrite defeats the point (RFC 8725 §3.10). Never taken from a token's `jku`. Give this or "discovery", not both.
+            uri:                  null # Example: 'https://idp.example.com/.well-known/jwks.json'
+
+            # The issuer identifier, for reading `jwks_uri` from its `/.well-known/openid-configuration` instead of hard-coding it (K7). HTTPS only, and the document has to name this same issuer back (OIDC Discovery §4.3). Use it when the provider may move the endpoint; use "uri" when it may not.
+            discovery:            null # Example: 'https://idp.example.com'
 
             # Service id of a PSR-18 client. Symfony registers `psr18.http_client` once `psr/http-client` is installed and `framework.http_client` is enabled. Connection and response timeouts belong to the client: this bundle cannot impose a socket timeout on one it does not own.
             http_client:          psr18.http_client

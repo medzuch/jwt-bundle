@@ -119,12 +119,20 @@ final class ConfigurationGuard
     }
 
     /**
-     * @param array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int} $set
+     * @param array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int} $set
      */
     public static function assertRemoteJwksIsUsable(string $name, array $set, ContainerBuilder $builder): void
     {
         if (null !== $set['cache'] && null !== $set['cache_pool']) {
             throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" names both a PSR-16 cache and a PSR-6 pool. Give one: "cache" is used as it is, "cache_pool" is wrapped.', $name));
+        }
+
+        if (null !== $set['uri'] && null !== $set['discovery']) {
+            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" names both a jwks_uri and a discovery issuer. Give one: "uri" is fetched as it is, "discovery" reads it from the issuer\'s metadata.', $name));
+        }
+
+        if (null === $set['uri'] && null === $set['discovery']) {
+            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" names neither a jwks_uri nor a discovery issuer. Give "uri" for a fixed endpoint, or "discovery" for the issuer identifier to read it from.', $name));
         }
 
         // The same test the library makes, in the same direction: everything
@@ -133,14 +141,27 @@ final class ConfigurationGuard
         // all not-https, and a check that named only "http://" would let each
         // of them reach the first token before failing.
         //
+        // Both spellings are held to it. A `jwks_uri` read from a discovery
+        // document is checked again when it arrives, because that one is the
+        // issuer's to choose and no configuration can settle it in advance.
+        //
         // A URI assembled from the environment is exempt because there is
         // nothing to read yet: it is a placeholder until the container is
         // compiled, and the library refuses a plaintext one when the resolver
         // is built.
-        $builder->resolveEnvPlaceholders($set['uri'], null, $fromEnvironment);
+        $configured = $set['uri'] ?? $set['discovery'];
+        \assert(is_string($configured));
 
-        if ([] === ($fromEnvironment ?? []) && 0 !== stripos($set['uri'], 'https://')) {
-            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" has a jwks_uri that is not https. Verification keys taken from a channel an attacker can rewrite are not verification keys (RFC 8725 §3.10). Got "%s".', $name, $set['uri']));
+        $builder->resolveEnvPlaceholders($configured, null, $fromEnvironment);
+
+        if ([] === ($fromEnvironment ?? []) && '' === trim($configured)) {
+            throw new InvalidConfigurationException(sprintf('Remote JWK Set "%s" has a blank %s; omit it instead.', $name, null !== $set['uri'] ? 'uri' : 'discovery'));
+        }
+
+        if ([] === ($fromEnvironment ?? []) && 0 !== stripos($configured, 'https://')) {
+            throw new InvalidConfigurationException(null !== $set['uri']
+                ? sprintf('Remote JWK Set "%s" has a jwks_uri that is not https. Verification keys taken from a channel an attacker can rewrite are not verification keys (RFC 8725 §3.10). Got "%s".', $name, $configured)
+                : sprintf('Remote JWK Set "%s" has a discovery issuer that is not https. An issuer identifier fetched over a channel an attacker can rewrite names whatever keys they like (RFC 8725 §3.10). Got "%s".', $name, $configured));
         }
 
         if (null === $set['cache'] && !class_exists(Psr16Cache::class)) {
@@ -302,7 +323,7 @@ final class ConfigurationGuard
     /**
      * @param array{keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, ...}                                                                                                                                                                                              $consumer
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
-     * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>                                                                                                     $sets
+     * @param array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>                                                                                                     $sets
      */
     public static function assertCanVerify(string $context, array $consumer, array $keys, array $sets): void
     {

@@ -618,6 +618,13 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1) and
   D6's Flex recipe (§3.5): DPoP, mTLS binding, token exchange, introspection
   fallback, JWE/nested tokens, SET issue/consume, discovery documents.
+  *(K7 landed first, and the order is worth recording: what the library already
+  carries decides what is a bundle-sized change. JWE and SET are whole
+  implementations in `medzuch/jwt-php` already, so C12/I8 and C8/I7 are wiring;
+  K7 needed nothing from it at all. DPoP and mTLS are the opposite — `cnf.jkt`
+  needs RFC 7638 thumbprints and `cnf.x5t#S256` needs certificate hashing,
+  neither of which exists there yet, so both begin as library work rather than
+  as a branch here.)*
 
 Each phase is shippable on its own and adds no required configuration to
 applications already running the previous one.
