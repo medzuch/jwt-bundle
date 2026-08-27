@@ -79,10 +79,11 @@ final class BareKernel extends Kernel
     public function getCacheDir(): string
     {
         return sprintf(
-            '%s/medzuch-jwt-bundle-bare/php%d-sf%d-%s',
+            '%s/medzuch-jwt-bundle-bare/php%d-sf%d-%s-%s',
             sys_get_temp_dir(),
             \PHP_VERSION_ID,
             Kernel::VERSION_ID,
+            SourceFingerprint::current(),
             hash('xxh128', serialize([$this->bundleConfig, $this->lateService])),
         );
     }
