@@ -37,13 +37,21 @@ $application = new Application($kernel);
 $application->setAutoExit(false);
 
 $tester = new CommandTester($application->find('config:dump-reference'));
-$tester->execute(['name' => 'medzuch_jwt', '--no-debug' => true]);
+$status = $tester->execute(['name' => 'medzuch_jwt', '--no-debug' => true]);
+
+if (0 !== $status) {
+    fwrite(\STDERR, "config:dump-reference failed; the fence is left alone\n");
+    fwrite(\STDERR, $tester->getDisplay());
+
+    exit(1);
+}
 
 $dumped = rtrim($tester->getDisplay(), "\n");
 
 $rewritten = preg_replace(
     '/```text\n.*?\n```/s',
-    "```text\n" . str_replace('$', '\\$', $dumped) . "\n```",
+    // `$` and `\` are the two characters preg_replace reads in a replacement.
+    "```text\n" . str_replace(['\\', '$'], ['\\\\', '\\$'], $dumped) . "\n```",
     $document,
     1,
     $count,
