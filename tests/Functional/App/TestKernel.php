@@ -66,6 +66,7 @@ final class TestKernel extends Kernel
             // cannot be exercised without both.
             $container->register('test.http_client', StubHttpClient::class)->setPublic(true);
             $container->register('test.cache', ArrayCache::class)->setPublic(true);
+            $container->register('test.cache_that_throws', ThrowingCache::class)->setPublic(true);
             $container->register('test.cache_pool', ArrayAdapter::class)->setPublic(true);
             $container->register('test.user_factory', TenantUserFactory::class)->setPublic(true);
             $container->register('test.denylist', InMemoryDenylist::class)->setPublic(true);
@@ -107,16 +108,18 @@ final class TestKernel extends Kernel
     }
 
     /**
-     * Keyed by configuration *and* runtime, so two boots never share a
-     * container compiled for a different dependency set.
+     * Keyed by configuration, by runtime, and by the source the container is
+     * compiled from ({@see SourceFingerprint}), so two boots never share a
+     * container built from something else.
      */
     public function getCacheDir(): string
     {
         return sprintf(
-            '%s/medzuch-jwt-bundle-tests/php%d-sf%d-%s',
+            '%s/medzuch-jwt-bundle-tests/php%d-sf%d-%s-%s',
             sys_get_temp_dir(),
             \PHP_VERSION_ID,
             Kernel::VERSION_ID,
+            SourceFingerprint::current(),
             hash('xxh128', serialize([$this->bundleConfig, $this->aliases])),
         );
     }

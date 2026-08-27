@@ -12,13 +12,16 @@ use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Tests\Functional\App\ArrayCache;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
+use Medzuch\JwtBundle\Tests\Functional\App\ThrowingCache;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\HttpKernel\KernelInterface;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
 use Symfony\Component\Security\Core\Exception\BadCredentialsException;
+use Throwable;
 
 /**
  * Tokens refused before their own `exp` says so.
@@ -183,6 +186,32 @@ final class RevocationTest extends KernelTestCase
         self::denylist()->revoke('some-jti', self::clock()->now()->modify('-1 second'));
 
         self::assertSame([], self::cache()->ttls);
+    }
+
+    #[TestDox('a store that cannot answer refuses the request rather than allowing it')]
+    public function testAStoreThatThrowsFailsClosed(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(denylist: ['cache' => 'test.cache_that_throws'])]);
+
+        $token = self::issuer()->issue('user-42');
+
+        // The trade the README states, asserted: a revocation check that cannot
+        // run takes the request with it. The alternative — treating an
+        // unreachable store as "not revoked" — would accept every revoked token
+        // for as long as the outage lasted, which is the one failure a denylist
+        // exists to prevent.
+        try {
+            self::handler()->getUserBadgeFrom($token->value);
+
+            self::fail('a denylist that cannot answer should not let the token through');
+        } catch (Throwable $failure) {
+            self::assertNotInstanceOf(
+                AuthenticationException::class,
+                $failure,
+                'an unreachable store is a 500, not a 401: the credential was never judged',
+            );
+            self::assertSame(ThrowingCache::MESSAGE, $failure->getMessage());
+        }
     }
 
     #[TestDox('an unconfigured consumer asks nothing, and holds no denylist to ask')]
