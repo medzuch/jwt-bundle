@@ -33,6 +33,10 @@ final class CheckConfigurationCommandTest extends KernelTestCase
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
     private const URI = 'https://idp.test/.well-known/jwks.json';
 
+    private const ISSUER = 'https://idp.test';
+
+    private const DISCOVERY = self::ISSUER . '/.well-known/openid-configuration';
+
     /**
      * @param array<array-key, mixed> $options
      */
@@ -237,11 +241,40 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertStringContainsString('configures nothing', $tester->getDisplay());
     }
 
+    #[TestDox('a set addressed by issuer identifier is probed over both hops')]
+    public function testDiscoveredSetIsReached(): void
+    {
+        // What makes the probe worth having for a discovery set: it is two
+        // round trips, and either can be the one that is broken on the day of
+        // the deploy. The pair of URLs is the assertion — a probe that reached
+        // only the endpoint would report the same "reachable" on an issuer
+        // whose metadata does not resolve at all.
+        $configuration = self::remoteConfiguration(discovery: self::ISSUER);
+
+        $tester = self::check(configuration: $configuration, publish: true, announceAt: self::DISCOVERY);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringContainsString('remote JWK Set "partner_idp"', $tester->getDisplay());
+        self::assertStringContainsString('reachable', $tester->getDisplay());
+
+        $client = self::getContainer()->get('test.http_client');
+        self::assertInstanceOf(StubHttpClient::class, $client);
+        self::assertSame([self::DISCOVERY, self::URI], $client->requested);
+
+        // The issuer that answers nothing at all: the failure is the metadata
+        // hop, and it is the one reported.
+        $silent = self::check(configuration: $configuration, publish: false);
+
+        self::assertSame(Command::FAILURE, $silent->getStatusCode());
+        self::assertStringContainsString('remote JWK Set "partner_idp"', $silent->getDisplay());
+        self::assertStringContainsString('Discovery fetch from', $silent->getDisplay());
+    }
+
     /**
      * @param array<string, mixed>      $input
      * @param array<string, mixed>|null $configuration
      */
-    private static function check(array $input = [], ?array $configuration = null, ?bool $publish = null): CommandTester
+    private static function check(array $input = [], ?array $configuration = null, ?bool $publish = null, ?string $announceAt = null): CommandTester
     {
         self::ensureKernelShutdown();
         self::bootKernel(['medzuch_jwt' => $configuration ?? self::configuration()]);
@@ -253,6 +286,13 @@ final class CheckConfigurationCommandTest extends KernelTestCase
             $publish
                 ? $client->publishes(self::document())
                 : $client->goesOffline();
+
+            if (null !== $announceAt) {
+                $client->publishesAt($announceAt, json_encode([
+                    'issuer' => self::ISSUER,
+                    'jwks_uri' => self::URI,
+                ], \JSON_THROW_ON_ERROR));
+            }
         }
 
         $kernel = self::$kernel;
@@ -279,12 +319,12 @@ final class CheckConfigurationCommandTest extends KernelTestCase
     /**
      * @return array<string, mixed>
      */
-    private static function remoteConfiguration(): array
+    private static function remoteConfiguration(?string $discovery = null): array
     {
         return [
             'keys' => ['default' => ['hmac' => self::SECRET]],
             'remote_jwks' => ['partner_idp' => [
-                'uri' => self::URI,
+                ...(null === $discovery ? ['uri' => self::URI] : ['discovery' => $discovery]),
                 'http_client' => 'test.http_client',
                 'cache' => 'test.cache',
             ]],

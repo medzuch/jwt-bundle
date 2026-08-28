@@ -7,7 +7,7 @@ namespace Medzuch\JwtBundle\Command;
 use Closure;
 use Medzuch\Jwt\Exception\KeyNotFoundException;
 use Medzuch\Jwt\Key\JwkSet;
-use Medzuch\Jwt\Key\Resolver\RemoteJwksResolver;
+use Medzuch\Jwt\Key\KeyResolver;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -34,6 +34,10 @@ use Throwable;
  * bearing an unknown `kid` already makes, and at deploy time it costs nothing
  * worth counting.
  *
+ * A set configured by `discovery` is two hops, and the probe covers both: the
+ * metadata document has to answer and name its issuer before there is a
+ * `jwks_uri` to fetch at all.
+ *
  * @internal
  */
 #[AsCommand(
@@ -47,7 +51,7 @@ final class CheckConfigurationCommand extends Command
 
     /**
      * @param ServiceProviderInterface<object>             $services  what the container builds lazily, keyed by what to call it in the report
-     * @param ServiceProviderInterface<RemoteJwksResolver> $remote    key sets that live behind somebody else's HTTP endpoint
+     * @param ServiceProviderInterface<KeyResolver>        $remote    key sets that live behind somebody else's HTTP endpoint
      * @param (Closure(): JwkSet)|null                     $published the set the JWKS endpoint serves, or null where nothing is published.
      *                                                                A closure, not the set: injected as a service it would be built when
      *                                                                this command is instantiated, so a published key whose file is

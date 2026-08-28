@@ -11,6 +11,29 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+### Added
+
+- **A remote key set can be addressed by issuer identifier instead of by
+  endpoint** (K7, the first of Phase 5). `remote_jwks.<name>.discovery` takes
+  the issuer's identifier and reads `jwks_uri` from its
+  `/.well-known/openid-configuration`, so the endpoint can move without a
+  deploy. `uri` and `discovery` are alternatives: a set naming both, or
+  neither, is refused when the container is built, as is either of them over
+  plaintext — including a plaintext value that arrives from `%env(...)%`, which
+  the container cannot read and the resolver refuses when it is first built.
+
+  The metadata document has to state the issuer it was fetched for (OIDC
+  Discovery §4.3) or it is refused — without that check, whoever answers the
+  well-known path chooses which keys the application trusts. One trailing slash
+  is tolerated and nothing else is. A `jwks_uri` that comes back over plaintext
+  is refused when it arrives, since that URL is the issuer's to choose and no
+  configuration can settle it in advance.
+
+  Everything else is unchanged: the same client, cache, `cache_ttl`,
+  `min_refresh` and `max_body_bytes`, and a discovery failure is the same
+  `JwksResolutionException` a `jwks_uri` failure is, so locally configured keys
+  still cover an outage.
+
 ### Changed
 
 - **CI now tests the edges of the window the package promises**, which the

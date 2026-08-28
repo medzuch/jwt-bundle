@@ -190,17 +190,32 @@ final class ConfigurationTree
             ->arrayPrototype()
             ->children();
 
+        // Not `isRequired()` on either: the set needs exactly one of them, and
+        // a tree that demanded `uri` could never accept `discovery`. The guard
+        // makes the choice at container build, where it can say which two
+        // options are in conflict rather than which one node is missing.
+        // Blankness is checked in ConfigurationGuard rather than here, unlike
+        // every other optional string in this tree. Both of these are the kind
+        // of value an application assembles from the environment, and a
+        // `validate()` closure runs during ValidateEnvPlaceholdersPass against
+        // a dummy empty string — so the check would refuse `%env(...)%`, which
+        // is the recommended way to write them.
         $set->scalarNode('uri')
-            ->isRequired()
-            ->cannotBeEmpty()
-            ->info('The issuer\'s `jwks_uri`. HTTPS only: fetching verification keys over a channel an attacker can rewrite defeats the point (RFC 8725 §3.10). Never taken from a token\'s `jku`.')
+            ->defaultNull()
+            ->info('The issuer\'s `jwks_uri`. HTTPS only: fetching verification keys over a channel an attacker can rewrite defeats the point (RFC 8725 §3.10). Never taken from a token\'s `jku`. Give this or "discovery", not both.')
             ->example('https://idp.example.com/.well-known/jwks.json')
+            ->end();
+
+        $set->scalarNode('discovery')
+            ->defaultNull()
+            ->info('The issuer identifier, for reading `jwks_uri` from its `/.well-known/openid-configuration` instead of hard-coding it (K7). HTTPS only, and the document has to name this same issuer back (OIDC Discovery §4.3). Use it when the provider may move the endpoint; use "uri" when it may not.')
+            ->example('https://idp.example.com')
             ->end();
 
         $set->scalarNode('http_client')
             ->defaultValue('psr18.http_client')
             ->cannotBeEmpty()
-            ->info('Service id of a PSR-18 client. Symfony registers `psr18.http_client` once `psr/http-client` is installed and `framework.http_client` is enabled. Connection and response timeouts belong to the client: this bundle cannot impose a socket timeout on one it does not own.')
+            ->info('Service id of a PSR-18 client. Symfony registers `psr18.http_client` once `psr/http-client` is installed and `framework.http_client` is enabled. Connection and response timeouts belong to the client: this bundle cannot impose a socket timeout on one it does not own. So does redirect policy — a client that follows a cross-origin redirect changes which host answered, which no check here can see.')
             ->end();
 
         self::declareOptionalName(
@@ -221,7 +236,7 @@ final class ConfigurationTree
         $set->integerNode('cache_ttl')
             ->defaultValue(300)
             ->min(1)
-            ->info('Seconds the fetched document is cached. The common path never touches the network. Zero is refused: it would fetch the set for every token.')
+            ->info('Seconds a fetched document is cached — the key set, and the discovery document that names it when "discovery" is used. The common path never touches the network. Zero is refused: it would fetch the set for every token.')
             ->end();
 
         $set->integerNode('min_refresh')

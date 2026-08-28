@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Tests\Functional;
 
 use DateInterval;
+use InvalidArgumentException;
 use Medzuch\Jwt\Exception\JwksResolutionException;
 use Medzuch\Jwt\Key\RsaPrivateKey;
 use Medzuch\Jwt\Primitives\FrozenClock;
+use Medzuch\Jwt\Primitives\SystemClock;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
+use Medzuch\JwtBundle\Oidc\DiscoveredJwksResolver;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\RejectionReason;
 use Medzuch\JwtBundle\Tests\Functional\App\ArrayCache;
@@ -35,6 +38,11 @@ use Symfony\Component\Security\Core\Exception\BadCredentialsException;
  * tried first, so an unreachable identity provider cannot stop tokens signed
  * with keys already configured here.
  *
+ * Both ways of naming the set are here (K7): a `uri` the application fixes, and
+ * a `discovery` identifier it reads the endpoint from. They differ in one hop
+ * and in what has to be checked before that hop is trusted, and nowhere else —
+ * which is why the two share a harness rather than a file each.
+ *
  * No test here touches the network. The identity provider is a PSR-18 double
  * that answers what it is told and records what was asked, because what has to
  * be asserted is when the fetch happens, not that HTTP works.
@@ -47,9 +55,10 @@ final class RemoteJwksTest extends KernelTestCase
 
     private const URI = 'https://idp.test/.well-known/jwks.json';
 
-    /**
-     * @param array<array-key, mixed> $options
-     */
+    private const ISSUER = 'https://idp.test';
+
+    private const DISCOVERY = self::ISSUER . '/.well-known/openid-configuration';
+
     /**
      * The service ids an application brings: Symfony registers `psr18.http_client`
      * once `psr/http-client` is installed, and `cache.app` is there by default.
@@ -298,6 +307,300 @@ final class RemoteJwksTest extends KernelTestCase
         self::assertTrue(self::getContainer()->has('medzuch_jwt.handler.partner'));
     }
 
+    #[TestDox('an issuer identifier is enough: the endpoint is read from its metadata (K7)')]
+    public function testDiscoveredKeyVerifies(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::announce();
+        self::publish();
+
+        self::assertSame('user-42', self::verify(self::token('remote')));
+
+        // The order is the assertion, not just the pair: the endpoint cannot
+        // be fetched before the document that says where it is.
+        self::assertSame([self::DISCOVERY, self::URI], self::client()->requested);
+    }
+
+    #[TestDox('the metadata is fetched once, not once per verification')]
+    public function testDiscoveryIsCached(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::announce();
+        self::publish();
+
+        $token = self::token('remote');
+        self::verify($token);
+        self::verify($token);
+
+        self::assertSame([self::DISCOVERY, self::URI], self::client()->requested, 'the second verification should not touch either endpoint');
+    }
+
+    #[TestDox('a resolver that did not do the asking reads the endpoint from the cache')]
+    public function testDiscoveryIsCachedBeyondOneResolver(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::announce();
+        self::publish();
+        self::verify(self::token('remote'));
+
+        $asked = self::client()->requested;
+
+        // The container's resolver holds the endpoint for its own lifetime, so
+        // a second verification through it proves nothing about the cache —
+        // the test above passes with the cache write removed entirely. A fresh
+        // instance is the next request, which is where a document that was
+        // never written down costs a round trip to the issuer every time.
+        $next = new DiscoveredJwksResolver(self::ISSUER, self::client(), self::client(), self::cache(), new SystemClock());
+        $next->resolve(['kid' => 'partner-2026']);
+
+        self::assertSame($asked, self::client()->requested, 'neither endpoint should be asked a second time');
+    }
+
+    #[TestDox('a metadata document naming a different issuer is refused (OIDC Discovery §4.3)')]
+    public function testDiscoveryIssuerMismatch(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::announce(issuer: 'https://attacker.test');
+        self::publish();
+
+        $cause = self::refusalOf(self::token('remote'));
+
+        self::assertInstanceOf(JwksResolutionException::class, $cause);
+        self::assertStringContainsString('states issuer "https://attacker.test"', $cause->getMessage());
+
+        // And the keys it pointed at were never asked for. Without the issuer
+        // check this document is a redirect: whoever answers the well-known
+        // path chooses which keys this application trusts.
+        self::assertSame([self::DISCOVERY], self::client()->requested);
+    }
+
+    #[TestDox('one trailing slash is not a different issuer')]
+    public function testDiscoveryToleratesATrailingSlash(): void
+    {
+        // Providers are not consistent about publishing the identifier with a
+        // slash, and an application that copied it from the other spelling is
+        // not misconfigured.
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers(self::ISSUER . '/'))]);
+        self::announce();
+        self::publish();
+
+        self::assertSame('user-42', self::verify(self::token('remote')));
+    }
+
+    #[TestDox('a metadata document with no jwks_uri is refused')]
+    public function testDiscoveryWithoutAnEndpoint(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::client()->publishesAt(self::DISCOVERY, json_encode(['issuer' => self::ISSUER], \JSON_THROW_ON_ERROR));
+
+        $cause = self::refusalOf(self::token('remote'));
+
+        self::assertInstanceOf(JwksResolutionException::class, $cause);
+        self::assertStringContainsString('states no "jwks_uri"', $cause->getMessage());
+    }
+
+    #[TestDox('a metadata document pointing at a plaintext endpoint is refused')]
+    public function testDiscoveredEndpointMustBeHttps(): void
+    {
+        // The one https check configuration cannot make in advance: this URL
+        // is the issuer's to choose, and it arrives after the container is
+        // built.
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::announce(jwksUri: 'http://idp.test/.well-known/jwks.json');
+
+        $cause = self::refusalOf(self::token('remote'));
+
+        self::assertInstanceOf(JwksResolutionException::class, $cause);
+        self::assertStringContainsString('not https', $cause->getMessage());
+    }
+
+    #[TestDox('an oversized metadata document is refused before it is parsed')]
+    public function testDiscoveryBodyCeiling(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers() + ['max_body_bytes' => 32])]);
+        self::announce();
+
+        $cause = self::refusalOf(self::token('remote'));
+
+        self::assertInstanceOf(JwksResolutionException::class, $cause);
+        self::assertStringContainsString('exceeds the 32-byte limit', $cause->getMessage());
+    }
+
+    #[TestDox('an unreachable metadata endpoint does not stop tokens signed with local keys (K6)')]
+    public function testDiscoveryOutageLeavesLocalKeysAlone(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers(), consumerKeys: ['local'], keys: [
+            'local' => ['pem_public' => self::keypair('local')['public'], 'algorithm' => 'RS256', 'kid' => 'local-2026'],
+        ])]);
+        self::client()->goesOffline();
+
+        // The extra hop must not cost K6 anything: a discovery failure is the
+        // same JwksResolutionException a jwks_uri failure is, which is what
+        // lets the composite fall through to the keys already held here.
+        self::assertSame('user-42', self::verify(self::token('local')));
+    }
+
+    #[TestDox('naming both a jwks_uri and a discovery issuer fails at container build')]
+    public function testUriAndDiscoveryTogether(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/names both a jwks_uri and a discovery issuer/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(['discovery' => self::ISSUER])]);
+    }
+
+    #[TestDox('naming neither a jwks_uri nor a discovery issuer fails at container build')]
+    public function testNeitherUriNorDiscovery(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/names neither a jwks_uri nor a discovery issuer/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(['uri' => null])]);
+    }
+
+    #[DataProvider('uris')]
+    #[TestDox('a discovery issuer that is not https fails at container build: $_dataName')]
+    public function testNonHttpsDiscoveryIsRefused(string $uri): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/names whatever keys they like/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers($uri))]);
+    }
+
+    #[TestDox('an environment-backed discovery issuer is not judged at build either')]
+    public function testEnvironmentDiscoveryIsNotJudgedAtBuild(): void
+    {
+        putenv('JWT_TEST_DISCOVERY=' . self::ISSUER);
+
+        try {
+            self::bootKernel(['medzuch_jwt' => self::configuration(['uri' => null, 'discovery' => '%env(JWT_TEST_DISCOVERY)%'])]);
+            self::announce();
+            self::publish();
+
+            self::assertSame('user-42', self::verify(self::token('remote')));
+            self::assertSame([self::DISCOVERY, self::URI], self::client()->requested);
+        } finally {
+            putenv('JWT_TEST_DISCOVERY');
+        }
+    }
+
+    #[TestDox('an environment-backed plaintext discovery issuer is refused when the resolver is built')]
+    public function testEnvironmentDiscoveryIsStillHeldToHttps(): void
+    {
+        // Nothing to read at build, so the guard cannot judge it — and without
+        // a fence in the constructor the metadata would be fetched over a
+        // channel an attacker can rewrite. They would then echo the issuer this
+        // application configured, passing §4.3, and name keys of their own.
+        putenv('JWT_TEST_DISCOVERY=http://idp.test');
+
+        try {
+            self::bootKernel(['medzuch_jwt' => self::configuration(['uri' => null, 'discovery' => '%env(JWT_TEST_DISCOVERY)%'])]);
+
+            $this->expectException(InvalidArgumentException::class);
+            $this->expectExceptionMessageMatches('/Discovery issuer must be an https:\/\/ URL/');
+
+            self::getContainer()->get('medzuch_jwt.handler.partner');
+        } finally {
+            putenv('JWT_TEST_DISCOVERY');
+        }
+    }
+
+    #[TestDox('a jwks_uri that turns plaintext in the cache is refused as a resolution failure')]
+    public function testPoisonedCacheEntryIsRefusedInTheVocabularyK6Understands(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::announce();
+        self::publish();
+        self::verify(self::token('remote'));
+
+        // The stored endpoint rewritten under a resolver that has not asked yet.
+        // JwksResolutionException, not the delegate's InvalidArgumentException:
+        // only the first is what a CompositeResolver falls through on.
+        $cache = self::cache();
+        foreach (array_keys($cache->ttls) as $key) {
+            if (str_starts_with($key, 'oidc_discovery_')) {
+                $cache->set($key, 'http://attacker.test/jwks.json');
+            }
+        }
+
+        $next = new DiscoveredJwksResolver(self::ISSUER, self::client(), self::client(), $cache, new SystemClock());
+
+        $this->expectException(JwksResolutionException::class);
+        $this->expectExceptionMessageMatches('/reached a jwks_uri that is not https/');
+
+        $next->resolve(['kid' => 'partner-2026']);
+    }
+
+    #[TestDox('a discovery endpoint that answers with an error is a resolution failure, not a crash')]
+    public function testDiscoveryEndpointRefuses(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::client()->publishesAt(self::DISCOVERY, 'Service Unavailable', 503);
+
+        $cause = self::refusalOf(self::token('remote'));
+
+        self::assertInstanceOf(JwksResolutionException::class, $cause);
+        self::assertStringContainsString('returned HTTP 503', $cause->getMessage());
+        self::assertSame([self::DISCOVERY], self::client()->requested, 'a document that never arrived names no endpoint to ask');
+    }
+
+    #[TestDox('a document that is not JSON is a resolution failure, not a crash')]
+    public function testDiscoveryDocumentIsNotJson(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers())]);
+        self::client()->publishesAt(self::DISCOVERY, '<html>we moved</html>');
+
+        $cause = self::refusalOf(self::token('remote'));
+
+        self::assertInstanceOf(JwksResolutionException::class, $cause);
+        self::assertStringContainsString('is not JSON', $cause->getMessage());
+    }
+
+    #[TestDox('an issuer identifier with a path is read at the OIDC spelling, not the RFC 8414 one')]
+    public function testPathBearingIssuer(): void
+    {
+        // Keycloak and Azure AD publish under identifier + /.well-known/…;
+        // RFC 8414 would insert the suffix before the path instead. Whichever
+        // this bundle chose, the choice is worth pinning: the two disagree on
+        // exactly the issuers that have a realm in them.
+        $issuer = self::ISSUER . '/realms/app';
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers($issuer))]);
+        self::client()->publishesAt($issuer . '/.well-known/openid-configuration', json_encode([
+            'issuer' => $issuer,
+            'jwks_uri' => self::URI,
+        ], \JSON_THROW_ON_ERROR));
+        self::publish();
+
+        self::assertSame('user-42', self::verify(self::token('remote')));
+        self::assertSame([$issuer . '/.well-known/openid-configuration', self::URI], self::client()->requested);
+    }
+
+    #[DataProvider('blanks')]
+    #[TestDox('a blank $_dataName fails at container build')]
+    public function testBlankSourceIsRefused(string $option, string $value): void
+    {
+        // The check that moved out of the tree so `%env(...)%` could survive it.
+        // Without a test of its own, a later tidy of the guard could drop the
+        // branch and only the env tests above would still be watching.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/has a blank ' . $option . '; omit it instead/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration('uri' === $option
+            ? ['uri' => $value]
+            : ['uri' => null, 'discovery' => $value])]);
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function blanks(): iterable
+    {
+        yield 'uri' => ['uri', ''];
+        yield 'uri that is only spaces' => ['uri', '   '];
+        yield 'discovery' => ['discovery', ''];
+        yield 'discovery that is only spaces' => ['discovery', '   '];
+    }
+
     /** What actually refused the token, under the credential error every failure wears. */
     private static function refusalOf(string $token): ?\Throwable
     {
@@ -337,6 +640,34 @@ final class RemoteJwksTest extends KernelTestCase
         self::assertInstanceOf(AccessTokenHandler::class, $handler);
 
         return $handler->getUserBadgeFrom($token)->getUserIdentifier();
+    }
+
+    /**
+     * A set addressed by issuer identifier rather than by endpoint.
+     *
+     * `uri` is nulled rather than omitted because {@see configuration()}
+     * supplies it as the default and strips nulls: the two are alternatives,
+     * and a set carrying both is a build failure of its own.
+     *
+     * @return array<string, mixed>
+     */
+    private static function discovers(string $issuer = self::ISSUER): array
+    {
+        return ['uri' => null, 'discovery' => $issuer];
+    }
+
+    /**
+     * What the issuer says about itself at the well-known path.
+     *
+     * Only the two members this bundle reads; a real document carries dozens,
+     * and a test naming them all would be asserting the provider's taste.
+     */
+    private static function announce(string $issuer = self::ISSUER, string $jwksUri = self::URI): void
+    {
+        self::client()->publishesAt(self::DISCOVERY, json_encode([
+            'issuer' => $issuer,
+            'jwks_uri' => $jwksUri,
+        ], \JSON_THROW_ON_ERROR));
     }
 
     /**

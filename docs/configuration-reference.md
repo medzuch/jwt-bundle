@@ -94,10 +94,13 @@ medzuch_jwt:
         # Prototype
         name:
 
-            # The issuer's `jwks_uri`. HTTPS only: fetching verification keys over a channel an attacker can rewrite defeats the point (RFC 8725 §3.10). Never taken from a token's `jku`.
-            uri:                  ~ # Required, Example: 'https://idp.example.com/.well-known/jwks.json'
+            # The issuer's `jwks_uri`. HTTPS only: fetching verification keys over a channel an attacker can rewrite defeats the point (RFC 8725 §3.10). Never taken from a token's `jku`. Give this or "discovery", not both.
+            uri:                  null # Example: 'https://idp.example.com/.well-known/jwks.json'
 
-            # Service id of a PSR-18 client. Symfony registers `psr18.http_client` once `psr/http-client` is installed and `framework.http_client` is enabled. Connection and response timeouts belong to the client: this bundle cannot impose a socket timeout on one it does not own.
+            # The issuer identifier, for reading `jwks_uri` from its `/.well-known/openid-configuration` instead of hard-coding it (K7). HTTPS only, and the document has to name this same issuer back (OIDC Discovery §4.3). Use it when the provider may move the endpoint; use "uri" when it may not.
+            discovery:            null # Example: 'https://idp.example.com'
+
+            # Service id of a PSR-18 client. Symfony registers `psr18.http_client` once `psr/http-client` is installed and `framework.http_client` is enabled. Connection and response timeouts belong to the client: this bundle cannot impose a socket timeout on one it does not own. So does redirect policy — a client that follows a cross-origin redirect changes which host answered, which no check here can see.
             http_client:          psr18.http_client
 
             # Service id of a PSR-17 request factory. Null uses the client, which is right for Symfony's `psr18.http_client` — it is a factory as well — and wrong for a client that is not.
@@ -109,7 +112,7 @@ medzuch_jwt:
             # Service id of a PSR-16 cache, used as it is. For an application that already has one; otherwise use "cache_pool".
             cache:                null # Example: app.jwks_cache
 
-            # Seconds the fetched document is cached. The common path never touches the network. Zero is refused: it would fetch the set for every token.
+            # Seconds a fetched document is cached — the key set, and the discovery document that names it when "discovery" is used. The common path never touches the network. Zero is refused: it would fetch the set for every token.
             cache_ttl:            300
 
             # Shortest interval between refetches when a token names a `kid` the cached set does not have. Without it, a stream of tokens bearing unknown kids is an amplifier pointed at the issuer.

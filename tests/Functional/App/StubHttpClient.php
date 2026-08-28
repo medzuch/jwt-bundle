@@ -34,6 +34,9 @@ final class StubHttpClient implements ClientInterface, RequestFactoryInterface
 
     private bool $offline = false;
 
+    /** @var array<string, array{string, int}> */
+    private array $byUri = [];
+
     private readonly Psr17Factory $factory;
 
     public function __construct()
@@ -45,6 +48,19 @@ final class StubHttpClient implements ClientInterface, RequestFactoryInterface
     {
         $this->body = $body;
         $this->status = $status;
+        $this->offline = false;
+    }
+
+    /**
+     * Answer one URL differently from the rest.
+     *
+     * Discovery is two documents at two endpoints, so a stub with one body
+     * cannot express it: the metadata has to say where the keys are, and the
+     * keys have to be somewhere else for that to have meant anything.
+     */
+    public function publishesAt(string $uri, string $body, int $status = 200): void
+    {
+        $this->byUri[$uri] = [$body, $status];
         $this->offline = false;
     }
 
@@ -61,7 +77,9 @@ final class StubHttpClient implements ClientInterface, RequestFactoryInterface
             throw new TransportFailure('the identity provider is unreachable');
         }
 
-        return new Response($this->status, ['Content-Type' => 'application/jwk-set+json'], $this->body);
+        [$body, $status] = $this->byUri[(string) $request->getUri()] ?? [$this->body, $this->status];
+
+        return new Response($status, ['Content-Type' => 'application/jwk-set+json'], $body);
     }
 
     public function createRequest(string $method, $uri): RequestInterface

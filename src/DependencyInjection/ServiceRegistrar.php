@@ -20,6 +20,7 @@ use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Issuer\TokenClaimProviderInterface;
 use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
+use Medzuch\JwtBundle\Oidc\DiscoveredJwksResolver;
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
 use Medzuch\JwtBundle\Revocation\CacheTokenDenylist;
 use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
@@ -83,7 +84,7 @@ final class ServiceRegistrar
          *     keys: array<string, array{hmac?: string, pem_private?: string, pem_public?: string, jwk_private?: string, jwk_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}>,
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
-         *     remote_jwks: array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
+         *     remote_jwks: array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
@@ -321,7 +322,7 @@ final class ServiceRegistrar
      * the network does, and bakes whatever it found into the compiled
      * container).
      *
-     * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}> $sets
+     * @param array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}> $sets
      * @param array<string, string|null> $logLevels
      */
     private function registerRemoteJwks(ServicesConfigurator $services, ContainerBuilder $builder, array $sets, ?string $logger, array $logLevels): void
@@ -329,9 +330,15 @@ final class ServiceRegistrar
         foreach ($sets as $name => $set) {
             ConfigurationGuard::assertRemoteJwksIsUsable($name, $set, $builder);
 
-            $services->set('medzuch_jwt.remote_jwks.' . $name, RemoteJwksResolver::class)
+            // One shape, two front doors. `DiscoveredJwksResolver` takes the
+            // same arguments in the same order and builds the library's
+            // resolver itself once the endpoint is known, so the only thing
+            // that varies here is which class and which URL.
+            $discovers = null !== $set['discovery'];
+
+            $services->set('medzuch_jwt.remote_jwks.' . $name, $discovers ? DiscoveredJwksResolver::class : RemoteJwksResolver::class)
                 ->args([
-                    $set['uri'],
+                    $discovers ? $set['discovery'] : $set['uri'],
                     service($set['http_client']),
                     // Symfony's PSR-18 client is a PSR-17 factory too, which is
                     // why the default is the client itself rather than a second
@@ -349,7 +356,7 @@ final class ServiceRegistrar
     }
 
     /**
-     * @param array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int} $set
+     * @param array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int} $set
      */
     private static function cacheReference(array $set): mixed
     {
@@ -482,7 +489,7 @@ final class ServiceRegistrar
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
      * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
-     * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
+     * @param array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      * @param array<string, string|null> $logLevels
      */
     private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $sets, ?string $logger, array $logLevels): void
@@ -575,7 +582,7 @@ final class ServiceRegistrar
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
      * @param array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>                                                                                                                                         $registrations
-     * @param array<string, array{uri: string, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>                                                                                                     $sets
+     * @param array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>                                                                                                     $sets
      * @param array<string, string|null> $logLevels
      */
     private function registerIdTokens(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $registrations, array $sets, ?string $logger, array $logLevels): void
