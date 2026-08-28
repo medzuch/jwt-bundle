@@ -206,6 +206,49 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertStringContainsString('ID token "partner"', $broken->getDisplay());
     }
 
+    #[TestDox('both halves of a security event stream are built by the check')]
+    public function testSecurityEventsAreChecked(): void
+    {
+        // The command promises to build every configured verifier, and a
+        // capability whose services it never instantiates is one where
+        // `jwt:config:check && deploy` goes green on a key that was never read.
+        $configuration = self::configuration();
+        $configuration['keys']['risc'] = [
+            'pem_private' => self::keypair('check-risc')['private'],
+            'pem_public' => self::keypair('check-risc')['public'],
+            'algorithm' => 'RS256',
+            'kid' => 'risc-2026',
+        ];
+        $configuration['security_events'] = [
+            'issuers' => ['stream' => ['issuer' => 'https://issuer.test', 'key' => 'risc']],
+            'consumers' => ['partner' => [
+                'issuer' => 'https://idp.test',
+                'keys' => ['risc'],
+                'allowed_algorithms' => ['RS256'],
+            ]],
+        ];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringContainsString('security event stream "stream"', $tester->getDisplay());
+        self::assertStringContainsString('security event consumer "partner"', $tester->getDisplay());
+
+        // And both fail when the key behind them is not deployed, which is what
+        // stops the two loops that collect them from being dropped quietly.
+        $configuration['keys']['risc'] = [
+            'pem_private' => '/nowhere/never-deployed.pem',
+            'pem_public' => '/nowhere/never-deployed.pub.pem',
+            'algorithm' => 'RS256',
+        ];
+
+        $broken = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $broken->getStatusCode());
+        self::assertStringContainsString('security event stream "stream"', $broken->getDisplay());
+        self::assertStringContainsString('security event consumer "partner"', $broken->getDisplay());
+    }
+
     #[TestDox('a published key whose file is missing is a row, not an exception instead of one')]
     public function testMissingPublishedKeyIsReported(): void
     {

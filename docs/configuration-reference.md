@@ -58,7 +58,7 @@ medzuch_jwt:
     # Service id of a PSR-3 logger. Null disables logging entirely.
     logger:               null # Example: monolog.logger.jwt
 
-    # Named keys, referenced by name from consumers and issuers.
+    # Named keys, referenced by name from consumers, issuers, ID token registrations, security event streams and the published JWK Set.
     keys:
 
         # Prototype
@@ -88,7 +88,7 @@ medzuch_jwt:
             # Key id published in the token header. Required once two keys share an algorithm.
             kid:                  null
 
-    # Named remote JWK Sets, referenced by name from consumers.
+    # Named remote JWK Sets, referenced by name from anything that verifies: consumers, ID token registrations and security event consumers.
     remote_jwks:
 
         # Prototype
@@ -267,6 +267,48 @@ medzuch_jwt:
 
             # Clock-skew tolerance in seconds for exp/nbf/iat. The ceiling is the library's.
             leeway:               0
+
+    # RFC 8417 Security Event Tokens: `issuers` transmits them, `consumers` receives them. Neither is a bearer credential, so neither is wired into a firewall.
+    security_events:
+
+        # Named event streams this application transmits. Each signs with one key, as one issuer.
+        issuers:
+
+            # Prototype
+            name:
+
+                # The `iss` every SET from this stream carries. Receivers pin it, so it is the identifier they were told to expect.
+                issuer:               ~ # Required, Example: 'https://idp.example.com'
+
+                # Name from the `keys` section, whose private half signs. A key with only a public half is refused at container build.
+                key:                  ~ # Required, Example: signing
+
+                # The `aud` every SET from this stream names — the receivers subscribed to it. Optional: RFC 8417 §2.2 only RECOMMENDS the claim, and a caller can name it per SET instead.
+                audience:             []
+
+        # Named transmitters this application accepts SETs from. Each verifies deliveries from one issuer.
+        consumers:
+
+            # Prototype
+            name:
+
+                # The only `iss` accepted, exactly as the transmitter publishes it.
+                issuer:               ~ # Required, Example: 'https://idp.example.com'
+
+                # Names from the `keys` section. Optional only when "remote_jwks" is given; with both, these are tried first.
+                keys:                 []
+
+                # Name from the `remote_jwks` section. The ordinary way to verify a transmitter's SETs: they rotate their keys on their own schedule.
+                remote_jwks:          null # Example: partner_idp
+
+                # JOSE `alg` values accepted. Anything else is refused before a signature is checked.
+                allowed_algorithms:   [] # Required
+
+                # The `aud` a SET must name to be for this receiver. Null accepts whatever it names, which is right for a stream with one subscriber and wrong for a transmitter feeding several.
+                audience:             null # Example: 'https://rp.example.com'
+
+                # Clock-skew tolerance in seconds for nbf/iat. There is no exp on a SET (RFC 8417 §4.1.4), so this forgives a transmitter whose clock runs ahead, and nothing else.
+                leeway:               0
 
     # Public keys to publish as a JWK Set. The application routes to medzuch_jwt.jwks_controller itself; where the document lives is its decision.
     jwks:

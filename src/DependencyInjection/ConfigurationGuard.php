@@ -44,6 +44,7 @@ final class ConfigurationGuard
     private const PROFILE_TOKEN_TYPES = [
         'at+jwt' => 'the RFC 9068 access-token profile, which a consumer uses by default',
         'JWT' => 'the generic RFC 7519 type',
+        'secevent+jwt' => 'the RFC 8417 Security Event Token profile, configured under security_events',
     ];
 
     /**
@@ -115,6 +116,36 @@ final class ConfigurationGuard
                     $kid,
                 ));
             }
+        }
+    }
+
+    /**
+     * A named key exists and has the private half signing needs.
+     *
+     * Shared by access-token issuers and security-event streams because the
+     * question is the same one, and a second copy would be a second chance for
+     * the two to answer it differently. `$context` carries the noun so the
+     * message names what the reader wrote — an issuer, or a stream.
+     *
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
+     */
+    public static function assertCanSign(string $context, string $key, array $keys): void
+    {
+        if (!isset($keys[$key])) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s signs with key "%s", which is not defined under medzuch_jwt.keys. Defined: %s.',
+                $context,
+                $key,
+                [] === $keys ? 'none' : '"' . implode('", "', array_keys($keys)) . '"',
+            ));
+        }
+
+        if (!KeyEntries::hasPrivateHalf($keys[$key])) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s signs with key "%s", which has only a public half. Signing needs the private half.',
+                $context,
+                $key,
+            ));
         }
     }
 
@@ -319,6 +350,32 @@ final class ConfigurationGuard
         // well-formed token as though the token were at fault.
         if (self::hasDenylist($consumer['denylist']) && !in_array('jti', $required, true)) {
             throw new InvalidConfigurationException(sprintf('Consumer "%s" has a denylist and does not require "jti", which is what a denylist looks a token up by. Add "jti" to "required_claims", or drop the denylist.', $name));
+        }
+    }
+
+    /**
+     * A configured `aud` is either absent or worth checking against.
+     *
+     * Null is the documented "accept whatever the token names". An empty string
+     * is not a third meaning: it reaches the library as an expected audience of
+     * `""`, which no token carries, so a receiver written that way looks
+     * configured and refuses every delivery.
+     *
+     * Read through {@see ContainerBuilder::resolveEnvPlaceholders()} rather than
+     * judged in the tree, because the tree's `validate()` closures run during
+     * ValidateEnvPlaceholdersPass against a dummy empty string — which would
+     * refuse `%env(APP_URL)%`, the spelling the README recommends.
+     */
+    public static function assertAudienceIsUsable(string $context, ?string $audience, ContainerBuilder $builder): void
+    {
+        if (null === $audience) {
+            return;
+        }
+
+        $builder->resolveEnvPlaceholders($audience, null, $fromEnvironment);
+
+        if ([] === ($fromEnvironment ?? []) && '' === trim($audience)) {
+            throw new InvalidConfigurationException(sprintf('%s has a blank audience; omit it instead, which is how a receiver accepts whatever a token names.', $context));
         }
     }
 

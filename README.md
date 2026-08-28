@@ -196,11 +196,16 @@ medzuch_jwt:
             allowed_algorithms: [HS256]
 ```
 
-### The other two roles
+### The other three roles
 
 **An OIDC relying party** verifies a provider's ID tokens where they arrive — the login callback
 — rather than on a firewall, and is configured differently enough to have its own section:
 [Verifying an ID token](#verifying-an-id-token-oidc-relying-party).
+
+**A security event transmitter or receiver** mints and accepts RFC 8417 SETs — RISC and CAEP
+events — which travel between an identity provider and the applications that trust it, outside
+any login and authenticating nobody:
+[Sending and receiving security events](#sending-and-receiving-security-events).
 
 **Service-to-service** is the configuration above with no user behind the token: the caller is
 the subject, and the callee is the `audience`. The
@@ -1429,6 +1434,137 @@ token names more than one audience, `exp`/`iat`, the claims OIDC requires, and t
 you pass one. **`at_hash` is not** — binding an ID token to an access token needs support the
 library does not have yet, and this bundle does not reimplement crypto its library is missing.
 
+## Sending and receiving security events
+
+A Security Event Token (RFC 8417) says that something happened to somebody — an account was
+disabled, a credential was compromised, a session was revoked. It is what RISC and CAEP are
+built on, and it travels between an identity provider and the applications that trust it,
+outside any login.
+
+**A SET is not a credential.** It arrives in the body of a POST to a delivery endpoint, describes
+a subject who is not the caller, and grants nothing. There is no firewall to wire it into, so
+both halves are services your code calls, like the ID-token verifier and for the same reason.
+
+### Receiving
+
+```yaml
+medzuch_jwt:
+    remote_jwks:
+        partner_idp:
+            uri: 'https://idp.example.com/.well-known/jwks.json'
+
+    security_events:
+        consumers:
+            risc:
+                issuer: 'https://idp.example.com'
+                remote_jwks: partner_idp
+                allowed_algorithms: [RS256]
+                audience: '%env(APP_URL)%'
+```
+
+```php
+use Medzuch\Jwt\Exception\JwtException;
+use Medzuch\JwtBundle\SecurityEvent\SecurityEventVerifier;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+
+final class ReceiveSecurityEvents
+{
+    // `$events` and the `$seen` store further down are yours: this bundle
+    // verifies the token and stops there.
+    public function __construct(
+        private readonly SecurityEventVerifier $risc,
+        private readonly HandlesSecurityEvents $events,
+    ) {}
+
+    public function __invoke(Request $request): Response
+    {
+        try {
+            $claims = $this->risc->verify($request->getContent());
+        } catch (JwtException) {
+            // RFC 8935 §2.3: the delivery failed, and the transmitter should
+            // hear so rather than be told the event was accepted.
+            return new Response(status: Response::HTTP_BAD_REQUEST);
+        }
+
+        foreach ((array) $claims->get('events') as $type => $payload) {
+            $this->events->handle($claims->subject(), $type, $payload);
+        }
+
+        return new Response(status: Response::HTTP_ACCEPTED);
+    }
+}
+```
+
+The verifier is injectable by the name you configured it under — `SecurityEventVerifier $risc`
+above — so an application receiving from two transmitters names each rather than looking one up
+by string. Checked: signature and algorithm, `iss`, `aud` when you configure one, the
+`secevent+jwt` type, the claims §2.2 requires, and that `events` is a non-empty JSON object.
+
+**A SET has no expiry, and that is a decision you inherit.** RFC 8417 §4.1.4 makes `exp`
+meaningless for an event — it describes the past, so there is no moment it stops being true —
+which means a replayed delivery verifies exactly like the first one, forever. **Deduplicate on
+`jti`**, which every SET is required to carry:
+
+```php
+if (!$this->seen->add($claims->jwtId())) {
+    return new Response(status: Response::HTTP_ACCEPTED); // already handled
+}
+```
+
+The bundle does not do this for you, and the denylist it ships is not the seam for it: `revoke()`
+takes the moment an entry may be forgotten, which for an access token is its `exp` and for a SET
+is nothing at all. Store the `jti` for as long as your transmitter might retry — their delivery
+policy decides it, not this bundle.
+
+### Transmitting
+
+```yaml
+medzuch_jwt:
+    keys:
+        risc_signing: { pem_private: '%kernel.project_dir%/config/jwt/risc.pem', algorithm: RS256, kid: 'risc-2026' }
+
+    security_events:
+        issuers:
+            risc:
+                issuer: '%env(APP_URL)%'
+                key: risc_signing
+                audience: 'https://rp.example.com'
+```
+
+```php
+use Medzuch\JwtBundle\SecurityEvent\SecurityEventIssuer;
+
+final class AnnouncesDisabledAccounts
+{
+    public function __construct(private readonly SecurityEventIssuer $risc) {}
+
+    public function announce(string $userId, string $reason): string
+    {
+        return (string) $this->risc->issue()
+            ->subject($userId)
+            ->event('https://schemas.openid.net/secevent/risc/event-type/account-disabled', [
+                'reason' => $reason,
+            ])
+            ->build();
+    }
+}
+```
+
+`issue()` hands back the library's builder rather than taking arguments, because what varies
+between two events is the events themselves and no argument list would say that better. The
+stream supplies `iss`, `iat`, a random `jti`, the `secevent+jwt` type and the configured
+`audience`; you declare at least one event — a SET without one is refused when you build it —
+and anything else RFC 8417 allows, including `toe` for when the event happened and `txn` to
+correlate it with other messages.
+
+**There is no `ttl`.** Not an omission: §4.1.4 again, and the library's builder has no setter
+for `exp` either. If you want a receiver to ignore stale events, send `toe` and let them decide;
+an expiry would be this application claiming an event stops having happened.
+
+Delivering the token is yours — push over HTTPS (RFC 8935) or a poll endpoint (RFC 8936) —
+along with retries. The bundle mints and verifies; it does not own your transport.
+
 ## From the console
 
 Five commands, and none of them a second implementation of anything: each asks the services your
@@ -1478,10 +1614,11 @@ inspection as they would a request, so a metrics listener counts it — an answe
 second, quieter route would be worth much less than one that agrees with your firewall. And with
 several consumers configured the command will not pick one for you: name it with `--consumer`.
 
-`--consumer` names an **access-token** consumer. An ID token still decodes — that half needs no
-configuration — but a consumer asked to verify one refuses it as `malformed`, because `typ` says
-it is not the kind of token that consumer reads. ID tokens are verified by `IdTokenVerifier`
-from your callback, not by a firewall (DEC-8).
+`--consumer` names an **access-token** consumer. An ID token or a security event token still
+decodes — that half needs no configuration — but a consumer asked to verify one refuses it as
+`malformed`, because `typ` says it is not the kind of token that consumer reads. Those are
+verified by `IdTokenVerifier` from your callback and by `SecurityEventVerifier` from your
+delivery endpoint, not by a firewall (DEC-8).
 
 *Would* authenticate is the exact word: for `user.mode: provider` and `claims`, the identity is
 loaded by Symfony after the handler returns, so the command can accept a token naming a user your
@@ -1562,8 +1699,9 @@ decided, not how the request ended:
   the exact phrase.
 - **Only handlers a firewall calls are traced.** `medzuch_jwt.handler.<name>` injected somewhere
   of your own, or `jwt:token:inspect`, verifies without a panel row.
-- **ID tokens are not consumers.** `IdTokenVerifier` is a service your callback calls (DEC-8);
-  nothing about it reaches here.
+- **ID tokens and security events are not consumers.** `IdTokenVerifier` and
+  `SecurityEventVerifier` are services your own code calls (DEC-8); nothing about either reaches
+  here.
 
 **The token itself is never collected.** Profiler data is written to disk and served back by a
 URL, so a bearer token in there is a credential in a file — and one a screenshot in a bug report
@@ -1695,7 +1833,9 @@ looking like rejected tokens at runtime:
   algorithm with no `kid`
 - a key given the wrong kind of material for its algorithm — a secret for `RS256`, a PEM for
   `HS256` or for `EdDSA`, more than one kind at once, or none
-- a consumer verifying with a private-only key, or an issuer signing with a public-only one
+- a consumer verifying with a private-only key, or an issuer signing with a public-only one —
+  a security-event stream is held to the same rule, and named as a stream when it breaks it
+- a security-event consumer with nothing to verify with: no `keys` and no `remote_jwks`
 - a JWK Set publishing a shared secret, a key with no public half, or a key that does not exist
 - a static claim named `iss`, `sub`, `aud`, `exp`, `nbf`, `iat` or `jti` — those are set from
   configuration or by the profile

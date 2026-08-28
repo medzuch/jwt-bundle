@@ -13,6 +13,37 @@ a class or method signature would be.
 
 ### Added
 
+- **Security Event Tokens, both halves** (C8 and I7, RFC 8417). A new
+  `security_events` section configures the streams this application transmits
+  and the transmitters it accepts deliveries from — RISC and CAEP events, and
+  anything else built on SETs.
+
+  Neither side is wired into a firewall, because a SET is not a credential: it
+  says something happened to a subject who is not the caller, arrives in the
+  body of a POST to a delivery endpoint, and grants nothing. Both are services
+  your code calls, injectable by the name they were configured under, the same
+  shape `IdTokenVerifier` already had.
+
+  `SecurityEventIssuer::issue()` hands back the library's builder rather than
+  taking an argument list, since what varies between two SETs from one stream is
+  the events themselves. The stream supplies `iss`, `iat`, a random `jti`, the
+  `secevent+jwt` type and the configured `audience`.
+
+  **There is no TTL on either side.** RFC 8417 §4.1.4 makes `exp` meaningless
+  for an event, so a replayed delivery verifies exactly like the first one and
+  deduplicating on `jti` is the receiver's job. The README says so, and says why
+  this bundle's denylist is not the seam for it: `revoke()` takes the moment an
+  entry may be forgotten, which for a SET is nothing at all.
+
+  Delivery — RFC 8935 push, RFC 8936 poll, and retries — stays the
+  application's. This bundle mints and verifies.
+
+  `secevent+jwt` joins `at+jwt` and `JWT` as a `token_type` a firewall consumer
+  is refused: a consumer written that way would verify SETs without the
+  `events` rule, which is the one shape this section exists to keep out of a
+  firewall.
+
+
 - **Endpoints that answer with or without a token are documented and pinned**
   (C15). A public path that shows more to a signed-in caller needs no
   authenticator and no configuration in this bundle: Symfony's `access_token`

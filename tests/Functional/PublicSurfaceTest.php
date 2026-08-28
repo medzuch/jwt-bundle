@@ -45,6 +45,8 @@ final class PublicSurfaceTest extends KernelTestCase
         '<registration>' => 'partner',
         '<extractor>' => 'spa',
         '<key>' => 'signer',
+        '<stream>' => 'risc',
+        '<transmitter>' => 'risc',
     ];
 
     /**
@@ -78,6 +80,10 @@ final class PublicSurfaceTest extends KernelTestCase
             ],
             'id_tokens' => [
                 'partner' => ['issuer' => 'https://idp.test', 'client_id' => 'client', 'keys' => ['signer'], 'allowed_algorithms' => ['HS256']],
+            ],
+            'security_events' => [
+                'issuers' => ['risc' => ['issuer' => 'https://api.test', 'key' => 'signer']],
+                'consumers' => ['risc' => ['issuer' => 'https://idp.test', 'keys' => ['signer'], 'allowed_algorithms' => ['HS256']]],
             ],
             'jwks' => ['keys' => ['published']],
         ]);
