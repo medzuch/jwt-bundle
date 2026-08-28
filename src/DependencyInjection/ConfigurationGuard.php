@@ -120,6 +120,63 @@ final class ConfigurationGuard
     }
 
     /**
+     * The metadata document is worth serving before it is served (K8).
+     *
+     * Everything here fails at container build rather than at the endpoint,
+     * for the reason the JWK Set publisher already has: the one thing a
+     * document like this must never do is succeed at the wrong moment. A
+     * relying party that reads an issuer identifier it cannot verify against,
+     * or a `jwks_uri` over plaintext, has been handed the shape of trust
+     * without the substance — and it arrives with a 200.
+     *
+     * `response_types_supported` is refused when absent because RFC 8414 §2
+     * requires it and this bundle cannot supply it: it describes grants an
+     * authorization server runs, which is §8's third non-goal. Serving a
+     * document without it would publish something that claims conformance and
+     * does not have it.
+     *
+     * @param array{issuer: string|null, jwks_uri: string|null, extra: array<string, mixed>, cache_max_age: int} $metadata
+     */
+    public static function assertMetadataIsPublishable(array $metadata, ContainerBuilder $builder): void
+    {
+        foreach (['issuer', 'jwks_uri'] as $member) {
+            if (array_key_exists($member, $metadata['extra'])) {
+                throw new InvalidConfigurationException(sprintf('medzuch_jwt.metadata.extra names "%s", which is the option above it. Set it there: two spellings of one member could disagree, and the document may only say it once.', $member));
+            }
+        }
+
+        foreach (['issuer' => 'issuer identifier', 'jwks_uri' => 'jwks_uri'] as $member => $noun) {
+            $value = $metadata[$member];
+
+            if (null === $value) {
+                continue;
+            }
+
+            // Read through the placeholder resolver rather than judged by a
+            // tree closure, for the reason `remote_jwks` records: a validate()
+            // closure runs against a dummy empty string during
+            // ValidateEnvPlaceholdersPass, and would refuse `%env(APP_URL)%`.
+            $builder->resolveEnvPlaceholders($value, null, $fromEnvironment);
+
+            if ([] !== ($fromEnvironment ?? [])) {
+                continue;
+            }
+
+            if ('' === trim($value)) {
+                throw new InvalidConfigurationException(sprintf('medzuch_jwt.metadata has a blank %s; omit it instead.', $member));
+            }
+
+            if (0 !== stripos($value, 'https://')) {
+                throw new InvalidConfigurationException(sprintf('medzuch_jwt.metadata has an %s that is not https. A document read over a channel an attacker can rewrite names whatever keys and endpoints they like (RFC 8414 §2). Got "%s".', $noun, $value));
+            }
+        }
+
+        if (!array_key_exists('response_types_supported', $metadata['extra'])) {
+            throw new InvalidConfigurationException('medzuch_jwt.metadata would publish a document without "response_types_supported", which RFC 8414 §2 requires. This bundle cannot fill it in — it describes grants an authorization server runs, not tokens — so name it under "extra".');
+        }
+    }
+
+    /**
      * A named key exists and has the private half signing needs.
      *
      * Shared by access-token issuers and security-event streams because the

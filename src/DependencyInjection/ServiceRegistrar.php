@@ -24,6 +24,7 @@ use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Oidc\DiscoveredJwksResolver;
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
+use Medzuch\JwtBundle\Oidc\MetadataController;
 use Medzuch\JwtBundle\Revocation\CacheTokenDenylist;
 use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
@@ -93,6 +94,7 @@ final class ServiceRegistrar
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
          *     security_events: array{issuers: array<string, array{issuer: string, key: string, audience: list<string>}>, consumers: array<string, array{issuer: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, audience: string|null, leeway: int}>},
+         *     metadata: array{issuer: string|null, jwks_uri: string|null, extra: array<string, mixed>, cache_max_age: int},
          * } $config */
         // Relative to the *bundle*, not to this file: Symfony anchors the
         // configurator on `new ReflectionObject($bundle)->getFileName()`, so
@@ -131,6 +133,7 @@ final class ServiceRegistrar
         $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerSecurityEvents($services, $builder, $keys, $config['security_events'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
+        $this->registerMetadata($services, $builder, $config['metadata']);
 
         ConsoleCommands::register(
             $services,
@@ -604,6 +607,43 @@ final class ServiceRegistrar
             // "partner" rather than a container lookup by string.
             $builder->registerAliasForArgument($id, IdTokenVerifier::class, $name);
         }
+    }
+
+    /**
+     * The document this application publishes about itself (K8).
+     *
+     * Assembled here rather than in the controller: nothing in it varies per
+     * request, so a document built per call would be recomputed for every
+     * conditional request it exists to answer cheaply.
+     *
+     * Registered only when an issuer is named. The section carries defaults so
+     * the tree can describe it, and an application that configures none of it
+     * should get no endpoint rather than one serving `{}`.
+     *
+     * @param array{issuer: string|null, jwks_uri: string|null, extra: array<string, mixed>, cache_max_age: int} $metadata
+     */
+    private function registerMetadata(ServicesConfigurator $services, ContainerBuilder $builder, array $metadata): void
+    {
+        if (null === $metadata['issuer']) {
+            return;
+        }
+
+        ConfigurationGuard::assertMetadataIsPublishable($metadata, $builder);
+
+        // `issuer` first, because a reader compares it against the identifier
+        // it fetched the document for before reading anything else; the rest in
+        // the order the application wrote it.
+        $document = ['issuer' => $metadata['issuer']];
+
+        if (null !== $metadata['jwks_uri']) {
+            $document['jwks_uri'] = $metadata['jwks_uri'];
+        }
+
+        $services->set('medzuch_jwt.metadata_controller', MetadataController::class)
+            ->args([$document + $metadata['extra'], $metadata['cache_max_age']])
+            // Public for the same reason the JWK Set controller is: it is what
+            // makes `controller: medzuch_jwt.metadata_controller` resolvable.
+            ->public();
     }
 
     /**

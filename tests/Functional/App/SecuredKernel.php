@@ -157,6 +157,10 @@ final class SecuredKernel extends Kernel
         // catch-all access rule, and the JWK Set exempted ahead of it. Served
         // outside any firewall the endpoint answers 200 whatever the rules
         // say, and the warning would have nothing to fail against.
+        if (self::announces($this->bundleConfig)) {
+            array_unshift($accessControl, ['path' => '^/\\.well-known/oauth-authorization-server$', 'roles' => 'PUBLIC_ACCESS']);
+        }
+
         if (self::publishes($this->bundleConfig)) {
             $firewalls['public'] = ['pattern' => '^/', 'stateless' => true, 'provider' => 'users'];
             array_unshift($accessControl, ['path' => '^/\\.well-known/jwks\\.json$', 'roles' => 'PUBLIC_ACCESS']);
@@ -231,6 +235,16 @@ final class SecuredKernel extends Kernel
     /**
      * @param array<array-key, mixed> $config
      */
+    private static function announces(array $config): bool
+    {
+        $metadata = $config['metadata'] ?? null;
+
+        return is_array($metadata) && null !== ($metadata['issuer'] ?? null);
+    }
+
+    /**
+     * @param array<array-key, mixed> $config
+     */
     private static function publishes(array $config): bool
     {
         $jwks = $config['jwks'] ?? null;
@@ -265,6 +279,16 @@ final class SecuredKernel extends Kernel
         // Where a JWK Set lives is the application's decision, and this
         // application makes it the way any other would: it routes to the
         // controller when it has configured keys to publish.
+        // The metadata document is public for the same reason the JWK Set is,
+        // and is exempted the same way: a reader that has to authenticate to
+        // learn where the keys are cannot be a reader who has no credentials
+        // yet, which is every one of them.
+        if (self::announces($this->bundleConfig)) {
+            $routes->add('metadata', '/.well-known/oauth-authorization-server')
+                ->methods(['GET'])
+                ->controller('medzuch_jwt.metadata_controller');
+        }
+
         if (self::publishes($this->bundleConfig)) {
             $routes->add('jwks', '/.well-known/jwks.json')
                 ->methods(['GET'])

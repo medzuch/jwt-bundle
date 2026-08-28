@@ -86,6 +86,11 @@ final class PublicSurfaceTest extends KernelTestCase
                 'consumers' => ['risc' => ['issuer' => 'https://idp.test', 'keys' => ['signer'], 'allowed_algorithms' => ['HS256']]],
             ],
             'jwks' => ['keys' => ['published']],
+            'metadata' => [
+                'issuer' => 'https://api.test',
+                'jwks_uri' => 'https://api.test/.well-known/jwks.json',
+                'extra' => ['response_types_supported' => ['code']],
+            ],
         ]);
     }
 

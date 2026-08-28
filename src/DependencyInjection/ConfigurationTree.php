@@ -45,6 +45,7 @@ final class ConfigurationTree
         self::configureIdTokens($children);
         self::configureSecurityEvents($children);
         self::configureJwks($children);
+        self::configureMetadata($children);
     }
 
     /**
@@ -558,6 +559,52 @@ final class ConfigurationTree
             ->defaultValue(300)
             ->min(0)
             ->info('Seconds a relying party may cache the document. The response carries an ETag, so zero means revalidate — a conditional request gets 304 — rather than refetch. A rotation needs neither: an accepted key stays accepted for as long as it is configured.')
+            ->end();
+    }
+
+    /**
+     * This application's own authorization-server metadata (K8, RFC 8414).
+     *
+     * Named `metadata` rather than `discovery` because `discovery` already
+     * means the opposite in this tree: `remote_jwks.<name>.discovery` reads
+     * somebody else's document, and this section publishes ours.
+     *
+     * Two members are filled in from configuration this bundle owns, and the
+     * rest is `extra` handed through verbatim. That split is the §8 non-goal
+     * showing through: `issuer` and `jwks_uri` are the only two members a JWT
+     * bundle knows, and every other one — the endpoints, the grants, the
+     * response types — belongs to an authorization server this package
+     * deliberately is not.
+     */
+    private static function configureMetadata(NodeBuilder $children): void
+    {
+        $metadata = $children->arrayNode('metadata')
+            ->info('This application\'s own RFC 8414 metadata document. The application routes to medzuch_jwt.metadata_controller itself, at whichever well-known path it means — the document differs by what it carries, not by how it is served.')
+            ->addDefaultsIfNotSet()
+            ->children();
+
+        $metadata->scalarNode('issuer')
+            ->defaultNull()
+            ->info('The issuer identifier this document speaks for, which a reader checks the document against (RFC 8414 §2, OIDC Discovery §4.3). HTTPS only. Omit the whole section to publish nothing; blankness and scheme are checked at container build.')
+            ->example('%env(APP_URL)%')
+            ->end();
+
+        $metadata->scalarNode('jwks_uri')
+            ->defaultNull()
+            ->info('Where this application serves its JWK Set — the route it points medzuch_jwt.jwks_controller at. HTTPS only. Optional per RFC 8414, and omitting it leaves a reader with an issuer whose keys it cannot find.')
+            ->example('%env(APP_URL)%/.well-known/jwks.json')
+            ->end();
+
+        $extra = $metadata->arrayNode('extra');
+        $extra->info('Every other member, verbatim: response_types_supported (which RFC 8414 §2 requires), the endpoints, the grant types — all of it describes an authorization server this bundle is not, so none of it is invented here. "issuer" and "jwks_uri" are refused, being the two above.');
+        $extra->normalizeKeys(false);
+        $extra->variablePrototype()->end();
+        $extra->defaultValue([]);
+
+        $metadata->integerNode('cache_max_age')
+            ->defaultValue(300)
+            ->min(0)
+            ->info('Seconds a reader may cache the document. The response carries an ETag, so zero means revalidate rather than refetch.')
             ->end();
     }
 

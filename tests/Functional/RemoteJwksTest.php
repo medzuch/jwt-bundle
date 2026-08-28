@@ -13,6 +13,7 @@ use Medzuch\Jwt\Primitives\SystemClock;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
 use Medzuch\JwtBundle\Oidc\DiscoveredJwksResolver;
+use Medzuch\JwtBundle\Oidc\MetadataController;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\RejectionReason;
 use Medzuch\JwtBundle\Tests\Functional\App\ArrayCache;
@@ -26,6 +27,7 @@ use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Cache\Adapter\ArrayAdapter;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\Security\Core\Exception\BadCredentialsException;
 
@@ -599,6 +601,33 @@ final class RemoteJwksTest extends KernelTestCase
         yield 'uri that is only spaces' => ['uri', '   '];
         yield 'discovery' => ['discovery', ''];
         yield 'discovery that is only spaces' => ['discovery', '   '];
+    }
+
+    #[TestDox('a document this bundle publishes is one this bundle accepts (K7 meets K8)')]
+    public function testTheTwoHalvesOfDiscoveryAgree(): void
+    {
+        // The pair is only worth having if it closes: K8 writes the document
+        // and K7 reads it, and every rule the reader enforces — the issuer
+        // echo, https on the endpoint — is one the publisher has to satisfy.
+        // Two suites each testing their own side would agree with themselves
+        // and could still disagree with each other.
+        self::bootKernel(['medzuch_jwt' => self::configuration(self::discovers()) + [
+            'metadata' => [
+                'issuer' => self::ISSUER,
+                'jwks_uri' => self::URI,
+                'extra' => ['response_types_supported' => ['code']],
+            ],
+        ]]);
+
+        $published = self::getContainer()->get('medzuch_jwt.metadata_controller');
+        self::assertInstanceOf(MetadataController::class, $published);
+
+        // Served the way a reader would fetch it, then handed to the reader.
+        self::client()->publishesAt(self::DISCOVERY, (string) $published(Request::create(self::DISCOVERY))->getContent());
+        self::publish();
+
+        self::assertSame('user-42', self::verify(self::token('remote')));
+        self::assertSame([self::DISCOVERY, self::URI], self::client()->requested);
     }
 
     /** What actually refused the token, under the credential error every failure wears. */
