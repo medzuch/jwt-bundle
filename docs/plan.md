@@ -234,7 +234,7 @@ default and adds no runtime cost when unconfigured.
 | C12 | Encrypted (JWE) and nested JWT support on the consumer side | `NestedJwtParser`, `Decrypter` | T3 |
 | C13 | `ScopeVoter` + `#[IsGranted('SCOPE_x')]`-style checks and an `is_granted_scope()` expression function. Scopes are read from the `scope` claim — the RFC's delimited string or a JSON list — through a `ProvidesScopes` user, so what decides is the user rather than the mode: `claims` builds one, a `custom` factory can, and so can a store-loaded user. The claim name is not configurable; `scp` and its like belong to a custom factory | Symfony voters | T2 |
 | C14 | Audience policy per consumer: `any` (RFC 7519 §4.1.3, the default) or `exclusive` — refuse a token addressed to anyone else, as RFC 9068 §3 asks. Not "exact match": a consumer answering to two names is addressed by either, so requiring the token to name *all* of them would refuse a legitimate one | library consumer + `AccessTokenHandler` | T2 |
-| C15 | Anonymous-friendly mode: verify a token if present, don't 401 when absent (public endpoints with optional identity) | custom authenticator or firewall config | T3 |
+| C15 | Anonymous-friendly mode: verify a token if present, don't 401 when absent (public endpoints with optional identity). **Landed in Phase 5 as firewall configuration, not code**: Symfony's `access_token` authenticator declines a request carrying no token rather than failing it, so an access rule exempting the path is the whole feature. The authenticator this row allowed for was not needed — see the correction to DEC-1 in §9 | firewall config (documented + pinned by tests) | T3 |
 
 ### 3.2 Issuer side — minting tokens
 
@@ -430,8 +430,10 @@ Design notes:
 - **A firewall names a consumer**, not a profile:
   `token_handler: medzuch_jwt.handler.api`. A shorthand firewall key
   (`medzuch_jwt: { consumer: api }`) via an authenticator factory was considered
-  and refused: DEC-1 in §9 says why, and why a later DPoP or C15 authenticator
-  would be a new firewall key of its own rather than this one.
+  and refused: DEC-1 in §9 says why, and why a later DPoP authenticator would
+  be a new firewall key of its own rather than this one. C15 was named here
+  too, and is not: it turned out to need no authenticator at all — §9's
+  Phase 5 correction says what it needed instead.
 - **No secret ever lands in a container parameter** that `debug:container`
   would print (K9): keys are built inside factory services from env references.
 - **`audience` is normalised to a list before it reaches the library.** jwt-php
@@ -676,9 +678,17 @@ be re-taught each addition or quietly fall behind it. The DX gap is closed with
 documentation (D7) and a Flex recipe (D6) instead, neither of which forks the
 security configuration surface. *Reopens if* a feature cannot be expressed
 through a token handler at all: DPoP (§3.6) needs a second header plus proof
-replay checks, and C15 needs "authenticate if a token is present, don't 401 if
-it isn't". Those get their own, explicitly named authenticator — not a
+replay checks. That gets its own, explicitly named authenticator — not a
 shorthand alias for the existing one.
+
+**Correction (Phase 5).** This paragraph also named C15 — "authenticate if a
+token is present, don't 401 if it isn't" — as a second reason to reopen. It was
+wrong about what C15 needs. `AccessTokenAuthenticator::supports()` returns
+`false` when the extractor finds nothing, so Symfony *already* declines rather
+than fails an anonymous request: what refuses one on a guarded path is the
+access rule, and exempting the path is the entire capability. C15 landed as
+documentation and tests over configuration that already worked, with no
+authenticator and no bundle code. DPoP remains the only live reason to reopen.
 
 **DEC-2 — Supported versions: PHP `~8.3.0 || ~8.4.0`, Symfony `^6.4 || ^7.4 || ^8.0`.**
 v0.4's "6.4 LTS and 7.x" was written before Symfony 7.4 LTS and 8.0 shipped.

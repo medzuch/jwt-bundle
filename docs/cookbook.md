@@ -11,6 +11,7 @@ the README's, so a renamed key cannot leave a recipe describing a bundle that no
 - [One API, tokens from two issuers](#one-api-tokens-from-two-issuers)
 - [One deployment, several tenants](#one-deployment-several-tenants)
 - [A browser SPA on a `__Host-` cookie](#a-browser-spa-on-a-__host--cookie)
+- [A page that shows more to whoever is signed in](#a-page-that-shows-more-to-whoever-is-signed-in)
 - [Gating a deploy on the configuration](#gating-a-deploy-on-the-configuration)
 
 ## Machine tokens between your own services
@@ -414,6 +415,102 @@ application did not initiate, which is what CSRF is. So:
 request as cross-site (`Sec-Fetch-Site`). It is defence in depth, not a defence: a request
 arriving without that header — an older browser, a non-browser client — is not judged, so it
 narrows the window rather than closing it.
+
+## A page that shows more to whoever is signed in
+
+An article listing that anyone may read, where a signed-in reader also sees their drafts. The
+identity is optional; the endpoint is not.
+
+The temptation is to put the path outside the firewall and verify the token by hand in the
+controller. Don't: that is a second, hand-rolled verification with its own idea of which
+algorithms are allowed and whether `exp` is checked, sitting next to a configured one that has
+those answers already. **Leave the path behind the firewall and exempt it from the access rule
+instead** — the token handler runs exactly as it does everywhere else, and only the requirement
+to have one is lifted:
+
+```yaml
+# config/packages/security.yaml
+security:
+    firewalls:
+        api:
+            pattern: ^/api
+            stateless: true
+            access_token:
+                token_handler: medzuch_jwt.handler.api
+
+    access_control:
+        # Read by anyone; read as someone when a token says so.
+        - { path: ^/api/articles, roles: PUBLIC_ACCESS }
+        - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
+```
+
+```yaml
+# config/packages/medzuch_jwt.yaml — nothing here is specific to the optional path
+medzuch_jwt:
+    keys:
+        api: { pem_public: '%kernel.project_dir%/config/jwt/api.pub.pem', algorithm: RS256, kid: 'api-2026' }
+
+    consumers:
+        api:
+            issuer: 'https://accounts.example.com'
+            audience: '%env(APP_URL)%'
+            keys: [api]
+            allowed_algorithms: [RS256]
+```
+
+**Order matters in that list.** `access_control` stops at the first rule whose `path` matches,
+so the two lines reversed put `/api/articles` behind `IS_AUTHENTICATED_FULLY` and the exemption
+is never reached. The narrower rule goes first.
+
+The controller asks who the caller turned out to be, and is written to accept `null`:
+
+```php
+use Symfony\Bundle\SecurityBundle\Security;
+use Symfony\Component\HttpFoundation\JsonResponse;
+
+final class ListArticles
+{
+    public function __construct(
+        private readonly Articles $articles,
+        private readonly Security $security,
+    ) {}
+
+    public function __invoke(): JsonResponse
+    {
+        $reader = $this->security->getUser();
+
+        return new JsonResponse([
+            'articles' => $this->articles->publishedFor($reader),
+            'drafts' => null === $reader ? [] : $this->articles->draftsBy($reader),
+        ]);
+    }
+}
+```
+
+**Why this works without an authenticator of its own.** Symfony's `access_token` authenticator
+reports that it does not support a request carrying no token, rather than failing it. An
+anonymous request is therefore not a rejected one — nothing about it reaches the token handler —
+and what turns it away on your other paths is the access rule. Lift the rule and the same
+firewall serves both callers. A firewall with no catch-all rule is already in this shape and
+needs no exemption.
+
+**The edge worth stating to your API's clients.** A token that is *present and bad* is still a
+401 here, with the `WWW-Authenticate` challenge. Optional identity means the caller may decline
+to say who they are; it does not mean an expired token is treated as though there were none. A
+reader whose session lapsed gets told to refresh, rather than silently served the logged-out
+page with no clue why their drafts vanished.
+
+**A real page usually carries a cookie, and that sharpens the edge.** The example above is a
+Bearer API, which is the shape a JavaScript client or a mobile app sends. Serve the same page to
+a browser and the credential is the `__Host-` cookie of
+[the SPA recipe](#a-browser-spa-on-a-__host--cookie) — read by
+`medzuch_jwt.token_extractor.<name>`, and otherwise identical here. The difference is who
+decides to stop sending it: a Bearer client omits a header, while a browser resends its cookie
+until something clears it. So a lapsed session on a `PUBLIC_ACCESS` path is a 401 for the
+*public* view too, until the client clears the cookie on that 401. Handle it there — one
+interceptor that drops the cookie and retries — rather than by asking the server to stop saying
+the token was bad, which is the one change that would make a stale credential indistinguishable
+from none.
 
 ## Gating a deploy on the configuration
 

@@ -692,6 +692,58 @@ which is `is_granted('SCOPE_reports.read')` with the prefix kept out of the stri
 denial through an expression cannot produce the RFC 6750 `insufficient_scope` header — see
 [what a refusal tells the caller](#what-a-refusal-tells-the-caller).
 
+## Endpoints that work with or without a token
+
+A public page that shows more to someone who is signed in needs identity to be *optional*: read
+the token when there is one, and answer anyway when there is not. That needs no configuration in
+this bundle and no authenticator of its own — leave the path behind the same firewall and exempt
+it from the access rule:
+
+```yaml
+security:
+    firewalls:
+        api:
+            pattern: ^/api
+            stateless: true
+            access_token:
+                token_handler: medzuch_jwt.handler.api
+
+    access_control:
+        - { path: ^/api/articles, roles: PUBLIC_ACCESS }
+        - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
+```
+
+**The exemption has to come before the catch-all.** `access_control` stops at the first rule
+whose `path` matches, so the two lines above reversed would put every `/api` path behind
+`IS_AUTHENTICATED_FULLY` and the optional one would never be reached — the same trap the JWK Set
+section describes, and the one most likely to survive a copy-paste.
+
+The exemption is the *access rule*, not the firewall. Symfony's `access_token` authenticator
+does not fail a request that carries no token — it declines to handle it — so what turns an
+anonymous caller away is the rule, and a path the rule does not cover is served to everyone.
+A firewall with no catch-all rule needs no exemption at all: it already behaves this way.
+
+In the controller, `Security::getUser()` returns the user or `null`:
+
+```php
+public function __invoke(Security $security): JsonResponse
+{
+    $reader = $security->getUser();
+
+    return new JsonResponse([
+        'articles' => $this->articles->visibleTo($reader),
+        'draftsVisible' => null !== $reader,
+    ]);
+}
+```
+
+**A token that is present but not valid is still refused.** Optional means the caller may decline
+to say who they are — not that saying it wrongly is the same as saying nothing. An expired token
+on one of these paths answers `401` with `WWW-Authenticate: Bearer … error="invalid_token"`,
+not the anonymous page, so a client whose session lapsed is told to refresh rather than left
+wondering where their name went. That is RFC 6750 §3, and it is what stops a stale token from
+silently becoming a downgrade.
+
 ## What a refusal tells the caller
 
 RFC 6750 §3 asks a resource server to answer refusals in a way a client can act on. Symfony
