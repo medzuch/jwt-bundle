@@ -318,4 +318,19 @@ medzuch_jwt:
 
         # Seconds a relying party may cache the document. The response carries an ETag, so zero means revalidate — a conditional request gets 304 — rather than refetch. A rotation needs neither: an accepted key stays accepted for as long as it is configured.
         cache_max_age:        300
+
+    # This application's own RFC 8414 metadata document. The application routes to medzuch_jwt.metadata_controller itself, at whichever well-known path it means — the document differs by what it carries, not by how it is served.
+    metadata:
+
+        # The issuer identifier this document speaks for, which a reader checks the document against (RFC 8414 §2, OIDC Discovery §4.3). HTTPS only. Omit the whole section to publish nothing; blankness and scheme are checked at container build.
+        issuer:               null # Example: '%env(APP_URL)%'
+
+        # Where this application serves its JWK Set — the route it points medzuch_jwt.jwks_controller at. HTTPS only. Optional per RFC 8414, and omitting it leaves a reader with an issuer whose keys it cannot find.
+        jwks_uri:             null # Example: '%env(APP_URL)%/.well-known/jwks.json'
+
+        # Every other member, verbatim: response_types_supported (which RFC 8414 §2 requires), the endpoints, the grant types — all of it describes an authorization server this bundle is not, so none of it is invented here. "issuer" and "jwks_uri" are refused, being the two above.
+        extra:                []
+
+        # Seconds a reader may cache the document. The response carries an ETag, so zero means revalidate rather than refetch.
+        cache_max_age:        300
 ```

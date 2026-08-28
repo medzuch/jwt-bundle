@@ -44,11 +44,14 @@ is the promise; the class behind it is not:
 | `medzuch_jwt.key.<key>.signing` | `Medzuch\Jwt\Key\PrivateKey` | your code, for a key you configured |
 | `medzuch_jwt.key.<key>.verification` | `Medzuch\Jwt\Key\PublicKey` | your code, for a key you configured |
 | `medzuch_jwt.jwks_controller` | `callable` | a route's `controller:` |
+| `medzuch_jwt.metadata_controller` | `callable` | a route's `controller:` |
 
-**`medzuch_jwt.jwks_controller` is the row where a type would say nothing.** Its class is
-`@internal`, and a route depends on behaviour rather than on a class name: it is invokable,
-takes nothing it is not given, and answers the JWK Set as JSON with an `ETag`. That is what is
-promised.
+**The two controller rows are where a type would say nothing.** Both classes are `@internal`,
+and a route depends on behaviour rather than on a class name: each is invokable, takes nothing
+it is not given, and answers JSON with an `ETag` — the JWK Set from one, this application's
+RFC 8414 metadata from the other. That is what is promised. `medzuch_jwt.metadata_controller`
+exists only when `metadata.issuer` is configured, the way the JWK Set rows exist only when
+there are keys to publish.
 
 **A key answers by role because only one role may exist**: an entry given a public half alone
 has a `.verification` service and no `.signing` one, and a shared secret is both at once. The

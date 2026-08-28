@@ -261,7 +261,7 @@ default and adds no runtime cost when unconfigured.
 | K5 | Remote JWKS consumption (`jwks_uri`) with PSR-18 client + PSR-16 cache, HTTPS-only, bounded body, throttled refresh-on-miss. Named at the top level, so two consumers of one issuer share a cache entry and a refresh window | `RemoteJwksResolver` (already implemented in the library) | T2 |
 | K6 | Composite resolution: remote JWKS with local fallback so an IdP outage doesn't break verification of still-valid keys. Local first, so the common path is not a round trip | `CompositeResolver` | T2 |
 | K7 | OIDC discovery: fetch `jwks_uri` (and issuer metadata) from `/.well-known/openid-configuration` instead of hard-coding it. **Landed in Phase 5** as `remote_jwks.<name>.discovery`; the rest of the T3 rows below are still open | bundle + PSR-18 | T3 |
-| K8 | Publish an issuer discovery document for apps acting as an OP/AS (RFC 8414) | bundle controller | T3 |
+| K8 | Publish an issuer discovery document for apps acting as an OP/AS (RFC 8414). **Landed in Phase 5** as `metadata`, closing the pair with K7. Only `issuer` and `jwks_uri` are filled in — the two members a JWT bundle knows — and the rest arrives from `extra`, because everything else describes the authorization server §8 keeps out. A document that would not survive being read back — a missing or malformed `response_types_supported`, a plaintext identifier, an issuer carrying a query — is refused before it is served, and the identifiers are checked again when the service is built, since that is the only moment a `%env(...)%` has a value | bundle controller | T3 |
 | K9 | Key material never appears in the profiler, logs, exception messages, or `debug:container` parameter dumps | bundle hardening | T1 |
 
 ### 3.4 Observability & operations

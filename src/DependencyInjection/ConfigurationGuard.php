@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\DependencyInjection;
 
+use InvalidArgumentException;
 use Medzuch\Jwt\Jwt\MediaType;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
+use Medzuch\JwtBundle\Oidc\MetadataController;
 use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
 use Symfony\Component\Cache\Psr16Cache;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
@@ -115,6 +117,88 @@ final class ConfigurationGuard
                     implode('", "', $names),
                     $kid,
                 ));
+            }
+        }
+    }
+
+    /**
+     * The metadata document is worth serving before it is served (K8).
+     *
+     * Everything here fails at container build rather than at the endpoint,
+     * for the reason the JWK Set publisher already has: the one thing a
+     * document like this must never do is succeed at the wrong moment. A
+     * relying party that reads an issuer identifier it cannot verify against,
+     * or a `jwks_uri` over plaintext, has been handed the shape of trust
+     * without the substance — and it arrives with a 200.
+     *
+     * `response_types_supported` is refused when absent because RFC 8414 §2
+     * requires it and this bundle cannot supply it: it describes grants an
+     * authorization server runs, which is §8's third non-goal. Serving a
+     * document without it would publish something that claims conformance and
+     * does not have it.
+     *
+     * @param array{issuer: string|null, jwks_uri: string|null, extra: array<string, mixed>, cache_max_age: int} $metadata
+     */
+    public static function assertMetadataIsPublishable(array $metadata, ContainerBuilder $builder): void
+    {
+        foreach (['issuer', 'jwks_uri'] as $member) {
+            if (array_key_exists($member, $metadata['extra'])) {
+                throw new InvalidConfigurationException(sprintf('medzuch_jwt.metadata.extra names "%s", which is the option above it. Set it there: two spellings of one member could disagree, and the document may only say it once.', $member));
+            }
+        }
+
+        // The RFC 8414 §2 rules themselves live in MetadataController, which
+        // is the one place that implements them: it runs them again when the
+        // service is built, where a `%env(...)%` finally has a value. Here they
+        // run on what the container can already read, so a literal mistake
+        // fails with the configuration key that made it rather than as a
+        // service-construction error three layers down.
+        $readable = [];
+
+        foreach (['issuer', 'jwks_uri'] as $member) {
+            $value = $metadata[$member];
+
+            if (null === $value) {
+                continue;
+            }
+
+            // Read through the placeholder resolver rather than judged by a
+            // tree closure, for the reason `remote_jwks` records: a validate()
+            // closure runs against a dummy empty string during
+            // ValidateEnvPlaceholdersPass, and would refuse `%env(APP_URL)%`.
+            $builder->resolveEnvPlaceholders($value, null, $fromEnvironment);
+
+            if ([] === ($fromEnvironment ?? [])) {
+                $readable[$member] = $value;
+            }
+        }
+
+        try {
+            MetadataController::assertPublishable($readable);
+        } catch (InvalidArgumentException $e) {
+            throw new InvalidConfigurationException(sprintf('medzuch_jwt.metadata is not publishable: %s', $e->getMessage()), previous: $e);
+        }
+
+        if (!array_key_exists('response_types_supported', $metadata['extra'])) {
+            throw new InvalidConfigurationException('medzuch_jwt.metadata would publish a document without "response_types_supported", which RFC 8414 §2 requires. This bundle cannot fill it in — it describes grants an authorization server runs, not tokens — so name it under "extra".');
+        }
+
+        // §2 asks for "a JSON array containing a list of the OAuth 2.0
+        // response_type values that this authorization server supports". A key
+        // holding null, a bare string or an empty list satisfies the letter of
+        // "it is there" and none of that sentence — and each would be served
+        // with a 200, which is the outcome refusing the missing key exists to
+        // prevent. Which values are right is the application's; that there is
+        // at least one, and that they are names, is §2's.
+        $responseTypes = $metadata['extra']['response_types_supported'];
+
+        if (!is_array($responseTypes) || !array_is_list($responseTypes) || [] === $responseTypes) {
+            throw new InvalidConfigurationException('medzuch_jwt.metadata.extra has a "response_types_supported" that is not a non-empty list. RFC 8414 §2 asks for the response types this server supports, and a document supporting none of them describes nothing.');
+        }
+
+        foreach ($responseTypes as $responseType) {
+            if (!is_string($responseType) || '' === trim($responseType)) {
+                throw new InvalidConfigurationException('medzuch_jwt.metadata.extra has a "response_types_supported" entry that is not a response type name. RFC 8414 §2 asks for OAuth 2.0 response_type values, which are strings.');
             }
         }
     }

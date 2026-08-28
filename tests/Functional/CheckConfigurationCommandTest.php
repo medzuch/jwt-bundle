@@ -249,6 +249,41 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertStringContainsString('security event consumer "partner"', $broken->getDisplay());
     }
 
+    #[TestDox('the metadata document is built by the check, where an env var is finally read')]
+    public function testMetadataDocumentIsChecked(): void
+    {
+        // O5's whole shape: the controller is the only place a `%env(APP_URL)%`
+        // has a value, so without this row a plaintext identifier passes
+        // `jwt:config:check && deploy` and fails on the first well-known
+        // request — configuration that compiles and does not work.
+        $configuration = self::configuration();
+        $configuration['metadata'] = [
+            'issuer' => 'https://api.test',
+            'jwks_uri' => 'https://api.test/.well-known/jwks.json',
+            'extra' => ['response_types_supported' => ['code']],
+        ];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringContainsString('metadata document', $tester->getDisplay());
+
+        // And it fails when the identifier turns out not to be publishable,
+        // which is what stops the row from being dropped quietly.
+        putenv('JWT_TEST_CHECK_ISSUER=http://api.test');
+
+        try {
+            $configuration['metadata']['issuer'] = '%env(JWT_TEST_CHECK_ISSUER)%';
+
+            $broken = self::check(configuration: $configuration);
+
+            self::assertSame(Command::FAILURE, $broken->getStatusCode());
+            self::assertStringContainsString('metadata document', $broken->getDisplay());
+        } finally {
+            putenv('JWT_TEST_CHECK_ISSUER');
+        }
+    }
+
     #[TestDox('a published key whose file is missing is a row, not an exception instead of one')]
     public function testMissingPublishedKeyIsReported(): void
     {

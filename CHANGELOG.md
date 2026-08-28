@@ -13,6 +13,37 @@ a class or method signature would be.
 
 ### Added
 
+- **This application can publish its own RFC 8414 metadata** (K8), under a new
+  `metadata` section and `medzuch_jwt.metadata_controller`. It closes the pair
+  with K7: what a remote key set's `discovery` reads from somebody else, this
+  publishes about you, and the functional suite feeds one to the other rather
+  than testing each against a fixture of its own.
+
+  Named `metadata` rather than `discovery` because `discovery` already means the
+  opposite in this tree.
+
+  **Two members are filled in — `issuer` and `jwks_uri` — and the rest comes
+  from `extra` verbatim.** Those two are the only ones a JWT bundle knows;
+  everything else a metadata document carries describes an authorization server,
+  which §8 of the plan keeps permanently out of this package. Naming either of
+  them under `extra` is refused, since two spellings of one member could
+  disagree and JSON may only answer once.
+
+  **A document that would not survive being read back is refused before it is
+  served.** RFC 8414 §2 requires `response_types_supported` and this bundle
+  cannot supply it, so a missing one — or one that is not a non-empty list of
+  names — fails at container build rather than being served with a 200. Both
+  identifiers are HTTPS-only and the issuer may carry no query or fragment
+  component, checked when the container is built for a literal value and again
+  when the service is built, which is the only moment a `%env(APP_URL)%` has
+  one. `jwt:config:check` builds the document, so a plaintext identifier is a
+  red line in a deploy gate rather than a 200.
+
+  As with the JWK Set, the bundle registers no route (DEC-6) — which is also
+  what lets one controller answer at either well-known path, RFC 8414's or OIDC
+  Discovery's.
+
+
 - **Security Event Tokens, both halves** (C8 and I7, RFC 8417). A new
   `security_events` section configures the streams this application transmits
   and the transmitters it accepts deliveries from — RISC and CAEP events, and
