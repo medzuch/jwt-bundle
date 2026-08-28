@@ -13,6 +13,21 @@ a class or method signature would be.
 
 ### Added
 
+- **Endpoints that answer with or without a token are documented and pinned**
+  (C15). A public path that shows more to a signed-in caller needs no
+  authenticator and no configuration in this bundle: Symfony's `access_token`
+  authenticator declines a request carrying no token rather than failing it, so
+  an access rule exempting the path is the whole feature. The README and the
+  cookbook say how, and a functional test holds the four behaviours that make it
+  a promise rather than an accident — anonymous is served, identified is served
+  as themselves, the guarded path next door still refuses, and a token that is
+  present but garbled or expired is still a 401 with its `WWW-Authenticate`
+  challenge rather than a silent downgrade to the anonymous view.
+
+  No code changed. `docs/plan.md` §9 records the correction: DEC-1 had listed
+  C15 as a reason a future authenticator might be needed, and it was wrong about
+  what C15 requires.
+
 - **A remote key set can be addressed by issuer identifier instead of by
   endpoint** (K7, the first of Phase 5). `remote_jwks.<name>.discovery` takes
   the issuer's identifier and reads `jwks_uri` from its

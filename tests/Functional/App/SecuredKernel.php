@@ -146,6 +146,10 @@ final class SecuredKernel extends Kernel
             // space, and RFC 6749 §3.3 allows neither in a scope-token.
             ['path' => '^/api/dodgy-scope', 'roles' => "SCOPE_reports.read\r\nX-Injected: yes"],
             ['path' => '^/api/spaced-scope', 'roles' => 'SCOPE_reports read'],
+            // Identity without a requirement (C15): the path sits behind the
+            // same `access_token` firewall as everything else, and is exempted
+            // from the catch-all below rather than from the firewall.
+            ['path' => '^/api/optional', 'roles' => 'PUBLIC_ACCESS'],
             ['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY'],
         ];
 
@@ -248,6 +252,8 @@ final class SecuredKernel extends Kernel
     {
         $routes->add('whoami', '/api/whoami')->controller(WhoAmIController::class);
         $routes->add('scoped', '/api/scoped')->controller(WhoAmIController::class);
+        // Answers for a caller who may or may not have said who they are.
+        $routes->add('optional', '/api/optional')->controller(WhoAmIController::class);
         $routes->add('bare_scope', '/api/bare-scope')->controller(WhoAmIController::class);
         $routes->add('role_only', '/api/role')->controller(WhoAmIController::class);
         $routes->add('dodgy_scope', '/api/dodgy-scope')->controller(WhoAmIController::class);
