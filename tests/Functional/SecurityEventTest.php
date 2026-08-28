@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional;
 
+use DateInterval;
+use Medzuch\Jwt\Algorithm\Signing\Rs256;
 use Medzuch\Jwt\Exception\ClaimTypeException;
 use Medzuch\Jwt\Exception\InvalidClaimException;
 use Medzuch\Jwt\Exception\JwtException;
 use Medzuch\Jwt\Jwt\ClaimsSet;
+use Medzuch\Jwt\Jwt\JwtParser;
+use Medzuch\Jwt\Key\RsaPrivateKey;
+use Medzuch\Jwt\Profile\IdTokenProfile;
 use Medzuch\JwtBundle\SecurityEvent\SecurityEventIssuer;
 use Medzuch\JwtBundle\SecurityEvent\SecurityEventVerifier;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
@@ -242,6 +247,99 @@ final class SecurityEventTest extends KernelTestCase
         self::assertSame([], $events[$second]);
     }
 
+    #[TestDox('the minted token declares the type the receiver pins')]
+    public function testIssuedTypeIsStamped(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration()]);
+
+        // The transmitter's half of the refusal below: `typ` is what separates
+        // a SET from every other token this application signs with the same
+        // key, so asserting the header makes both sides of that explicit.
+        // Read through the library's parser rather than by decoding base64url
+        // here, which would be a second implementation of the one thing the
+        // assertion is about.
+        $header = JwtParser::parse((string) self::anEvent())->header;
+
+        self::assertSame('secevent+jwt', $header->type());
+        self::assertSame('stream-2026', $header->keyId());
+    }
+
+    #[TestDox('an ID token is not a security event either')]
+    public function testAnIdTokenIsRefused(): void
+    {
+        // Parity with the access-token row: the other profile this bundle can
+        // mint, refused on the same `typ` check rather than on anything about
+        // its claims.
+        self::bootKernel(['medzuch_jwt' => self::configuration()]);
+
+        $idToken = IdTokenProfile::issuer(
+            self::ISSUER,
+            new Rs256(),
+            RsaPrivateKey::fromPem(self::keypair('stream')['private'], 'RS256', 'stream-2026'),
+        )->issue()
+            ->subject('user-42')
+            ->audience(self::RECEIVER)
+            ->expiresIn(new DateInterval('PT5M'))
+            ->build();
+
+        $this->expectException(JwtException::class);
+
+        self::receiver()->verify((string) $idToken);
+    }
+
+    #[TestDox('the configured leeway is the tolerance the receiver actually applies')]
+    public function testLeewayReachesTheConsumer(): void
+    {
+        // A SET has no `exp`, so leeway here only ever forgives a transmitter
+        // whose clock runs ahead. Asserted in both directions, because a
+        // `DateInterval` that never reached the profile would leave the option
+        // in the tree doing nothing and the reference documenting a lie.
+        self::bootKernel(['medzuch_jwt' => self::configuration(leeway: 120)]);
+
+        $ahead = self::transmitter()->issue()
+            ->issuedAt(new \DateTimeImmutable('+60 seconds'))
+            ->event(self::ACCOUNT_DISABLED)
+            ->build();
+
+        self::assertSame(self::ISSUER, self::receiver()->verify((string) $ahead)->getString('iss'));
+
+        self::ensureKernelShutdown();
+        self::bootKernel(['medzuch_jwt' => self::configuration()]);
+
+        $stillAhead = self::transmitter()->issue()
+            ->issuedAt(new \DateTimeImmutable('+60 seconds'))
+            ->event(self::ACCOUNT_DISABLED)
+            ->build();
+
+        $this->expectException(JwtException::class);
+
+        self::receiver()->verify((string) $stillAhead);
+    }
+
+    #[TestDox('a receiver whose audience is blank fails at container build')]
+    public function testBlankAudienceIsRefused(): void
+    {
+        // Null is "accept whatever the token names"; a blank string reaches the
+        // library as an expected `aud` of "", which no SET carries — so the
+        // receiver would look configured and refuse every delivery.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/Security event consumer "risc" has a blank audience/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(receiverAudience: '  ')]);
+    }
+
+    #[TestDox('a receiver can take its keys from a remote JWK Set')]
+    public function testReceiverVerifiesAgainstARemoteSet(): void
+    {
+        // The wiring is shared with ID tokens, but this is a new call site of
+        // it: a registrar that built the local set and forgot the resolver
+        // would pass every other row here, since they all configure `keys`.
+        self::bootKernel(['medzuch_jwt' => self::configuration(verifiesWith: [], remoteSet: 'idp')]);
+
+        self::assertTrue(self::getContainer()->has('medzuch_jwt.security_event_consumer.risc'));
+        self::assertInstanceOf(SecurityEventVerifier::class, self::getContainer()->get('medzuch_jwt.security_event_consumer.risc'));
+    }
+
     #[TestDox('a stream signing with a key that has only a public half fails at container build')]
     public function testStreamNeedsAPrivateKey(): void
     {
@@ -335,6 +433,9 @@ final class SecurityEventTest extends KernelTestCase
         array $verifiesWith = ['stream'],
         bool $addressed = true,
         bool $publicOnlyKey = false,
+        int $leeway = 0,
+        ?string $receiverAudience = null,
+        ?string $remoteSet = null,
     ): array {
         $keys = [
             'stream' => [
@@ -351,6 +452,11 @@ final class SecurityEventTest extends KernelTestCase
 
         return [
             'keys' => $keys,
+            'remote_jwks' => null === $remoteSet ? [] : [$remoteSet => [
+                'uri' => 'https://idp.test/.well-known/jwks.json',
+                'http_client' => 'test.http_client',
+                'cache' => 'test.cache',
+            ]],
             'security_events' => [
                 'issuers' => [
                     'risc' => [
@@ -363,7 +469,9 @@ final class SecurityEventTest extends KernelTestCase
                         'issuer' => $issuer,
                         'keys' => $verifiesWith,
                         'allowed_algorithms' => ['RS256'],
-                        'audience' => $addressed ? self::RECEIVER : null,
+                        'remote_jwks' => $remoteSet,
+                        'audience' => $receiverAudience ?? ($addressed ? self::RECEIVER : null),
+                        'leeway' => $leeway,
                     ],
                 ],
             ],

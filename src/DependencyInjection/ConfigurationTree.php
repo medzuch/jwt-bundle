@@ -113,7 +113,7 @@ final class ConfigurationTree
     private static function configureKeys(NodeBuilder $children): void
     {
         $key = $children->arrayNode('keys')
-            ->info('Named keys, referenced by name from consumers and issuers.')
+            ->info('Named keys, referenced by name from consumers, issuers, ID token registrations, security event streams and the published JWK Set.')
             ->useAttributeAsKey('name')
             ->arrayPrototype()
             ->children();
@@ -186,7 +186,7 @@ final class ConfigurationTree
     private static function configureRemoteJwks(NodeBuilder $children): void
     {
         $set = $children->arrayNode('remote_jwks')
-            ->info('Named remote JWK Sets, referenced by name from consumers.')
+            ->info('Named remote JWK Sets, referenced by name from anything that verifies: consumers, ID token registrations and security event consumers.')
             ->useAttributeAsKey('name')
             ->arrayPrototype()
             ->children();
@@ -464,6 +464,11 @@ final class ConfigurationTree
         $algorithms->requiresAtLeastOneElement();
         self::rejectMaps($algorithms, 'security_events.consumers.*.allowed_algorithms');
 
+        // Blankness is checked in ConfigurationGuard rather than by a
+        // `validate()` closure here, for the reason `remote_jwks` records: the
+        // closure runs during ValidateEnvPlaceholdersPass against a dummy empty
+        // string, so it would refuse `%env(APP_URL)%` — which is how the README
+        // tells an application to write this.
         $consumer->scalarNode('audience')
             ->defaultNull()
             ->info('The `aud` a SET must name to be for this receiver. Null accepts whatever it names, which is right for a stream with one subscriber and wrong for a transmitter feeding several.')

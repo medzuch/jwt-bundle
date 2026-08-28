@@ -67,6 +67,19 @@ final class DocumentationExamplesTest extends KernelTestCase
     private const TEACH_CONFIGURATION = ['README.md', 'docs/cookbook.md', 'docs/plan.md'];
 
     /**
+     * The classes an application injects by the name it configured, and the
+     * section that names them. Autowiring by type reaches none of these: a
+     * second registration would make the type ambiguous, so the argument name
+     * is the contract, and it can only be right if the documentation agrees
+     * with itself about what the names are.
+     */
+    private const NAMED_BY_ARGUMENT = [
+        'IdTokenVerifier' => 'id_tokens',
+        'SecurityEventIssuer' => 'security_events.issuers',
+        'SecurityEventVerifier' => 'security_events.consumers',
+    ];
+
+    /**
      * Service ids the documentation names because an application has them: a Monolog
      * channel, Symfony's PSR-18 client, the default cache pool, and the user
      * factory a `user.mode: custom` recipe tells the reader to write.
@@ -176,31 +189,60 @@ final class DocumentationExamplesTest extends KernelTestCase
         // is a container error on first boot. This is the narrow invariant that
         // catches it: the name in `IdTokenVerifier $x` is the registration
         // name, so `x` has to be one the README configures.
-        $declared = [];
+        //
+        // Every service registered by name belongs here, not just the first
+        // one that needed it: three classes are reachable this way, and a
+        // fourth added without a row would inherit the same failure silently.
+        foreach (self::NAMED_BY_ARGUMENT as $class => $section) {
+            $declared = [];
 
-        foreach (self::documentedConfigurations() as [, $configuration]) {
-            $registrations = $configuration['id_tokens'] ?? [];
+            foreach (self::documentedConfigurations() as [, $configuration]) {
+                $declared = [...$declared, ...self::registrationNames($configuration, $section)];
+            }
 
-            if (is_array($registrations)) {
-                $declared = [...$declared, ...array_keys($registrations)];
+            self::assertNotSame([], $declared, sprintf('the documentation should configure at least one "%s" entry', $section));
+
+            $injected = [];
+
+            foreach (self::DOCUMENTS as $document) {
+                preg_match_all('/' . $class . ' \$(\w+)/', self::document($document), $matches);
+
+                $injected = [...$injected, ...$matches[1]];
+            }
+
+            self::assertNotSame([], $injected, sprintf('the documentation should show %s being injected', $class));
+
+            foreach (array_unique($injected) as $argument) {
+                self::assertContains($argument, $declared, sprintf('the documentation injects "%s $%s", which no example registers', $class, $argument));
             }
         }
+    }
 
-        self::assertNotSame([], $declared, 'the documentation should configure at least one id_tokens registration');
+    /**
+     * The names one section registers, whether it sits at the root of the tree
+     * or inside `security_events`.
+     *
+     * @param array<string, mixed> $configuration
+     *
+     * @return list<string>
+     */
+    private static function registrationNames(array $configuration, string $section): array
+    {
+        $entries = $configuration;
 
-        $injected = [];
+        foreach (explode('.', $section) as $step) {
+            if (!is_array($entries) || !isset($entries[$step])) {
+                return [];
+            }
 
-        foreach (self::DOCUMENTS as $document) {
-            preg_match_all('/IdTokenVerifier \$(\w+)/', self::document($document), $matches);
-
-            $injected = [...$injected, ...$matches[1]];
+            $entries = $entries[$step];
         }
 
-        self::assertNotSame([], $injected, 'the documentation should show the verifier being injected');
-
-        foreach (array_unique($injected) as $argument) {
-            self::assertContains($argument, $declared, sprintf('the documentation injects "IdTokenVerifier $%s", which no example registers', $argument));
+        if (!is_array($entries)) {
+            return [];
         }
+
+        return array_values(array_filter(array_keys($entries), is_string(...)));
     }
 
     #[TestDox('every relative link in the documentation resolves, heading and all')]
@@ -363,6 +405,24 @@ final class DocumentationExamplesTest extends KernelTestCase
 
         if (class_exists(ExpressionFunction::class)) {
             $ids[] = 'medzuch_jwt.scope_expression_provider';
+        }
+
+        // Both halves of `security_events`, which sit a level deeper than the
+        // sections below and so cannot share their loop.
+        $events = $configuration['security_events'] ?? [];
+
+        if (is_array($events)) {
+            foreach (['issuers' => 'security_event_issuer', 'consumers' => 'security_event_consumer'] as $half => $prefix) {
+                $entries = $events[$half] ?? [];
+
+                if (!is_array($entries)) {
+                    continue;
+                }
+
+                foreach (array_keys($entries) as $name) {
+                    $ids[] = sprintf('medzuch_jwt.%s.%s', $prefix, $name);
+                }
+            }
         }
 
         foreach (['consumers' => ['consumer', 'handler'], 'issuers' => ['issuer', 'login']] as $section => $prefixes) {

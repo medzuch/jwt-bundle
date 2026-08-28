@@ -196,11 +196,16 @@ medzuch_jwt:
             allowed_algorithms: [HS256]
 ```
 
-### The other two roles
+### The other three roles
 
 **An OIDC relying party** verifies a provider's ID tokens where they arrive — the login callback
 — rather than on a firewall, and is configured differently enough to have its own section:
 [Verifying an ID token](#verifying-an-id-token-oidc-relying-party).
+
+**A security event transmitter or receiver** mints and accepts RFC 8417 SETs — RISC and CAEP
+events — which travel between an identity provider and the applications that trust it, outside
+any login and authenticating nobody:
+[Sending and receiving security events](#sending-and-receiving-security-events).
 
 **Service-to-service** is the configuration above with no user behind the token: the caller is
 the subject, and the callee is the `audience`. The
@@ -1465,7 +1470,12 @@ use Symfony\Component\HttpFoundation\Response;
 
 final class ReceiveSecurityEvents
 {
-    public function __construct(private readonly SecurityEventVerifier $risc) {}
+    // `$events` and the `$seen` store further down are yours: this bundle
+    // verifies the token and stops there.
+    public function __construct(
+        private readonly SecurityEventVerifier $risc,
+        private readonly HandlesSecurityEvents $events,
+    ) {}
 
     public function __invoke(Request $request): Response
     {
@@ -1604,10 +1614,11 @@ inspection as they would a request, so a metrics listener counts it — an answe
 second, quieter route would be worth much less than one that agrees with your firewall. And with
 several consumers configured the command will not pick one for you: name it with `--consumer`.
 
-`--consumer` names an **access-token** consumer. An ID token still decodes — that half needs no
-configuration — but a consumer asked to verify one refuses it as `malformed`, because `typ` says
-it is not the kind of token that consumer reads. ID tokens are verified by `IdTokenVerifier`
-from your callback, not by a firewall (DEC-8).
+`--consumer` names an **access-token** consumer. An ID token or a security event token still
+decodes — that half needs no configuration — but a consumer asked to verify one refuses it as
+`malformed`, because `typ` says it is not the kind of token that consumer reads. Those are
+verified by `IdTokenVerifier` from your callback and by `SecurityEventVerifier` from your
+delivery endpoint, not by a firewall (DEC-8).
 
 *Would* authenticate is the exact word: for `user.mode: provider` and `claims`, the identity is
 loaded by Symfony after the handler returns, so the command can accept a token naming a user your
@@ -1688,8 +1699,9 @@ decided, not how the request ended:
   the exact phrase.
 - **Only handlers a firewall calls are traced.** `medzuch_jwt.handler.<name>` injected somewhere
   of your own, or `jwt:token:inspect`, verifies without a panel row.
-- **ID tokens are not consumers.** `IdTokenVerifier` is a service your callback calls (DEC-8);
-  nothing about it reaches here.
+- **ID tokens and security events are not consumers.** `IdTokenVerifier` and
+  `SecurityEventVerifier` are services your own code calls (DEC-8); nothing about either reaches
+  here.
 
 **The token itself is never collected.** Profiler data is written to disk and served back by a
 URL, so a bearer token in there is a credential in a file — and one a screenshot in a bug report

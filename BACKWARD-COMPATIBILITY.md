@@ -139,7 +139,8 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
   you simply have more to read. `JwtIssuingEvent` is the exception that is also written to:
   `setClaim()` and `removeClaim()` are how a listener contributes, so their signatures are as
   fixed as any interface method.
-- **A service is obtained, not constructed.** `AccessTokenIssuer` and `IdTokenVerifier` have
+- **A service is obtained, not constructed.** `AccessTokenIssuer`, `IdTokenVerifier`,
+  `SecurityEventIssuer` and `SecurityEventVerifier` have
   public constructors because PHP has no package-private, and what is promised is the id and the
   methods, not the constructor's arguments. `IssuedToken` and `TokenIssuance` are the other way
   round — you receive them from us, and a test fixture that builds one is building the same thing

@@ -58,7 +58,7 @@ medzuch_jwt:
     # Service id of a PSR-3 logger. Null disables logging entirely.
     logger:               null # Example: monolog.logger.jwt
 
-    # Named keys, referenced by name from consumers and issuers.
+    # Named keys, referenced by name from consumers, issuers, ID token registrations, security event streams and the published JWK Set.
     keys:
 
         # Prototype
@@ -88,7 +88,7 @@ medzuch_jwt:
             # Key id published in the token header. Required once two keys share an algorithm.
             kid:                  null
 
-    # Named remote JWK Sets, referenced by name from consumers.
+    # Named remote JWK Sets, referenced by name from anything that verifies: consumers, ID token registrations and security event consumers.
     remote_jwks:
 
         # Prototype

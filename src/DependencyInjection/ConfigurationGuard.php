@@ -44,6 +44,7 @@ final class ConfigurationGuard
     private const PROFILE_TOKEN_TYPES = [
         'at+jwt' => 'the RFC 9068 access-token profile, which a consumer uses by default',
         'JWT' => 'the generic RFC 7519 type',
+        'secevent+jwt' => 'the RFC 8417 Security Event Token profile, configured under security_events',
     ];
 
     /**
@@ -349,6 +350,32 @@ final class ConfigurationGuard
         // well-formed token as though the token were at fault.
         if (self::hasDenylist($consumer['denylist']) && !in_array('jti', $required, true)) {
             throw new InvalidConfigurationException(sprintf('Consumer "%s" has a denylist and does not require "jti", which is what a denylist looks a token up by. Add "jti" to "required_claims", or drop the denylist.', $name));
+        }
+    }
+
+    /**
+     * A configured `aud` is either absent or worth checking against.
+     *
+     * Null is the documented "accept whatever the token names". An empty string
+     * is not a third meaning: it reaches the library as an expected audience of
+     * `""`, which no token carries, so a receiver written that way looks
+     * configured and refuses every delivery.
+     *
+     * Read through {@see ContainerBuilder::resolveEnvPlaceholders()} rather than
+     * judged in the tree, because the tree's `validate()` closures run during
+     * ValidateEnvPlaceholdersPass against a dummy empty string — which would
+     * refuse `%env(APP_URL)%`, the spelling the README recommends.
+     */
+    public static function assertAudienceIsUsable(string $context, ?string $audience, ContainerBuilder $builder): void
+    {
+        if (null === $audience) {
+            return;
+        }
+
+        $builder->resolveEnvPlaceholders($audience, null, $fromEnvironment);
+
+        if ([] === ($fromEnvironment ?? []) && '' === trim($audience)) {
+            throw new InvalidConfigurationException(sprintf('%s has a blank audience; omit it instead, which is how a receiver accepts whatever a token names.', $context));
         }
     }
 

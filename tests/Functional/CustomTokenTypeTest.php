@@ -245,6 +245,20 @@ final class CustomTokenTypeTest extends KernelTestCase
         self::bootKernel(['medzuch_jwt' => self::configuration(tokenType: 'at+jwt')]);
     }
 
+    #[TestDox('the security event type is refused too, being a third profile')]
+    public function testTheSecurityEventTypeIsRefused(): void
+    {
+        // The reason `secevent+jwt` belongs on the list rather than only the
+        // two that were there first: a firewall consumer written this way would
+        // verify SETs without the `events`-is-a-non-empty-object rule, and
+        // would turn a security event into a bearer credential — which is the
+        // one thing the whole security_events section is shaped to prevent.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('Leave "token_type" out for that posture');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(tokenType: 'secevent+jwt')]);
+    }
+
     #[TestDox('a padded token type fails at container build')]
     public function testAPaddedTypeIsRefused(): void
     {

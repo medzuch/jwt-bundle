@@ -38,6 +38,11 @@ a class or method signature would be.
   Delivery — RFC 8935 push, RFC 8936 poll, and retries — stays the
   application's. This bundle mints and verifies.
 
+  `secevent+jwt` joins `at+jwt` and `JWT` as a `token_type` a firewall consumer
+  is refused: a consumer written that way would verify SETs without the
+  `events` rule, which is the one shape this section exists to keep out of a
+  firewall.
+
 
 - **Endpoints that answer with or without a token are documented and pinned**
   (C15). A public path that shows more to a signed-in caller needs no

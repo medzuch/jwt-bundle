@@ -14,6 +14,7 @@ use Medzuch\Jwt\Key\Resolver\RemoteJwksResolver;
 use Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
+use Medzuch\Jwt\Profile\SetConsumer;
 use Medzuch\Jwt\Profile\SetProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
@@ -641,11 +642,16 @@ final class ServiceRegistrar
 
         foreach ($events['consumers'] as $name => $receiver) {
             ConfigurationGuard::assertCanVerify(sprintf('Security event consumer "%s"', $name), $receiver, $keys, $sets);
+            ConfigurationGuard::assertAudienceIsUsable(sprintf('Security event consumer "%s"', $name), $receiver['audience'], $builder);
 
             $id = 'medzuch_jwt.security_event_consumer.' . $name;
             self::registerLocalKeySet($services, $id . '.jwk_set', $receiver);
 
-            $services->set($id, SecurityEventVerifier::class)
+            // Built here rather than inside the verifier: nothing a SET is
+            // checked against varies per request, unlike the ID token's nonce,
+            // so there is no reason to rebuild the consumer for every delivery.
+            $services->set($id . '.consumer', SetConsumer::class)
+                ->factory([SetProfile::class, 'consumer'])
                 ->args([
                     $receiver['issuer'],
                     self::keySource($services, $id . '.jwk_set', $id . '.resolver', $receiver),
@@ -653,9 +659,12 @@ final class ServiceRegistrar
                     $receiver['audience'],
                     service('medzuch_jwt.clock'),
                     null === $logger ? null : service($logger),
-                    0 === $receiver['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $receiver['leeway'])]),
                     self::logLevels($logLevels),
-                ])
+                    0 === $receiver['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $receiver['leeway'])]),
+                ]);
+
+            $services->set($id, SecurityEventVerifier::class)
+                ->args([service($id . '.consumer')])
                 ->public();
 
             $builder->registerAliasForArgument($id, SecurityEventVerifier::class, $name);

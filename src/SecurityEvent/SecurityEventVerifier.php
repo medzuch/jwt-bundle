@@ -4,16 +4,9 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\SecurityEvent;
 
-use DateInterval;
-use Medzuch\Jwt\Algorithm\SigningAlgorithm;
-use Medzuch\Jwt\Diagnostics\LogLevels;
 use Medzuch\Jwt\Exception\JwtException;
 use Medzuch\Jwt\Jwt\ClaimsSet;
-use Medzuch\Jwt\Key\JwkSet;
-use Medzuch\Jwt\Key\KeyResolver;
-use Medzuch\Jwt\Profile\SetProfile;
-use Psr\Clock\ClockInterface;
-use Psr\Log\LoggerInterface;
+use Medzuch\Jwt\Profile\SetConsumer;
 
 /**
  * Verifies an RFC 8417 Security Event Token from one configured transmitter (C8).
@@ -25,8 +18,10 @@ use Psr\Log\LoggerInterface;
  * answer to a good one is `202 Accepted` with no session created. README
  * "Sending and receiving security events" has the controller.
  *
- * Built once per stream rather than per call, unlike the ID-token verifier:
- * nothing here is bound to a single request the way a nonce is.
+ * The consumer behind this is built once, by the container, rather than per
+ * call — which the ID-token verifier cannot do, because a nonce belongs to one
+ * authentication request and would be fixed at deploy. A SET has no such value:
+ * everything checked here is configuration, so there is nothing to defer.
  *
  * **A SET has no expiry, and this class does not invent one.** RFC 8417 §4.1.4
  * makes `exp` not meaningful, so a verified SET stays verifiable for as long as
@@ -39,23 +34,7 @@ use Psr\Log\LoggerInterface;
  */
 final class SecurityEventVerifier
 {
-    /**
-     * @param non-empty-list<SigningAlgorithm> $allowedAlgorithms
-     * @param string|null                      $audience the `aud` a SET must name to be for this
-     *                                                   receiver, or null to accept whatever it names. RFC 8417 §2.2
-     *                                                   RECOMMENDS the claim; a transmitter feeding several receivers
-     *                                                   from one stream is why checking it here is worth configuring
-     */
-    public function __construct(
-        private readonly string $issuer,
-        private readonly JwkSet|KeyResolver $keys,
-        private readonly array $allowedAlgorithms,
-        private readonly ?string $audience = null,
-        private readonly ?ClockInterface $clock = null,
-        private readonly ?LoggerInterface $logger = null,
-        private readonly ?DateInterval $leeway = null,
-        private readonly ?LogLevels $logLevels = null,
-    ) {}
+    public function __construct(private readonly SetConsumer $consumer) {}
 
     /**
      * @throws JwtException when the token is not a valid SET from this transmitter:
@@ -64,15 +43,6 @@ final class SecurityEventVerifier
      */
     public function verify(string $securityEventToken): ClaimsSet
     {
-        return SetProfile::consumer(
-            $this->issuer,
-            $this->keys,
-            $this->allowedAlgorithms,
-            $this->audience,
-            $this->clock,
-            $this->logger,
-            $this->logLevels,
-            $this->leeway,
-        )->parse($securityEventToken);
+        return $this->consumer->parse($securityEventToken);
     }
 }
