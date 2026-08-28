@@ -458,6 +458,10 @@ medzuch_jwt:
             allowed_algorithms: [RS256]
 ```
 
+**Order matters in that list.** `access_control` stops at the first rule whose `path` matches,
+so the two lines reversed put `/api/articles` behind `IS_AUTHENTICATED_FULLY` and the exemption
+is never reached. The narrower rule goes first.
+
 The controller asks who the caller turned out to be, and is written to accept `null`:
 
 ```php
@@ -494,9 +498,19 @@ needs no exemption.
 401 here, with the `WWW-Authenticate` challenge. Optional identity means the caller may decline
 to say who they are; it does not mean an expired token is treated as though there were none. A
 reader whose session lapsed gets told to refresh, rather than silently served the logged-out
-page with no clue why their drafts vanished. If you genuinely want the other behaviour on one
-path — ignore a bad token and render the public view — the honest way is a client that drops the
-header when it knows the token is stale, not a server that stops telling anyone that it was.
+page with no clue why their drafts vanished.
+
+**A real page usually carries a cookie, and that sharpens the edge.** The example above is a
+Bearer API, which is the shape a JavaScript client or a mobile app sends. Serve the same page to
+a browser and the credential is the `__Host-` cookie of
+[the SPA recipe](#a-browser-spa-on-a-__host--cookie) — read by
+`medzuch_jwt.token_extractor.<name>`, and otherwise identical here. The difference is who
+decides to stop sending it: a Bearer client omits a header, while a browser resends its cookie
+until something clears it. So a lapsed session on a `PUBLIC_ACCESS` path is a 401 for the
+*public* view too, until the client clears the cookie on that 401. Handle it there — one
+interceptor that drops the cookie and retries — rather than by asking the server to stop saying
+the token was bad, which is the one change that would make a stale credential indistinguishable
+from none.
 
 ## Gating a deploy on the configuration
 

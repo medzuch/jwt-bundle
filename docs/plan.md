@@ -430,8 +430,10 @@ Design notes:
 - **A firewall names a consumer**, not a profile:
   `token_handler: medzuch_jwt.handler.api`. A shorthand firewall key
   (`medzuch_jwt: { consumer: api }`) via an authenticator factory was considered
-  and refused: DEC-1 in §9 says why, and why a later DPoP or C15 authenticator
-  would be a new firewall key of its own rather than this one.
+  and refused: DEC-1 in §9 says why, and why a later DPoP authenticator would
+  be a new firewall key of its own rather than this one. C15 was named here
+  too, and is not: it turned out to need no authenticator at all — §9's
+  Phase 5 correction says what it needed instead.
 - **No secret ever lands in a container parameter** that `debug:container`
   would print (K9): keys are built inside factory services from env references.
 - **`audience` is normalised to a list before it reaches the library.** jwt-php

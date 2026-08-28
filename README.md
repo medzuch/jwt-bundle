@@ -713,6 +713,11 @@ security:
         - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
 ```
 
+**The exemption has to come before the catch-all.** `access_control` stops at the first rule
+whose `path` matches, so the two lines above reversed would put every `/api` path behind
+`IS_AUTHENTICATED_FULLY` and the optional one would never be reached — the same trap the JWK Set
+section describes, and the one most likely to survive a copy-paste.
+
 The exemption is the *access rule*, not the firewall. Symfony's `access_token` authenticator
 does not fail a request that carries no token — it declines to handle it — so what turns an
 anonymous caller away is the rule, and a path the rule does not cover is served to everyone.

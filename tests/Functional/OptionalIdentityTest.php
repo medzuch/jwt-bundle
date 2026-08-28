@@ -7,9 +7,9 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 use DateInterval;
 use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
-use Medzuch\JwtBundle\Security\AccessTokenHandler;
+use Medzuch\JwtBundle\Test\AssertsBearerChallenges;
 use Medzuch\JwtBundle\Tests\Functional\App\SecuredKernel;
-use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
@@ -33,9 +33,10 @@ use Symfony\Component\HttpKernel\KernelInterface;
  * whose token has expired is told to refresh it rather than quietly served the
  * anonymous page and left to wonder why their name is gone.
  */
-#[CoversClass(AccessTokenHandler::class)]
+#[CoversNothing]
 final class OptionalIdentityTest extends WebTestCase
 {
+    use AssertsBearerChallenges;
     use RestoresExceptionHandler;
 
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
@@ -100,8 +101,10 @@ final class OptionalIdentityTest extends WebTestCase
         self::assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
 
         // With the challenge, so a client knows to present a different token
-        // rather than that the endpoint is gone.
-        self::assertStringContainsString('error="invalid_token"', (string) $response->headers->get('WWW-Authenticate'));
+        // rather than that the endpoint is gone. Asserted through the helper
+        // this package ships for it, which is the same reading an application
+        // testing its own optional path would write.
+        self::assertInvalidToken($response);
     }
 
     #[TestDox('an expired token is refused rather than quietly served as anonymous')]
@@ -118,7 +121,14 @@ final class OptionalIdentityTest extends WebTestCase
 
         $client->request('GET', '/api/optional', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token->value]);
 
-        self::assertSame(Response::HTTP_UNAUTHORIZED, $client->getResponse()->getStatusCode());
+        $response = $client->getResponse();
+
+        // The challenge as well as the status: the README, the cookbook and the
+        // changelog all promise `error="invalid_token"` here, and expiry is the
+        // case that reaches an application. A refusal that stopped carrying the
+        // challenge would leave those three false with this row still green.
+        self::assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
+        self::assertInvalidToken($response);
     }
 
     private static function issuer(): AccessTokenIssuer
