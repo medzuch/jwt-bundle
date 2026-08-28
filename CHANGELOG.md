@@ -29,12 +29,15 @@ a class or method signature would be.
   them under `extra` is refused, since two spellings of one member could
   disagree and JSON may only answer once.
 
-  **A document without `response_types_supported` is refused at container
-  build.** RFC 8414 §2 requires it and this bundle cannot supply it, so the
-  choice was between refusing and serving something that claims conformance it
-  does not have. Both identifiers are HTTPS-only, checked the way a remote key
-  set's already are, with the same exemption for a value that arrives from
-  `%env(...)%`.
+  **A document that would not survive being read back is refused before it is
+  served.** RFC 8414 §2 requires `response_types_supported` and this bundle
+  cannot supply it, so a missing one — or one that is not a non-empty list of
+  names — fails at container build rather than being served with a 200. Both
+  identifiers are HTTPS-only and the issuer may carry no query or fragment
+  component, checked when the container is built for a literal value and again
+  when the service is built, which is the only moment a `%env(APP_URL)%` has
+  one. `jwt:config:check` builds the document, so a plaintext identifier is a
+  red line in a deploy gate rather than a 200.
 
   As with the JWK Set, the bundle registers no route (DEC-6) — which is also
   what lets one controller answer at either well-known path, RFC 8414's or OIDC

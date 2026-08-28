@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Oidc;
 
+use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -36,16 +37,74 @@ use Symfony\Component\HttpFoundation\Request;
  */
 final class MetadataController
 {
+    /** The two members this bundle fills in, and so the two it answers for. */
+    private const CHECKED_MEMBERS = ['issuer', 'jwks_uri'];
+
     /**
      * @param array<string, mixed> $document the whole document, assembled at container
      *                                       build: nothing here varies per request, and a document
      *                                       computed per call would be a different answer to the same
      *                                       question every time a cache asked
+     *
+     * @throws InvalidArgumentException when the identifiers this bundle fills in
+     *                                  would not survive being read back
      */
     public function __construct(
         private readonly array $document,
         private readonly int $maxAge,
-    ) {}
+    ) {
+        self::assertPublishable($document);
+    }
+
+    /**
+     * The rules RFC 8414 §2 puts on the two members this bundle fills in.
+     *
+     * Called twice on purpose, and this is the one implementation of them.
+     * `ConfigurationGuard` runs it while the container is built, where a
+     * literal can be read and the failure can name the configuration key; this
+     * constructor runs it again when the service is first built, which is the
+     * only moment a `%env(APP_URL)%` has a value at all. Without the second
+     * pass the recommended spelling — the one the README tells applications to
+     * write — would be the one nothing checked, and a deploy with a plaintext
+     * `APP_URL` would answer 200 with an identifier no careful reader may use.
+     *
+     * @param array<string, mixed> $document
+     *
+     * @throws InvalidArgumentException
+     */
+    public static function assertPublishable(array $document): void
+    {
+        foreach (self::CHECKED_MEMBERS as $member) {
+            if (!array_key_exists($member, $document)) {
+                continue;
+            }
+
+            $value = $document[$member];
+
+            if (!is_string($value) || '' === trim($value)) {
+                throw new InvalidArgumentException(sprintf('Metadata "%s" must be a non-empty string.', $member));
+            }
+
+            if (0 !== stripos($value, 'https://')) {
+                throw new InvalidArgumentException(sprintf('Metadata "%s" must be an https:// URL (RFC 8414 §2); got "%s".', $member, $value));
+            }
+
+            if (null === parse_url($value, \PHP_URL_HOST)) {
+                throw new InvalidArgumentException(sprintf('Metadata "%s" names no host; got "%s".', $member, $value));
+            }
+        }
+
+        $issuer = $document['issuer'] ?? null;
+
+        // §2: the issuer identifier "has no query or fragment components". A
+        // reader compares it against the identifier it fetched the document
+        // for, and neither half of that comparison is defined once a query
+        // string is in play. `jwks_uri` is exempt: it is an endpoint, and an
+        // issuer that serves its keys from a CDN may well need a query.
+        if (is_string($issuer) && (null !== parse_url($issuer, \PHP_URL_QUERY) || null !== parse_url($issuer, \PHP_URL_FRAGMENT))) {
+            throw new InvalidArgumentException(sprintf('Metadata "issuer" must have no query or fragment component (RFC 8414 §2); got "%s".', $issuer));
+        }
+    }
 
     public function __invoke(Request $request): JsonResponse
     {

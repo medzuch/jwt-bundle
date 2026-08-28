@@ -1274,10 +1274,13 @@ does not have is worse than refusing to start. If you are not an authorization s
 you verify tokens somebody else mints — then you have no metadata to publish, and omitting the
 section is the right answer rather than filling it with plausible values.
 
-**Both identifiers are HTTPS-only**, checked at container build the same way a remote key set's
-are, and for the same reason: a document fetched over a channel an attacker can rewrite names
-whatever keys and endpoints they like. A value that arrives from `%env(...)%` cannot be read
-then, so it is left to the reader on the other side, which refuses a plaintext one too.
+**Both identifiers are HTTPS-only, and the issuer may carry no query or fragment** (RFC 8414 §2).
+A document fetched over a channel an attacker can rewrite names whatever keys and endpoints they
+like, and an identifier with a query string is one no reader can compare against the identifier
+it asked for. Both rules are checked twice: when the container is built, for a value written
+literally, and when the service is first built, which is the only moment a `%env(APP_URL)%` has
+a value at all. `jwt:config:check` builds it, so a deploy with a plaintext `APP_URL` is a red
+line in the gate rather than a 200 nobody should have trusted.
 
 **The route has to be reachable without a token**, exactly as the JWK Set's does — a reader who
 has to authenticate to find out where the keys are is a reader who cannot get started:
@@ -1296,7 +1299,16 @@ carries an `ETag` over the document, so `cache_max_age: 0` means revalidate rath
 `/.well-known/oauth-authorization-server` and OIDC Discovery at
 `/.well-known/openid-configuration`; the two differ in what the document carries, not in how it
 is served, so route the same controller wherever your readers look — and put what that spelling
-needs in `extra`.
+needs in `extra`. OIDC Discovery additionally requires `authorization_endpoint`,
+`subject_types_supported` and `id_token_signing_alg_values_supported`; this bundle knows none of
+the three, so an OIDC document needs them named there.
+
+**Two things the paths do not share.** An issuer identifier *with a path* — a Keycloak realm,
+say — is read at `identifier + /.well-known/openid-configuration` by OIDC Discovery, while
+RFC 8414 inserts its suffix *before* the path component. The two stop agreeing exactly when the
+identifier has a realm in it, so route both if your readers are mixed. And a browser-based
+relying party reading this endpoint needs CORS, which is your application's to configure: this
+bundle sets no CORS header here, the same as on the JWK Set.
 
 ## Verifying against an issuer's published keys
 

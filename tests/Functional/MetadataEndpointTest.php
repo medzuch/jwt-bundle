@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional;
 
+use InvalidArgumentException;
 use Medzuch\JwtBundle\Oidc\MetadataController;
 use Medzuch\JwtBundle\Tests\Functional\App\SecuredKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -174,7 +175,7 @@ final class MetadataEndpointTest extends WebTestCase
     public function testPlaintextIsRefused(string $issuer): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessageMatches('/is not https/');
+        $this->expectExceptionMessageMatches('/"issuer" must be an https:\/\/ URL/');
 
         self::bootKernel(['medzuch_jwt' => self::configuration(issuer: $issuer)]);
     }
@@ -191,7 +192,7 @@ final class MetadataEndpointTest extends WebTestCase
     public function testBlankIssuerIsRefused(): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessageMatches('/has a blank issuer; omit it instead/');
+        $this->expectExceptionMessageMatches('/"issuer" must be a non-empty string/');
 
         self::bootKernel(['medzuch_jwt' => self::configuration(issuer: '   ')]);
     }
@@ -200,7 +201,7 @@ final class MetadataEndpointTest extends WebTestCase
     public function testPlaintextJwksUriIsRefused(): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessageMatches('/has an jwks_uri that is not https/');
+        $this->expectExceptionMessageMatches('/"jwks_uri" must be an https:\/\/ URL/');
 
         self::bootKernel(['medzuch_jwt' => self::configuration(jwksUri: 'http://api.test/.well-known/jwks.json')]);
     }
@@ -220,6 +221,134 @@ final class MetadataEndpointTest extends WebTestCase
         } finally {
             putenv('JWT_TEST_METADATA_ISSUER');
         }
+    }
+
+    #[DataProvider('unpublishableFromTheEnvironment')]
+    #[TestDox('an environment-backed identifier is still held to §2 when the service is built: $_dataName')]
+    public function testEnvironmentIdentifiersAreStillChecked(string $value): void
+    {
+        // The row that matters most in this suite. Nothing can be read at
+        // build, so the guard steps aside — and `%env(APP_URL)%` is exactly
+        // what the README tells applications to write. Without the second
+        // check a deploy with a plaintext APP_URL answers 200 with an
+        // identifier no careful reader may use, and the plaintext rows above
+        // would all still be green, because they only cover literals.
+        putenv('JWT_TEST_METADATA_ISSUER=' . $value);
+
+        try {
+            self::bootKernel(['medzuch_jwt' => self::configuration(issuer: '%env(JWT_TEST_METADATA_ISSUER)%')]);
+
+            $this->expectException(InvalidArgumentException::class);
+
+            self::getContainer()->get('medzuch_jwt.metadata_controller');
+        } finally {
+            putenv('JWT_TEST_METADATA_ISSUER');
+        }
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function unpublishableFromTheEnvironment(): iterable
+    {
+        yield 'plaintext' => ['http://api.test'];
+        yield 'no scheme at all' => ['api.test'];
+        yield 'blank' => ['   '];
+        yield 'carrying a query' => ['https://api.test?tenant=acme'];
+    }
+
+    #[TestDox('an environment-backed jwks_uri is held to the same rules')]
+    public function testEnvironmentJwksUriIsStillChecked(): void
+    {
+        // The spelling the README recommends is a concatenation, so the
+        // placeholder reaches this member too — and it is the one a reader
+        // fetches keys from.
+        putenv('JWT_TEST_METADATA_JWKS=http://api.test/.well-known/jwks.json');
+
+        try {
+            self::bootKernel(['medzuch_jwt' => self::configuration(jwksUri: '%env(JWT_TEST_METADATA_JWKS)%')]);
+
+            $this->expectException(InvalidArgumentException::class);
+
+            self::getContainer()->get('medzuch_jwt.metadata_controller');
+        } finally {
+            putenv('JWT_TEST_METADATA_JWKS');
+        }
+    }
+
+    #[DataProvider('identifiersWithNoIdentity')]
+    #[TestDox('an issuer carrying a query or fragment fails at container build: $_dataName')]
+    public function testIssuerHasNoQueryOrFragment(string $issuer): void
+    {
+        // RFC 8414 §2: the identifier "has no query or fragment components".
+        // A reader compares this string against the one it fetched the
+        // document for, and neither half of that comparison is defined once a
+        // query is in play.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/no query or fragment component/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(issuer: $issuer)]);
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function identifiersWithNoIdentity(): iterable
+    {
+        yield 'a query' => ['https://api.test?tenant=acme'];
+        yield 'a fragment' => ['https://api.test#tenant'];
+    }
+
+    #[DataProvider('malformedResponseTypes')]
+    #[TestDox('a response_types_supported that is not a list of names fails at container build: $_dataName')]
+    public function testResponseTypesMustBeAListOfNames(mixed $responseTypes): void
+    {
+        // Presence alone satisfies "it is there" and nothing §2 actually says.
+        // Each of these would have been served with a 200, which is the
+        // outcome refusing the missing key exists to prevent.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/response_types_supported/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(extra: ['response_types_supported' => $responseTypes])]);
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function malformedResponseTypes(): iterable
+    {
+        yield 'null' => [null];
+        yield 'a bare string' => ['code'];
+        yield 'an empty list' => [[]];
+        yield 'a list of numbers' => [[1]];
+        yield 'a blank name' => [['  ']];
+        yield 'a map rather than a list' => [['code' => true]];
+    }
+
+    #[TestDox('a blank jwks_uri fails at container build rather than publishing an empty one')]
+    public function testBlankJwksUriIsRefused(): void
+    {
+        // The branch beside the blank-issuer one. Without a row of its own a
+        // later tidy could drop it and only the issuer half would notice.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches('/"jwks_uri" must be a non-empty string/');
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(jwksUri: '   ')]);
+    }
+
+    #[TestDox('a document without a jwks_uri publishes without one rather than inventing it')]
+    public function testJwksUriIsOptional(): void
+    {
+        // Optional per RFC 8414, and a reader is entitled to give up on the
+        // document — K7 does. What must not happen is a default appearing.
+        $client = self::createClient(options: ['medzuch_jwt' => self::configuration(jwksUri: null)]);
+        $client->request('GET', self::PATH);
+
+        self::assertResponseIsSuccessful();
+        self::assertArrayNotHasKey('jwks_uri', self::json($client));
+    }
+
+    #[TestDox('the document is served as application/json, which RFC 8414 §3 requires')]
+    public function testContentType(): void
+    {
+        $client = self::createClient();
+        $client->request('GET', self::PATH);
+
+        self::assertStringStartsWith('application/json', (string) $client->getResponse()->headers->get('Content-Type'));
     }
 
     /** @return array<string, mixed> */
