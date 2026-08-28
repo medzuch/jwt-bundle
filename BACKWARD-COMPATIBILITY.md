@@ -38,6 +38,8 @@ is the promise; the class behind it is not:
 | `medzuch_jwt.issuer.<issuer>` | `Medzuch\JwtBundle\Issuer\AccessTokenIssuer` | your code, to mint one |
 | `medzuch_jwt.login.<issuer>` | `Symfony\Component\Security\Http\Authentication\AuthenticationSuccessHandlerInterface` | an authenticator's `success_handler` |
 | `medzuch_jwt.id_token.<registration>` | `Medzuch\JwtBundle\Oidc\IdTokenVerifier` | your code, to verify an ID token |
+| `medzuch_jwt.security_event_issuer.<stream>` | `Medzuch\JwtBundle\SecurityEvent\SecurityEventIssuer` | your code, to mint a security event |
+| `medzuch_jwt.security_event_consumer.<transmitter>` | `Medzuch\JwtBundle\SecurityEvent\SecurityEventVerifier` | your code, to verify one |
 | `medzuch_jwt.token_extractor.<extractor>` | `Symfony\Component\Security\Http\AccessToken\AccessTokenExtractorInterface` | a firewall's `access_token.token_extractors` |
 | `medzuch_jwt.key.<key>.signing` | `Medzuch\Jwt\Key\PrivateKey` | your code, for a key you configured |
 | `medzuch_jwt.key.<key>.verification` | `Medzuch\Jwt\Key\PublicKey` | your code, for a key you configured |
@@ -53,10 +55,11 @@ has a `.verification` service and no `.signing` one, and a shared secret is both
 bare `medzuch_jwt.key.<key>` is where the half you configured is built and keeps working, but it
 is not in the table — which of the two it means depends on the entry.
 
-**Two ids also answer by argument name**, which is part of the promise: `IdTokenVerifier $partner`
-reaches `medzuch_jwt.id_token.partner`, and `TokenDenylistInterface $api` reaches
-`medzuch_jwt.denylist.api`. Issuers do not: only an issuer named `default` is reachable by type,
-and the rest are named explicitly.
+**Four ids also answer by argument name**, which is part of the promise: `IdTokenVerifier $partner`
+reaches `medzuch_jwt.id_token.partner`, `TokenDenylistInterface $api` reaches
+`medzuch_jwt.denylist.api`, and both security-event services reach the stream or transmitter of
+that name. Access-token issuers do not: only one named `default` is reachable by type, and the
+rest are named explicitly.
 
 Any other id — anything not in that table, and anything with `.profile`, `.key_set` or a similar
 suffix naming a part rather than a whole — is wiring, and moves without notice.
@@ -115,6 +118,8 @@ Only these, and each only in the way its row says:
 | `Security\User\ProvidesScopes` | type-hint it | `scopes()` | — | **yes** |
 | `Revocation\TokenDenylistInterface` | inject it | `revoke()`, `isRevoked()` | — | **yes** |
 | `Oidc\IdTokenVerifier` | inject it | yes | no | — |
+| `SecurityEvent\SecurityEventIssuer` | inject it | yes | no | — |
+| `SecurityEvent\SecurityEventVerifier` | inject it | yes | no | — |
 | `DataCollector\JwtDataCollector` | read it, in a panel of your own | its readers | no | — |
 | `Test\TestTokenFactory` | use it in your tests | yes | no | — |
 | `Test\AssertsBearerChallenges` | use it in your tests | yes | — | — |
@@ -180,7 +185,9 @@ New names may be added. These three do not move.
 ### The types `medzuch/jwt-php` owns
 
 Some of what this package hands you belongs to the library underneath it: a `ClaimsSet` from
-`JwtVerifiedEvent::$claims`, `JwtUser::claims()` and `IdTokenVerifier::verify()`; the
+`JwtVerifiedEvent::$claims`, `JwtUser::claims()`, `IdTokenVerifier::verify()` and
+`SecurityEventVerifier::verify()`; the `SetBuilder` that `SecurityEventIssuer::issue()` hands
+back; the
 `PrivateKey` and `PublicKey` a key service answers; the algorithms and keys `TestTokenFactory`
 takes; the `JwtException` hierarchy `RejectionReason::of()` reads.
 

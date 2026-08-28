@@ -119,6 +119,36 @@ final class ConfigurationGuard
     }
 
     /**
+     * A named key exists and has the private half signing needs.
+     *
+     * Shared by access-token issuers and security-event streams because the
+     * question is the same one, and a second copy would be a second chance for
+     * the two to answer it differently. `$context` carries the noun so the
+     * message names what the reader wrote — an issuer, or a stream.
+     *
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
+     */
+    public static function assertCanSign(string $context, string $key, array $keys): void
+    {
+        if (!isset($keys[$key])) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s signs with key "%s", which is not defined under medzuch_jwt.keys. Defined: %s.',
+                $context,
+                $key,
+                [] === $keys ? 'none' : '"' . implode('", "', array_keys($keys)) . '"',
+            ));
+        }
+
+        if (!KeyEntries::hasPrivateHalf($keys[$key])) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s signs with key "%s", which has only a public half. Signing needs the private half.',
+                $context,
+                $key,
+            ));
+        }
+    }
+
+    /**
      * @param array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int} $set
      */
     public static function assertRemoteJwksIsUsable(string $name, array $set, ContainerBuilder $builder): void

@@ -14,6 +14,7 @@ use Medzuch\Jwt\Key\Resolver\RemoteJwksResolver;
 use Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
+use Medzuch\Jwt\Profile\SetProfile;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
@@ -39,6 +40,8 @@ use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
 use Medzuch\JwtBundle\Security\Verification\CustomTokenVerifier;
 use Medzuch\JwtBundle\Security\Verification\CustomValidatorFactory;
 use Medzuch\JwtBundle\Security\Verification\ProfileTokenVerifier;
+use Medzuch\JwtBundle\SecurityEvent\SecurityEventIssuer;
+use Medzuch\JwtBundle\SecurityEvent\SecurityEventVerifier;
 use Symfony\Component\Cache\Psr16Cache;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -88,6 +91,7 @@ final class ServiceRegistrar
          *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
+         *     security_events: array{issuers: array<string, array{issuer: string, key: string, audience: list<string>}>, consumers: array<string, array{issuer: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, audience: string|null, leeway: int}>},
          * } $config */
         // Relative to the *bundle*, not to this file: Symfony anchors the
         // configurator on `new ReflectionObject($bundle)->getFileName()`, so
@@ -125,6 +129,7 @@ final class ServiceRegistrar
         $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
+        $this->registerSecurityEvents($services, $builder, $keys, $config['security_events'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
 
         ConsoleCommands::register(
             $services,
@@ -374,22 +379,7 @@ final class ServiceRegistrar
     private function registerIssuers(ServicesConfigurator $services, array $keys, array $issuers): void
     {
         foreach ($issuers as $name => $issuer) {
-            if (!isset($keys[$issuer['key']])) {
-                throw new InvalidConfigurationException(sprintf(
-                    'Issuer "%s" signs with key "%s", which is not defined under medzuch_jwt.keys. Defined: %s.',
-                    $name,
-                    $issuer['key'],
-                    [] === $keys ? 'none' : '"' . implode('", "', array_keys($keys)) . '"',
-                ));
-            }
-
-            if (!KeyEntries::hasPrivateHalf($keys[$issuer['key']])) {
-                throw new InvalidConfigurationException(sprintf(
-                    'Issuer "%s" signs with key "%s", which has only a public half. Signing needs the private half.',
-                    $name,
-                    $issuer['key'],
-                ));
-            }
+            ConfigurationGuard::assertCanSign(sprintf('Issuer "%s"', $name), $issuer['key'], $keys);
 
             $services->set('medzuch_jwt.issuer.' . $name . '.profile', AccessTokenProfile::class)
                 ->factory([AccessTokenProfile::class, 'issuer'])
@@ -612,6 +602,63 @@ final class ServiceRegistrar
             // `IdTokenVerifier $partner` and get the registration called
             // "partner" rather than a container lookup by string.
             $builder->registerAliasForArgument($id, IdTokenVerifier::class, $name);
+        }
+    }
+
+    /**
+     * Both halves of RFC 8417 (C8, I7). Neither is wired into a firewall: a SET
+     * authenticates nobody, so both services are public and injectable by name,
+     * the way {@see IdTokenVerifier} is, and an application calls them from the
+     * controller behind its delivery endpoint.
+     *
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
+     * @param array{issuers: array<string, array{issuer: string, key: string, audience: list<string>}>, consumers: array<string, array{issuer: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, audience: string|null, leeway: int}>} $events
+     * @param array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}> $sets
+     * @param array<string, string|null> $logLevels
+     */
+    private function registerSecurityEvents(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $events, array $sets, ?string $logger, array $logLevels): void
+    {
+        foreach ($events['issuers'] as $name => $stream) {
+            ConfigurationGuard::assertCanSign(sprintf('Security event stream "%s"', $name), $stream['key'], $keys);
+
+            $id = 'medzuch_jwt.security_event_issuer.' . $name;
+
+            $services->set($id . '.profile', SetProfile::class)
+                ->factory([SetProfile::class, 'issuer'])
+                ->args([
+                    $stream['issuer'],
+                    inline_service(SigningAlgorithms::CLASSES[$keys[$stream['key']]['algorithm']]),
+                    service('medzuch_jwt.key.' . $stream['key'] . '.signing'),
+                    service('medzuch_jwt.clock'),
+                ]);
+
+            $services->set($id, SecurityEventIssuer::class)
+                ->args([service($id . '.profile'), array_values($stream['audience'])])
+                ->public();
+
+            $builder->registerAliasForArgument($id, SecurityEventIssuer::class, $name);
+        }
+
+        foreach ($events['consumers'] as $name => $receiver) {
+            ConfigurationGuard::assertCanVerify(sprintf('Security event consumer "%s"', $name), $receiver, $keys, $sets);
+
+            $id = 'medzuch_jwt.security_event_consumer.' . $name;
+            self::registerLocalKeySet($services, $id . '.jwk_set', $receiver);
+
+            $services->set($id, SecurityEventVerifier::class)
+                ->args([
+                    $receiver['issuer'],
+                    self::keySource($services, $id . '.jwk_set', $id . '.resolver', $receiver),
+                    array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), array_values($receiver['allowed_algorithms'])),
+                    $receiver['audience'],
+                    service('medzuch_jwt.clock'),
+                    null === $logger ? null : service($logger),
+                    0 === $receiver['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $receiver['leeway'])]),
+                    self::logLevels($logLevels),
+                ])
+                ->public();
+
+            $builder->registerAliasForArgument($id, SecurityEventVerifier::class, $name);
         }
     }
 

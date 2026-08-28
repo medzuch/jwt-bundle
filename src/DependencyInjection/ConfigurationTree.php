@@ -43,6 +43,7 @@ final class ConfigurationTree
         self::configureConsumers($children);
         self::configureTokenExtractors($children);
         self::configureIdTokens($children);
+        self::configureSecurityEvents($children);
         self::configureJwks($children);
     }
 
@@ -369,6 +370,111 @@ final class ConfigurationTree
             ->min(0)
             ->max(ValidatorBuilder::LEEWAY_CEILING_SECONDS)
             ->info('Clock-skew tolerance in seconds for exp/nbf/iat. The ceiling is the library\'s.')
+            ->end();
+    }
+
+    /**
+     * Both halves of RFC 8417 Security Event Tokens (C8, I7): the streams this
+     * application transmits, and the transmitters it accepts deliveries from.
+     *
+     * Nested under one key rather than spelled flat beside `issuers` and
+     * `consumers`, because a SET is a different thing from an access token and
+     * the sections would read as modes of the same one. `set_` as a prefix was
+     * the alternative and is worse here: this tree already uses "set" for a JWK
+     * Set, so `set_issuers` would name the wrong noun in the file where
+     * `remote_jwks` names the right one.
+     *
+     * Neither side takes a TTL. RFC 8417 §4.1.4 makes `exp` not meaningful for
+     * a SET — an event is a statement about the past, not a credential with a
+     * lifetime — and the library's builder offers no setter for it. What that
+     * costs a receiver is replay detection on `jti`, which the README explains
+     * rather than this tree pretending to configure.
+     */
+    private static function configureSecurityEvents(NodeBuilder $children): void
+    {
+        $events = $children->arrayNode('security_events')
+            ->info('RFC 8417 Security Event Tokens: `issuers` transmits them, `consumers` receives them. Neither is a bearer credential, so neither is wired into a firewall.')
+            ->addDefaultsIfNotSet()
+            ->children();
+
+        self::configureSecurityEventIssuers($events);
+        self::configureSecurityEventConsumers($events);
+    }
+
+    private static function configureSecurityEventIssuers(NodeBuilder $events): void
+    {
+        $issuer = $events->arrayNode('issuers')
+            ->info('Named event streams this application transmits. Each signs with one key, as one issuer.')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $issuer->scalarNode('issuer')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('The `iss` every SET from this stream carries. Receivers pin it, so it is the identifier they were told to expect.')
+            ->example('https://idp.example.com')
+            ->end();
+
+        $issuer->scalarNode('key')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('Name from the `keys` section, whose private half signs. A key with only a public half is refused at container build.')
+            ->example('signing')
+            ->end();
+
+        $audience = $issuer->arrayNode('audience');
+        $audience->info('The `aud` every SET from this stream names — the receivers subscribed to it. Optional: RFC 8417 §2.2 only RECOMMENDS the claim, and a caller can name it per SET instead.');
+        $audience->beforeNormalization()->ifString()->then(static fn(string $value): array => [$value])->end();
+        $audience->scalarPrototype()->cannotBeEmpty()->end();
+        self::rejectMaps($audience, 'security_events.issuers.*.audience');
+    }
+
+    private static function configureSecurityEventConsumers(NodeBuilder $events): void
+    {
+        $consumer = $events->arrayNode('consumers')
+            ->info('Named transmitters this application accepts SETs from. Each verifies deliveries from one issuer.')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $consumer->scalarNode('issuer')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('The only `iss` accepted, exactly as the transmitter publishes it.')
+            ->example('https://idp.example.com')
+            ->end();
+
+        $keys = $consumer->arrayNode('keys');
+        $keys->info('Names from the `keys` section. Optional only when "remote_jwks" is given; with both, these are tried first.');
+        $keys->scalarPrototype()->cannotBeEmpty()->end();
+        self::rejectMaps($keys, 'security_events.consumers.*.keys');
+
+        self::declareOptionalName(
+            $consumer,
+            'remote_jwks',
+            'Name from the `remote_jwks` section. The ordinary way to verify a transmitter\'s SETs: they rotate their keys on their own schedule.',
+            'partner_idp',
+        );
+
+        $algorithms = $consumer->arrayNode('allowed_algorithms');
+        $algorithms->info('JOSE `alg` values accepted. Anything else is refused before a signature is checked.');
+        $algorithms->enumPrototype()->values(SigningAlgorithms::names())->end();
+        $algorithms->isRequired();
+        $algorithms->requiresAtLeastOneElement();
+        self::rejectMaps($algorithms, 'security_events.consumers.*.allowed_algorithms');
+
+        $consumer->scalarNode('audience')
+            ->defaultNull()
+            ->info('The `aud` a SET must name to be for this receiver. Null accepts whatever it names, which is right for a stream with one subscriber and wrong for a transmitter feeding several.')
+            ->example('https://rp.example.com')
+            ->end();
+
+        $consumer->integerNode('leeway')
+            ->defaultValue(0)
+            ->min(0)
+            ->max(ValidatorBuilder::LEEWAY_CEILING_SECONDS)
+            ->info('Clock-skew tolerance in seconds for nbf/iat. There is no exp on a SET (RFC 8417 §4.1.4), so this forgives a transmitter whose clock runs ahead, and nothing else.')
             ->end();
     }
 
