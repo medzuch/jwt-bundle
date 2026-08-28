@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Oidc;
 
+use InvalidArgumentException;
 use Medzuch\Jwt\Diagnostics\LogLevels;
 use Medzuch\Jwt\Diagnostics\SecurityLog;
 use Medzuch\Jwt\Exception\JwksResolutionException;
@@ -36,9 +37,10 @@ use Throwable;
  *    a redirect to whatever keys it likes; with it, an endpoint can only ever
  *    speak for the issuer already configured here.
  *  - **Both hops are HTTPS.** The identifier is refused at container build
- *    when it is not, and a `jwks_uri` that comes back plaintext is refused
- *    here — the second is the one an issuer chooses, so configuration cannot
- *    settle it in advance.
+ *    when configuration can read it, and by this constructor when it arrives
+ *    from the environment and there was nothing to read; a `jwks_uri` that
+ *    comes back plaintext is refused when it arrives, because that one is the
+ *    issuer's to choose and no configuration can settle it in advance.
  *
  * Failures surface as {@see JwksResolutionException}, which is the same
  * exception a fetch of a configured `jwks_uri` throws. That is what keeps K6
@@ -77,6 +79,16 @@ final class DiscoveredJwksResolver implements KeyResolver
         private readonly ?LoggerInterface $logger = null,
         private readonly ?LogLevels $logLevels = null,
     ) {
+        // The same fence {@see RemoteJwksResolver} puts in front of a
+        // `jwks_uri`, in front of the identifier that names one. Configuration
+        // refuses a plaintext identifier it can read, but a `%env(...)%` one is
+        // a placeholder then and only a string now, so this is where that
+        // spelling is held to it. InvalidArgumentException rather than
+        // JwksResolutionException, because a configured `uri` fails that way.
+        if (0 !== stripos($issuer, 'https://')) {
+            throw new InvalidArgumentException(sprintf('Discovery issuer must be an https:// URL (RFC 8725 §3.10); got "%s".', $issuer));
+        }
+
         $this->log = null === $logger ? null : SecurityLog::for($logger, $logLevels);
 
         // PSR-16 forbids {}()/\@: in keys, and the identifier is a URL.
@@ -89,10 +101,13 @@ final class DiscoveredJwksResolver implements KeyResolver
     }
 
     /**
-     * The delegate, built once per request from the discovered endpoint.
+     * The delegate, built once per instance from the discovered endpoint.
      *
      * Memoised on the instance as well as in the cache: the cache round-trip
-     * is cheap but not free, and within one request the answer cannot change.
+     * is cheap but not free, and for as long as one instance lives the answer
+     * cannot change. Under PHP-FPM that is the request. Under a worker runtime
+     * the service outlives `cache_ttl`, so a moved endpoint is picked up when
+     * the worker is recycled rather than when the entry expires.
      */
     private function keys(): KeyResolver
     {
@@ -122,6 +137,14 @@ final class DiscoveredJwksResolver implements KeyResolver
         $cached = $this->cache->get($this->cacheKey);
 
         if (is_string($cached) && '' !== $cached) {
+            // Checked again on the way out. Whoever can write to this store can
+            // already write the key set next to it, so this is not the fence
+            // that stops them — it keeps a poisoned entry failing in the
+            // vocabulary K6 understands, rather than as the delegate's
+            // InvalidArgumentException, which a CompositeResolver does not
+            // fall through on.
+            $this->assertKeysAreReachedOverHttps($cached);
+
             $this->log?->keyResolved($cached, 'cache');
 
             return $cached;
@@ -171,11 +194,22 @@ final class DiscoveredJwksResolver implements KeyResolver
             throw new JwksResolutionException(sprintf('Discovery document at "%s" states no "jwks_uri".', $this->discoveryUri()));
         }
 
-        if (0 !== stripos($jwksUri, 'https://')) {
-            throw new JwksResolutionException(sprintf('Discovery document at "%s" states a jwks_uri that is not https: "%s" (RFC 8725 §3.10).', $this->discoveryUri(), $jwksUri));
-        }
+        $this->assertKeysAreReachedOverHttps($jwksUri);
 
         return $jwksUri;
+    }
+
+    /**
+     * The hop configuration cannot settle in advance: the endpoint is the
+     * issuer's to choose, so it is judged when it arrives.
+     *
+     * @throws JwksResolutionException
+     */
+    private function assertKeysAreReachedOverHttps(string $jwksUri): void
+    {
+        if (0 !== stripos($jwksUri, 'https://')) {
+            throw new JwksResolutionException(sprintf('Discovery for "%s" reached a jwks_uri that is not https: "%s" (RFC 8725 §3.10).', $this->issuerIdentifier(), $jwksUri));
+        }
     }
 
     /** @throws JwksResolutionException */

@@ -215,7 +215,7 @@ final class ConfigurationTree
         $set->scalarNode('http_client')
             ->defaultValue('psr18.http_client')
             ->cannotBeEmpty()
-            ->info('Service id of a PSR-18 client. Symfony registers `psr18.http_client` once `psr/http-client` is installed and `framework.http_client` is enabled. Connection and response timeouts belong to the client: this bundle cannot impose a socket timeout on one it does not own.')
+            ->info('Service id of a PSR-18 client. Symfony registers `psr18.http_client` once `psr/http-client` is installed and `framework.http_client` is enabled. Connection and response timeouts belong to the client: this bundle cannot impose a socket timeout on one it does not own. So does redirect policy — a client that follows a cross-origin redirect changes which host answered, which no check here can see.')
             ->end();
 
         self::declareOptionalName(
@@ -236,7 +236,7 @@ final class ConfigurationTree
         $set->integerNode('cache_ttl')
             ->defaultValue(300)
             ->min(1)
-            ->info('Seconds the fetched document is cached. The common path never touches the network. Zero is refused: it would fetch the set for every token.')
+            ->info('Seconds a fetched document is cached — the key set, and the discovery document that names it when "discovery" is used. The common path never touches the network. Zero is refused: it would fetch the set for every token.')
             ->end();
 
         $set->integerNode('min_refresh')

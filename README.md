@@ -1254,12 +1254,30 @@ which is why two things are checked before it is:
   is not. Without that check, whoever answers the well-known path chooses which keys this
   application trusts. One trailing slash is tolerated — providers are inconsistent about
   publishing it — and nothing else is.
-- **Both hops are HTTPS.** A plaintext `discovery` is refused when the container is built. A
-  `jwks_uri` that comes back plaintext is refused when it arrives, because that one is the
-  issuer's to choose and no configuration can settle it in advance.
+- **Both hops are HTTPS.** A plaintext `discovery` is refused when the container is built, and
+  a `%env(...)%` one — which cannot be read then — when the resolver is first built, before any
+  request leaves. A `jwks_uri` that comes back plaintext is refused when it arrives, because
+  that one is the issuer's to choose and no configuration can settle it in advance.
 
 A discovery failure is the same kind of failure a `jwks_uri` fetch failure is, so local keys
 still cover an outage — including an outage of the metadata endpoint itself.
+
+Three things this does not check, and one of them is yours:
+
+- **Redirects belong to the HTTP client.** Symfony's follows them by default. A cross-origin
+  redirect changes which host answered the well-known path, and the issuer echo cannot see the
+  difference — the host that redirected you can state the identifier you asked for. Configure
+  the client used for `remote_jwks` not to follow redirects off the issuer's origin.
+- **A consumer's `issuer` and its set's `discovery` are not required to agree.** Keys hosted
+  off the issuer are a real setup, so this is not refused — but the two being different is more
+  often a typo than a deployment, and it compiles either way.
+- **A long-lived worker keeps the endpoint it already discovered.** Under PHP-FPM the answer
+  lasts one request. Under FrankenPHP worker mode, RoadRunner or Swoole the resolver outlives
+  `cache_ttl`, so a moved endpoint is picked up when the worker is recycled.
+
+An issuer identifier with a path is read at the OIDC Discovery spelling — identifier, then
+`/.well-known/openid-configuration` — which is what Keycloak and Azure AD publish. RFC 8414
+inserts the suffix before the path instead; a provider that has a path publishes both.
 
 Use `discovery` when the provider may move the endpoint, and `uri` when they may not: one
 fewer request, and one fewer thing that can be wrong, for a URL that was never going to change.
@@ -1638,7 +1656,8 @@ looking like rejected tokens at runtime:
   include `exp` and sets no `max_token_age` — a token nothing can make stale — or has a denylist
   and does not require `jti`, which is what a denylist looks a token up by
 - a remote key set naming both a `uri` and a `discovery` issuer, or neither, or one of them
-  over plaintext
+  blank or over plaintext — a plaintext value that arrives from `%env(...)%` is refused when
+  the resolver is built instead, since there is nothing to read at build
 - a `log_levels` entry that is not one of the eight PSR-3 levels, or any level at all with no
   `logger` to emit at it
 - a service this application does not have: `clock`, `logger`, a remote set's `http_client`,

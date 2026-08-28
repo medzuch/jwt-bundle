@@ -19,7 +19,8 @@ a class or method signature would be.
   `/.well-known/openid-configuration`, so the endpoint can move without a
   deploy. `uri` and `discovery` are alternatives: a set naming both, or
   neither, is refused when the container is built, as is either of them over
-  plaintext.
+  plaintext — including a plaintext value that arrives from `%env(...)%`, which
+  the container cannot read and the resolver refuses when it is first built.
 
   The metadata document has to state the issuer it was fetched for (OIDC
   Discovery §4.3) or it is refused — without that check, whoever answers the

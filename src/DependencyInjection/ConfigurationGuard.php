@@ -145,10 +145,12 @@ final class ConfigurationGuard
         // document is checked again when it arrives, because that one is the
         // issuer's to choose and no configuration can settle it in advance.
         //
-        // A URI assembled from the environment is exempt because there is
+        // A value assembled from the environment is exempt because there is
         // nothing to read yet: it is a placeholder until the container is
-        // compiled, and the library refuses a plaintext one when the resolver
-        // is built.
+        // compiled. The resolver's constructor is the fence for that spelling —
+        // the library's for a `uri`, this bundle's own for a `discovery` — so
+        // an env var holding plaintext fails when the service is first built
+        // rather than reaching a token.
         $configured = $set['uri'] ?? $set['discovery'];
         \assert(is_string($configured));
 

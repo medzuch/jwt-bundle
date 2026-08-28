@@ -260,7 +260,7 @@ default and adds no runtime cost when unconfigured.
 | K4 | JWKS publisher exposing public keys only, with cache headers and an `ETag`; the application routes to it (DEC-6). Publishing a symmetric key is refused at container build | `JwkSet::toArray()` + controller | T2 |
 | K5 | Remote JWKS consumption (`jwks_uri`) with PSR-18 client + PSR-16 cache, HTTPS-only, bounded body, throttled refresh-on-miss. Named at the top level, so two consumers of one issuer share a cache entry and a refresh window | `RemoteJwksResolver` (already implemented in the library) | T2 |
 | K6 | Composite resolution: remote JWKS with local fallback so an IdP outage doesn't break verification of still-valid keys. Local first, so the common path is not a round trip | `CompositeResolver` | T2 |
-| K7 | OIDC discovery: fetch `jwks_uri` (and issuer metadata) from `/.well-known/openid-configuration` instead of hard-coding it | bundle + PSR-18 | T3 |
+| K7 | OIDC discovery: fetch `jwks_uri` (and issuer metadata) from `/.well-known/openid-configuration` instead of hard-coding it. **Landed in Phase 5** as `remote_jwks.<name>.discovery`; the rest of the T3 rows below are still open | bundle + PSR-18 | T3 |
 | K8 | Publish an issuer discovery document for apps acting as an OP/AS (RFC 8414) | bundle controller | T3 |
 | K9 | Key material never appears in the profiler, logs, exception messages, or `debug:container` parameter dumps | bundle hardening | T1 |
 
