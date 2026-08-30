@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Tests\Functional;
 
 use DateInterval;
+use Medzuch\Jwt\Algorithm\Encryption\A256Gcm;
+use Medzuch\Jwt\Algorithm\KeyManagement\A256Kw;
+use Medzuch\Jwt\Algorithm\KeyManagement\Dir;
 use Medzuch\Jwt\Algorithm\Signing\Rs256;
+use Medzuch\Jwt\Key\OctKey;
 use Medzuch\Jwt\Key\RsaPrivateKey;
 use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\JwtBundle\Test\AssertsBearerChallenges;
@@ -39,6 +43,9 @@ final class TestHelpersTest extends WebTestCase
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
     private const ISSUER = 'https://issuer.test';
     private const AUDIENCE = 'https://api.test';
+
+    /** Exactly the 32 bytes A256KW is. */
+    private const SEALING = '0123456789abcdef0123456789abcdef';
 
     /**
      * @param array<array-key, mixed> $options
@@ -348,6 +355,97 @@ final class TestHelpersTest extends WebTestCase
     private static function tokens(): TestTokenFactory
     {
         return TestTokenFactory::hmac(self::ISSUER, self::AUDIENCE, self::SECRET);
+    }
+
+    /**
+     * The half an application cannot write for itself: a firewall whose
+     * consumer reads encrypted tokens has nothing to test with unless the
+     * factory can seal one (C12).
+     */
+    #[TestDox('a sealed token the factory mints is one an encrypted firewall accepts')]
+    public function testSealedTokenIsAccepted(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::sealedConfiguration()]);
+
+        $client->request('GET', '/api/whoami', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::sealedTokens()->token('alice'),
+        ]);
+
+        self::assertResponseIsSuccessful();
+        self::assertSame('alice', self::json($client)['user'] ?? null);
+    }
+
+    #[TestDox('the refusals are sealed too, so the token inside is what gets judged')]
+    public function testSealedRefusalIsStillARefusal(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::sealedConfiguration()]);
+
+        $expired = self::sealedTokens()->expired('alice');
+
+        // Five segments: the refusal travelled inside a JWE the consumer had
+        // to open first, rather than arriving as a bare signed token the
+        // consumer would have refused for being unencrypted.
+        self::assertCount(5, explode('.', $expired));
+
+        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $expired]);
+
+        self::assertResponseStatusCodeSame(401);
+        self::assertInvalidToken($client->getResponse());
+    }
+
+    /**
+     * The `dir` case, and the one that pins the outer `kid`: a direct
+     * recipient is found by its key id and by nothing else, so a factory that
+     * did not write one would mint a token no consumer could open.
+     */
+    #[TestDox('a directly encrypted token from the factory names the key it was sealed to')]
+    public function testDirectlyEncryptedTokenIsAccepted(): void
+    {
+        $configuration = self::configuration();
+        $configuration['jwe_keys'] = ['sealed' => ['secret' => self::SEALING, 'algorithm' => 'A256GCM', 'kid' => 'enc-2026']];
+        $configuration['consumers']['api']['jwe'] = [
+            'keys' => ['sealed'],
+            'allowed_key_management' => ['dir'],
+            'allowed_content_encryption' => ['A256GCM'],
+        ];
+
+        $client = self::createClient(['medzuch_jwt' => $configuration]);
+
+        $token = self::tokens()->encryptedWith(
+            new Dir(),
+            new A256Gcm(),
+            OctKey::fromBinary(self::SEALING, 'A256GCM', 'enc-2026'),
+        )->token('alice');
+
+        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token]);
+
+        self::assertResponseIsSuccessful();
+        self::assertSame('alice', self::json($client)['user'] ?? null);
+    }
+
+    private static function sealedTokens(): TestTokenFactory
+    {
+        return self::tokens()->encryptedWith(
+            new A256Kw(),
+            new A256Gcm(),
+            OctKey::fromBinary(self::SEALING, 'A256KW', 'enc-2026'),
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function sealedConfiguration(): array
+    {
+        $configuration = self::configuration();
+        $configuration['jwe_keys'] = ['sealed' => ['secret' => self::SEALING, 'algorithm' => 'A256KW', 'kid' => 'enc-2026']];
+        $configuration['consumers']['api']['jwe'] = [
+            'keys' => ['sealed'],
+            'allowed_key_management' => ['A256KW'],
+            'allowed_content_encryption' => ['A256GCM'],
+        ];
+
+        return $configuration;
     }
 
     /**

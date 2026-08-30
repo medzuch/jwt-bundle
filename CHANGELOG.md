@@ -13,6 +13,48 @@ a class or method signature would be.
 
 ### Added
 
+- **A consumer can read encrypted tokens** (C12), under a new `jwe` block and a
+  new top-level `jwe_keys` section. What arrives is then a JWE wrapping the
+  signed JWT (RFC 7519 §5.2 nested JWT); what is checked afterwards is
+  unchanged, because the decrypting step is a decorator in front of the very
+  verifier that would have judged an unencrypted token. An expired token in a
+  perfect envelope is still refused as `expired`.
+
+  **A bare signed token is refused once the block is there**, and there is no
+  option to accept either. An attacker who could strip the outer layer and be
+  believed would have taken the confidentiality of the claims for the cost of
+  deleting two segments; moving an existing consumer onto encryption is done by
+  the senders first.
+
+  `jwe_keys` is a registry of its own rather than a sixth source under `keys`:
+  RFC 7517 §4.2 asks that one key serve one purpose, and a signing algorithm and
+  a key-management one come from different registries. Every scheme accepted
+  this release takes a shared secret — `dir` and the six AES key-wrapping
+  algorithms — so `secret` is the only source. ECDH-ES waits on a registry of
+  asymmetric encryption keys; RSA key encryption is not coming, since the
+  library implements none.
+
+  A `dir` key is refused without a `kid`: the recipient falls back to the
+  header's `alg`, which for direct encryption is the string `dir`, and no key is
+  bound to that. The length of a secret is exact and cannot be known while the
+  container is built, so `jwt:config:check` builds every JWE key — that row is
+  where a 16-byte `A256KW` secret stops being a 500 on the first encrypted
+  request.
+
+  **`RejectionReason` gains `decryption_failed`**, kept apart from
+  `signature_invalid` because the two fail in different halves of the pipeline
+  and are fixed by different people. The profiler panel learned the same
+  distinction: an encrypted token is described by its outer header — a new `enc`
+  member on the collector's rows — instead of being shown under "this is not a
+  JWT", which is what a token this bundle had just accepted used to get. `log_levels` gains `decrypted` and
+  `decryption_failed`, the two categories the library always emitted and this
+  bundle had nothing to emit them from. `TestTokenFactory::encryptedWith()`
+  seals what the factory mints, refusals included, and `jwt:token:inspect`
+  prints an encrypted token's outer header and still asks the consumer for a
+  verdict instead of calling it something it cannot read.
+
+  Minting encrypted tokens is I8 and is not in this release.
+
 - **This application can publish its own RFC 8414 metadata** (K8), under a new
   `metadata` section and `medzuch_jwt.metadata_controller`. It closes the pair
   with K7: what a remote key set's `discovery` reads from somebody else, this

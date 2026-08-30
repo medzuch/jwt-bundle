@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional;
 
+use Medzuch\Jwt\Algorithm\Encryption\A256Gcm;
+use Medzuch\Jwt\Algorithm\KeyManagement\A256Kw;
+use Medzuch\Jwt\Jwe\Encrypter;
+use Medzuch\Jwt\Key\OctKey;
 use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\TraceableAccessTokenHandler;
@@ -36,6 +40,9 @@ final class ProfilerPanelTest extends WebTestCase
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
     private const ISSUER = 'https://issuer.test';
     private const AUDIENCE = 'https://api.test';
+
+    /** Exactly the 32 bytes A256KW is. */
+    private const SEALING = '0123456789abcdef0123456789abcdef';
 
     /**
      * @param array<array-key, mixed> $options
@@ -195,6 +202,147 @@ final class ProfilerPanelTest extends WebTestCase
         self::assertStringContainsString('(unreadable)', $panel);
         self::assertStringContainsString('(none named)', $panel);
         self::assertStringContainsString('this is not a JWT', $panel);
+    }
+
+    /**
+     * The panel used to say "this is not a JWT" about a token the consumer had
+     * just accepted: `describe()` reads the bearer string before the handler
+     * decrypts it, so a five-segment JWE took the same branch as garbage and
+     * arrived with no algorithm, no key id and no claims (C12).
+     *
+     * The envelope is readable without a key, and that is what the panel shows
+     * now. The claims are not, which is a different sentence.
+     */
+    #[TestDox('an accepted encrypted token is described by its envelope, not called garbage')]
+    public function testEncryptedTokenIsCollectedAndRendered(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::encryptedConfiguration()]);
+        $client->enableProfiler();
+
+        $client->request('GET', '/api/whoami', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::sealedTokens()->token('alice'),
+        ]);
+
+        self::assertResponseIsSuccessful();
+
+        $tokens = self::collector($client)->tokens();
+
+        self::assertSame('accepted', $tokens[0]['verdict']);
+        self::assertSame('alice', $tokens[0]['identity']);
+        self::assertSame('A256KW', $tokens[0]['alg']);
+        self::assertSame('A256GCM', $tokens[0]['enc']);
+        self::assertSame('enc-2026', $tokens[0]['kid']);
+        // Real claims, behind a key this decorator does not hold.
+        self::assertSame([], $tokens[0]['claims']);
+
+        $panel = self::render($client);
+
+        self::assertStringContainsString('A256GCM', $panel);
+        self::assertStringContainsString('The claims are encrypted', $panel);
+        self::assertStringNotContainsString('this is not a JWT', $panel);
+    }
+
+    #[TestDox('a refusal from inside the envelope keeps its own reason under the same sentence')]
+    public function testRefusedEncryptedTokenKeepsItsReason(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::encryptedConfiguration()]);
+        $client->enableProfiler();
+
+        $client->request('GET', '/api/whoami', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::sealedTokens()->expired('alice'),
+        ]);
+
+        self::assertResponseStatusCodeSame(401);
+
+        $tokens = self::collector($client)->tokens();
+
+        self::assertSame('refused', $tokens[0]['verdict']);
+        self::assertSame('expired', $tokens[0]['reason']);
+        self::assertSame('A256KW', $tokens[0]['alg']);
+
+        self::assertStringNotContainsString('this is not a JWT', self::render($client));
+    }
+
+    #[TestDox('nothing of an encrypted token reaches the profile either')]
+    public function testTheCiphertextIsNotCollected(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::encryptedConfiguration()]);
+        $client->enableProfiler();
+
+        $token = self::sealedTokens()->token('alice');
+        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token]);
+
+        self::assertResponseIsSuccessful();
+
+        $segments = explode('.', $token);
+        self::assertCount(5, $segments);
+
+        $stored = serialize(self::collector($client));
+        $panel = self::render($client);
+
+        // Every segment that is not the header: the wrapped key, the IV, the
+        // ciphertext and the tag are together the whole of what makes this
+        // token usable, and a profile is a file served back by a URL.
+        foreach (array_slice($segments, 1) as $index => $segment) {
+            self::assertStringNotContainsString($segment, $stored, sprintf('segment %d was collected', $index + 1));
+            self::assertStringNotContainsString($segment, $panel, sprintf('segment %d is in the panel', $index + 1));
+        }
+    }
+
+    /**
+     * A JWE that names no key: the resolver falls back to the header's `alg`,
+     * which is how a single-key consumer works, and the panel has to say so
+     * rather than leave a row that reads as a value it could not decode.
+     */
+    #[TestDox('an encrypted token naming no key is shown as naming none')]
+    public function testAnEncryptedTokenWithNoKeyId(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::encryptedConfiguration()]);
+        $client->enableProfiler();
+
+        $token = (string) (new Encrypter())->encrypt(
+            new A256Kw(),
+            new A256Gcm(),
+            ['cty' => 'JWT'],
+            self::tokens()->token('alice'),
+            OctKey::fromBinary(self::SEALING, 'A256KW', 'enc-2026'),
+        );
+
+        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token]);
+
+        self::assertResponseIsSuccessful();
+
+        $tokens = self::collector($client)->tokens();
+
+        self::assertSame('A256KW', $tokens[0]['alg']);
+        self::assertSame('A256GCM', $tokens[0]['enc']);
+        self::assertNull($tokens[0]['kid']);
+        self::assertStringContainsString('(none named)', self::render($client));
+    }
+
+    private static function sealedTokens(): TestTokenFactory
+    {
+        return self::tokens()->encryptedWith(
+            new A256Kw(),
+            new A256Gcm(),
+            OctKey::fromBinary(self::SEALING, 'A256KW', 'enc-2026'),
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function encryptedConfiguration(): array
+    {
+        $configuration = self::configuration();
+        $configuration['jwe_keys'] = ['sealed' => ['secret' => self::SEALING, 'algorithm' => 'A256KW', 'kid' => 'enc-2026']];
+        $configuration['consumers']['api']['jwe'] = [
+            'keys' => ['sealed'],
+            'allowed_key_management' => ['A256KW'],
+            'allowed_content_encryption' => ['A256GCM'],
+        ];
+
+        return $configuration;
     }
 
     #[TestDox('a refusal the application decided keeps the reason the event gives it')]

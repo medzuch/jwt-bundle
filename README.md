@@ -856,12 +856,13 @@ a listener that logs them logs whatever they hold: subjects, emails, tenant ids.
 | `not_yet_valid` | `nbf` or `iat` is in the future | clock skew; raise `leeway` if it is small and constant |
 | `too_old` | `iat` is further back than `max_token_age` allows, `exp` notwithstanding | this consumer's ceiling, not the issuer's lifetime |
 | `signature_invalid` | no accepted key verifies it | somebody is trying something |
+| `decryption_failed` | an encrypted token's outer layer would not open | the sender and this consumer disagree about which key is current, or the ciphertext was altered |
 | `unknown_key` | no key matches the token's `kid` | a rotation that has not finished, or another issuer's token |
 | `algorithm_refused` | the `alg` is not in `allowed_algorithms` | a client misconfigured, or an algorithm-confusion attempt |
 | `wrong_issuer` | `iss` is not the configured one | a token from somewhere else |
 | `wrong_audience` | `aud` does not name this consumer, or names another too | the token was minted for a different service |
 | `revoked` | a denylist withdrew this `jti` | working as intended |
-| `malformed` | not a JWT this consumer can read, `typ` included | a client sending the wrong thing |
+| `malformed` | not a JWT this consumer can read, `typ` included — and, for an encrypted consumer, a missing or wrong `cty`, a replicated claim that disagrees, or a bare signed token where a JWE was expected | a client sending the wrong thing |
 | `claims_refused` | a claim is missing, mistyped or refused — the identity claim included | usually a profile mismatch |
 | `keys_unavailable` | the key set would not fetch, or what came back is not usable key material | **an outage, not a verdict on the token** |
 | `identity_refused` | the token verified and named somebody, and the application refused them | your `custom` factory said no |
@@ -907,6 +908,8 @@ medzuch_jwt:
         claim_rejected: notice           # expired, wrong audience, missing claim
         key_resolution: debug            # a remote set fetched or served from cache
         key_resolution_failed: warning   # an issuer this application cannot reach
+        decrypted: debug                 # an encrypted token opened
+        decryption_failed: warning       # one that would not open
 ```
 
 Every one of them is optional and each keeps the library's default when left out — the defaults
@@ -918,11 +921,19 @@ and leaving `accepted` at `debug` is how it stays out of production.
 `key_resolution_failed` are the two worth watching: one is somebody trying something, the other
 is an outage on the issuer's side rather than a verdict on any token.
 
+**An `accepted` line is not a request that was allowed through.** It says the library finished
+with the token in front of it, and this bundle then goes on asking: a denylist can withdraw it,
+`max_token_age` can refuse it, an `exclusive` audience can, a `custom` factory can, and on an
+encrypted consumer a replicated claim that disagrees with the token inside can. So one request
+may emit `decrypted`, then `accepted`, and still end in a 401 — alerting that treats the accepted
+line as the verdict will count refusals as successes. `JwtVerifiedEvent` is what only fires when
+the whole of this bundle is satisfied.
+
 The setting is application-wide: it reaches every consumer, every ID-token registration and every
 remote JWK Set at once, so two consumers in one application cannot be logged at different levels.
-Levels with no `logger` are refused at container build — nothing would emit at them. There is no
-option for the library's two JWE categories, because nothing here issues or consumes an encrypted
-token yet.
+Levels with no `logger` are refused at container build — nothing would emit at them. The last two
+are emitted only by a consumer configured with a `jwe` block; nothing else in this bundle
+decrypts anything.
 
 ## Revoking a token
 
@@ -1104,6 +1115,198 @@ written to your log — the library logs that from inside its profile consumers,
 posture is assembled from the layer below them. The refusal still reaches `JwtRejectedEvent` and
 the profiler as `malformed`; it is the log line that is missing, and a listener on that event is
 where to put one back.
+
+## Reading an encrypted token
+
+A signed token hides nothing. Anyone who holds one can read every claim in it — that is what
+base64url is — and the signature only says nobody changed them. Where a token crosses something
+you do not trust, a proxy you do not run or a queue somebody else can read, the claims go with
+it: the subject, the scopes, and whatever else you put in.
+
+An encrypted token is the same signed token inside a JWE (RFC 7519 §5.2 calls it a *nested*
+JWT). The claims are ciphertext on the wire, and only a holder of the encryption key can see
+them:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default:
+            hmac: '%env(JWT_SECRET)%'
+
+    jwe_keys:
+        payload_2026:
+            secret: '%env(base64:JWT_JWE_SECRET)%'
+            algorithm: A256KW
+            kid: 'enc-2026'
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [default]
+            allowed_algorithms: [HS256]
+            jwe:
+                keys: [payload_2026]
+                allowed_key_management: [A256KW]
+                allowed_content_encryption: [A256GCM]
+```
+
+Nothing else about the consumer changes. The firewall is wired the same way, the handler is the
+same service, and the issuer, audience, expiry, scopes and profile of the token inside are
+checked by exactly what checked them before — so an expired token in a perfect envelope is still
+refused for being expired, with the same `RejectionReason` and the same 401. What the `jwe`
+block adds is one step in front of all that: open the envelope, or refuse.
+
+**A signed token on its own is then refused.** There is no "accept either" setting, and that is
+deliberate: an attacker who could strip the outer layer and still be believed would have taken
+the confidentiality away for the cost of deleting two segments. Moving an existing consumer onto
+encryption means the senders go first — mint encrypted tokens, let the old ones expire, then add
+the block.
+
+### The two keys are two keys
+
+`keys` sign and verify; `jwe_keys` encrypt and decrypt. They are separate sections because they
+are separate keys: RFC 7517 §4.2 asks that one key serve one purpose, and the algorithms come
+from different registries — `HS256` signs, `A256KW` wraps, and neither means anything to the
+other.
+
+A JWE key is a shared secret of an exact length, and `algorithm` says which:
+
+| `algorithm` | What the key is | Bytes |
+|---|---|---|
+| `A128KW`, `A192KW`, `A256KW` | the key that wraps the one-time content key (RFC 7518 §4.4) | 16 / 24 / 32 |
+| `A128GCMKW`, `A192GCMKW`, `A256GCMKW` | the same, wrapped with AES-GCM (§4.7) | 16 / 24 / 32 |
+| `A128GCM`, `A192GCM`, `A256GCM` | the content key itself, for `dir` | 16 / 24 / 32 |
+| `A128CBC-HS256`, `A192CBC-HS384`, `A256CBC-HS512` | the same, for `dir`; doubled because it carries a MAC half (§5.2.2.1) | 32 / 48 / 64 |
+
+The length is exact, not a floor, and it cannot be checked while the container is built — the
+secret is still `%env(...)%` then. `jwt:config:check` builds every key, so that is where a
+deploy finds out:
+
+```
+$ php bin/console jwt:config:check
+ [FAIL] JWE key "payload_2026": Symmetric key for A256KW must be exactly 32 bytes (RFC 7518 §5); got 16
+```
+
+A secret is bytes rather than text, so `%env(base64:NAME)%` is the spelling that survives an
+environment variable. `php -r 'echo base64_encode(random_bytes(32));'` produces one.
+
+Every entry is checked, including one no consumer names yet — a key left behind after a rotation
+fails the deploy gate rather than waiting to be noticed. Delete the entry when you delete the
+secret.
+
+### `dir`, and why it needs a `kid`
+
+With `dir` there is no wrapping: the configured key *is* the content key, so it is bound to the
+`enc` algorithm rather than to a wrapping one, and one token's claims are encrypted directly
+under a key that never changes per token. It is the shortest configuration and the one with the
+least room for error, at the cost of a key that many tokens share.
+
+```yaml
+medzuch_jwt:
+    keys:
+        default: { hmac: '%env(JWT_SECRET)%' }
+
+    jwe_keys:
+        payload_2026:
+            secret: '%env(base64:JWT_JWE_SECRET)%'
+            algorithm: A256GCM          # the content algorithm, because the key is the content key
+            kid: 'enc-2026'
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [default]
+            allowed_algorithms: [HS256]
+            jwe:
+                keys: [payload_2026]
+                allowed_key_management: [dir]
+                allowed_content_encryption: [A256GCM]
+```
+
+The `kid` is required here rather than optional. A recipient picks a key by the `kid` in the
+outer header, or failing that by the header's `alg` — and with `dir` that `alg` is the literal
+string `dir`, which no key is bound to. A `dir` key without a `kid` would decrypt nothing, ever,
+so the bundle refuses to boot with one.
+
+### Rotating an encryption key
+
+The same shape as rotating a signing key, and the same order: accept the new one first, then ask
+the senders to use it.
+
+```yaml
+medzuch_jwt:
+    keys:
+        default: { hmac: '%env(JWT_SECRET)%' }
+
+    jwe_keys:
+        payload_2027: { secret: '%env(base64:JWT_JWE_SECRET_2027)%', algorithm: A256KW, kid: 'enc-2027' }
+        payload_2026: { secret: '%env(base64:JWT_JWE_SECRET)%',      algorithm: A256KW, kid: 'enc-2026' }
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [default]
+            allowed_algorithms: [HS256]
+            jwe:
+                keys: [payload_2027, payload_2026]
+                allowed_key_management: [A256KW]
+                allowed_content_encryption: [A256GCM]
+```
+
+Both are tried by `kid`, so tokens sealed to either still open. Once nothing is sealed to the old
+one — one token lifetime after the senders moved — drop it. Two keys with no `kid` between them
+are refused at build for the reason a signing pair is: nothing could say which one a token meant.
+
+### Repeating a claim in the outer header
+
+RFC 7519 §5.3 lets a sender copy a claim into the outer header — `iss`, usually, so an
+intermediary can route without holding a key — and requires the copy to agree with the token
+inside. This consumer enforces that, and a disagreement is refused as `malformed`.
+
+**The comparison is exact.** An outer `"aud": "https://api.test"` beside an inner
+`aud: ["https://api.test"]` is a disagreement here, because the producer chose the inner shape
+and a receiver that normalised one side would be deciding that two different documents said the
+same thing. JOSE peers do write the string form, so a sender replicating `aud` has to replicate
+it as it stands.
+
+A name in the outer header with no claim of that name inside is not compared at all: the section
+is about a claim that was repeated, and a JWE protected header is also where a sender puts things
+that were never claims. Registered JOSE header parameters — `alg`, `enc`, `kid`, `typ` and the
+rest — are skipped whatever the token inside carries, so a claim of your own that happens to be
+called `kid` is not measured against the `kid` that said which key to decrypt with.
+
+### What the allowlists are for
+
+`allowed_key_management` and `allowed_content_encryption` are what this consumer will accept in
+the outer header, and everything else is refused before a key is touched. Every algorithm here
+is authenticated encryption, so unlike a signing allowlist this one is not keeping a known-broken
+scheme out; it is there because the header of an arriving token must never be what decides how
+that token is read (RFC 8725 §3.1).
+
+### What is not here yet
+
+**Encrypted tokens are read, not minted.** The issuer side — sign, then encrypt — is I8 on the
+roadmap; until it lands the sender is somebody else's code or the library's `NestedJwtBuilder`
+called directly. `TestTokenFactory` can seal what it mints, so a firewall configured this way is
+testable today; see "Testing an application that uses this".
+
+**Only shared secrets.** `ECDH-ES`, which encrypts to somebody's public EC key, needs a registry
+of asymmetric encryption keys and a way to publish this application's own — a larger thing than a
+name in a list. RSA key encryption is not coming: the library implements none, deliberately.
+
+**Only the compact serialization.** The JSON serializations carry several recipients and
+unprotected headers, which a bearer credential in an `Authorization` header has no use for.
+
+**Write `cty` as `JWT` or `application/jwt`, not `application/JWT`.** The library compares media
+types with the case kept after the prefix (medzuch/jwt-php#62), so the mixed-case long form is
+refused as `malformed` until that is fixed. Nothing here works around it: a second implementation
+of media-type comparison is a worse problem than the one it solves.
+
+**Encrypted ID tokens and encrypted security events** are not configurable: `jwe` belongs to
+`consumers`, and the OIDC and SET registrations verify signatures only.
 
 ## How old a token may be
 
@@ -1823,6 +2026,24 @@ the same answer and there is nothing to switch on:
 $stranger = TestTokenFactory::hmac('https://issuer.test', 'https://api.test', 'another-secret-of-32-bytes-plus!!');
 ```
 
+For a consumer that reads encrypted tokens, seal what the factory mints — otherwise a firewall
+configured that way refuses everything the factory makes, for being unencrypted:
+
+```php
+use Medzuch\Jwt\Algorithm\Encryption\A256Gcm;
+use Medzuch\Jwt\Algorithm\KeyManagement\A256Kw;
+use Medzuch\Jwt\Key\OctKey;
+
+$tokens = TestTokenFactory::hmac('https://issuer.test', 'https://api.test', $secret)
+    ->encryptedWith(new A256Kw(), new A256Gcm(), OctKey::fromBinary($sealing, 'A256KW', 'enc-2026'));
+```
+
+The refusals are sealed too, which is the point of putting it on the factory: `expired()` still
+returns a token that opens and is then refused for its expiry, rather than one refused at the
+envelope for the wrong reason. The algorithm and the key are given as objects rather than names
+because they are one decision — a `dir` recipient's key is bound to the content algorithm while a
+wrapping one is bound to the key-management algorithm, and a pair of strings could not say which.
+
 **It reads no configuration, deliberately.** A test that mints from the same container it
 verifies against cannot catch a configuration mistake: an `audience` wrong in both halves agrees
 with itself and the test passes. Naming the issuer, the audience and the key in the test is what
@@ -1911,6 +2132,10 @@ looking like rejected tokens at runtime:
 - a consumer verifying with a private-only key, or an issuer signing with a public-only one —
   a security-event stream is held to the same rule, and named as a stream when it breaks it
 - a security-event consumer with nothing to verify with: no `keys` and no `remote_jwks`
+- a consumer that could never open an encrypted token: a `jwe_keys` name that does not exist, an
+  allowed `alg` no configured key can be used with, a key bound to something the consumer does
+  not allow, two keys a token cannot tell apart, or a `dir` key with no `kid` — which no
+  recipient could ever select
 - a JWK Set publishing a shared secret, a key with no public half, or a key that does not exist
 - a static claim named `iss`, `sub`, `aud`, `exp`, `nbf`, `iat` or `jti` — those are set from
   configuration or by the profile

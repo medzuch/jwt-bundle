@@ -6,6 +6,7 @@ namespace Medzuch\JwtBundle\Command;
 
 use DateTimeImmutable;
 use Medzuch\Jwt\Exception\JwtException;
+use Medzuch\Jwt\Jwe\CompactSerializer as JweCompactSerializer;
 use Medzuch\Jwt\Jwt\ClaimsSet;
 use Medzuch\Jwt\Jwt\Header;
 use Medzuch\Jwt\Jwt\JwtParser;
@@ -98,13 +99,14 @@ final class InspectTokenCommand extends Command
 
         try {
             $parsed = JwtParser::parse($token);
+            $this->describe($io, $parsed->header, $parsed->unverifiedClaims);
         } catch (JwtException $failure) {
-            $io->error(sprintf('This is not a JWT this bundle can read: %s', $failure->getMessage()));
+            if (!$this->describeSealed($io, $token)) {
+                $io->error(sprintf('This is not a JWT this bundle can read: %s', $failure->getMessage()));
 
-            return Command::INVALID;
+                return Command::INVALID;
+            }
         }
-
-        $this->describe($io, $parsed->header, $parsed->unverifiedClaims);
 
         if (self::isBlank($input->getOption('consumer'))) {
             $io->error('--consumer names one of the configured consumers, and is not empty.');
@@ -194,6 +196,35 @@ final class InspectTokenCommand extends Command
         ));
 
         return Command::INVALID;
+    }
+
+    /**
+     * The half of an encrypted token that can be read without a key (C12).
+     *
+     * A JWE has no claims to show here — that is the point of it — but its
+     * outer header is public, and `alg`, `enc` and the `kid` naming the key it
+     * was sealed to are exactly what an operator wants in front of them when
+     * the verdict below turns out to be that it would not decrypt. Everything
+     * after this is unchanged: the consumer holds the key, so it is the one
+     * that reads the claims.
+     *
+     * False when the token is not a compact JWE either, which leaves the
+     * caller to report the original failure — the one about the JWT it is not.
+     */
+    private function describeSealed(SymfonyStyle $io, string $token): bool
+    {
+        try {
+            $jwe = JweCompactSerializer::deserialize($token);
+        } catch (JwtException) {
+            return false;
+        }
+
+        $io->section('Header (encrypted token)');
+        $io->definitionList(...self::rows($jwe->header));
+        $io->text('The claims are encrypted, so they are not shown here. A consumer holding the key reads them below.');
+        $io->newLine();
+
+        return true;
     }
 
     private function describe(SymfonyStyle $io, Header $header, ClaimsSet $claims): void

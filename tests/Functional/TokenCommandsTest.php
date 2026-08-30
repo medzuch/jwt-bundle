@@ -6,8 +6,13 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 
 use DateInterval;
 use DateTimeImmutable;
+use Medzuch\Jwt\Algorithm\Encryption\A256Gcm;
+use Medzuch\Jwt\Algorithm\KeyManagement\A256Kw;
 use Medzuch\Jwt\Algorithm\Signing\Hs256;
+use Medzuch\Jwt\Jws\CompactJws;
+use Medzuch\Jwt\Jwt\NestedJwtBuilder;
 use Medzuch\Jwt\Key\HmacKey;
+use Medzuch\Jwt\Key\OctKey;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Command\CreateTokenCommand;
 use Medzuch\JwtBundle\Command\InspectTokenCommand;
@@ -38,6 +43,9 @@ final class TokenCommandsTest extends KernelTestCase
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
     private const ISSUER = 'https://issuer.test';
     private const AUDIENCE = 'https://api.test';
+
+    /** Exactly the 32 bytes A256KW is. */
+    private const SEALING = '0123456789abcdef0123456789abcdef';
 
     /**
      * @param array<array-key, mixed> $options
@@ -248,6 +256,58 @@ final class TokenCommandsTest extends KernelTestCase
 
         self::assertSame(Command::INVALID, $tester->getStatusCode());
         self::assertStringContainsString('not a JWT', $tester->getDisplay());
+    }
+
+    /**
+     * Before C12 this printed "not a JWT this bundle can read" and stopped,
+     * which was a wrong sentence about a token the bundle reads perfectly
+     * well. The claims still cannot be shown — they are encrypted, and this
+     * command holds no key — but the outer header can, and the consumer that
+     * does hold the key still gives its verdict.
+     */
+    #[TestDox('an encrypted token shows its outer header and still gets a verdict')]
+    public function testEncryptedTokenIsInspected(): void
+    {
+        $configuration = self::sealedConfiguration();
+
+        $tester = self::console('jwt:token:inspect', ['token' => self::sealed(self::expiredToken())], null, $configuration);
+
+        $display = $tester->getDisplay();
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Header (encrypted token)', $display);
+        self::assertStringContainsString('A256KW', $display);
+        self::assertStringContainsString('The claims are encrypted', $display);
+        // The verdict comes from the consumer, which opened it: the reason is
+        // the expiry of the token inside, not the envelope around it.
+        self::assertStringContainsString('refuses this token: expired', $display);
+    }
+
+    private static function sealed(string $signed): string
+    {
+        return (string) NestedJwtBuilder::wrap(
+            new CompactJws($signed),
+            new A256Kw(),
+            new A256Gcm(),
+            OctKey::fromBinary(self::SEALING, 'A256KW', 'enc-2026'),
+            ['kid' => 'enc-2026'],
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function sealedConfiguration(): array
+    {
+        $configuration = self::configuration();
+        $configuration['jwe_keys'] = ['sealed' => ['secret' => self::SEALING, 'algorithm' => 'A256KW', 'kid' => 'enc-2026']];
+        $configuration['consumers']['api']['jwe'] = [
+            'keys' => ['sealed'],
+            'allowed_key_management' => ['A256KW'],
+            'allowed_content_encryption' => ['A256GCM'],
+        ];
+
+        return $configuration;
     }
 
     #[TestDox('with several consumers configured, inspect refuses to pick one')]

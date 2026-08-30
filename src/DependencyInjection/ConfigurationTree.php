@@ -6,6 +6,8 @@ namespace Medzuch\JwtBundle\DependencyInjection;
 
 use Medzuch\Jwt\Diagnostics\LogLevels;
 use Medzuch\Jwt\Jwt\ValidatorBuilder;
+use Medzuch\JwtBundle\Algorithm\ContentEncryptionAlgorithms;
+use Medzuch\JwtBundle\Algorithm\KeyManagementAlgorithms;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Issuer\ReservedClaims;
 use Medzuch\JwtBundle\Security\Http\Challenge;
@@ -38,6 +40,7 @@ final class ConfigurationTree
 
         self::configureGlobals($children);
         self::configureKeys($children);
+        self::configureJweKeys($children);
         self::configureRemoteJwks($children);
         self::configureIssuers($children);
         self::configureConsumers($children);
@@ -55,10 +58,10 @@ final class ConfigurationTree
      * category: raising an accepted token to `info` is auditing, raising a
      * refusal to `warning` is alerting.
      *
-     * Five of the library's seven. The other two are JWE — a token decrypted,
-     * and one that would not decrypt — and nothing here issues or consumes an
-     * encrypted token yet (C12/I8), so an option for them would be a level
-     * nothing is ever emitted at.
+     * All seven the library emits. The last two arrived with C12: until a
+     * consumer could be given a `jwe` block there was nothing to decrypt, and
+     * an option for a category nothing emits is a level that never applies to
+     * anything.
      */
     public const LOG_LEVELS = [
         'accepted' => ['accepted', 'A token that passed every check. `debug` by default, because on a busy API this is one line per request.', 'info'],
@@ -66,6 +69,8 @@ final class ConfigurationTree
         'claim_rejected' => ['claimRejected', 'A properly signed token whose claims are refused: expired, not yet valid, wrong issuer or audience, a missing required claim, a profile rule. `notice` by default, because this is the ordinary cost of short lifetimes.', 'info'],
         'key_resolution' => ['keyResolution', 'A remote JWK Set fetched, served from cache, or refreshed. `debug` by default.', 'info'],
         'key_resolution_failed' => ['keyResolutionFailed', 'A remote JWK Set that could not be fetched or parsed — an outage on one side or the other. `warning` by default.', 'critical'],
+        'decrypted' => ['decrypted', 'An encrypted token whose outer JWE decrypted and authenticated, before anything inside it was read. `debug` by default; read only where a consumer configures `jwe`.', 'info'],
+        'decryption_failed' => ['decryptionFailed', 'An encrypted token that would not decrypt: the wrong key, or ciphertext that has been altered since it was written. `warning` by default, and the one category here that is never the ordinary cost of anything.', 'critical'],
     ];
 
     /** Named because the registration compares against it to catch a prefix nothing would read. */
@@ -175,6 +180,68 @@ final class ConfigurationTree
                 ->thenInvalid('A key\'s "kid" cannot be the empty string; omit it instead.')
             ->end()
             ->end();
+    }
+
+    /**
+     * The keys an encrypted token is read with (C12).
+     *
+     * A registry of its own rather than a sixth source under `keys`, because a
+     * key that decrypts and a key that verifies a signature are two keys. RFC
+     * 7517 §4.2 asks that one key serve one purpose, `keys` binds every entry
+     * to an algorithm from a registry with no JWE names in it, and the JWK Set
+     * publisher would have to learn to skip whatever it found here.
+     *
+     * Every scheme this release accepts takes a shared secret, so `secret` is
+     * the only source. What the secret has to *be* comes from `algorithm`, and
+     * the two spellings are not interchangeable: a wrapping key is bound to
+     * the `alg` that wraps with it, while a `dir` key is the Content
+     * Encryption Key itself and is bound to the `enc` it is a key for.
+     */
+    private static function configureJweKeys(NodeBuilder $children): void
+    {
+        $key = $children->arrayNode('jwe_keys')
+            ->info('Named keys for reading encrypted tokens, referenced by name from a consumer\'s "jwe" block. Separate from `keys`: those sign and verify, these decrypt, and one key should not do both (RFC 7517 §4.2).')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $key->scalarNode('secret')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('Shared secret, as raw bytes. Its length is fixed by "algorithm" — 16/24/32 bytes for the A128/A192/A256 names, and 32/48/64 for the CBC-HS family, which carries a MAC half (RFC 7518 §5.2.2.1). Use an env reference; a secret is bytes rather than text, so %env(base64:NAME)% is the spelling that survives one. The length cannot be checked while the container is built — the secret is still an env reference then — so a wrong one fails when the key is first built, which `jwt:config:check` is where to do deliberately.')
+            ->example('%env(base64:JWT_JWE_SECRET)%')
+            ->end();
+
+        $key->enumNode('algorithm')
+            ->values(self::jweKeyAlgorithms())
+            ->isRequired()
+            ->info('What this key is made of. For key wrapping, the `alg` it wraps with (A128KW…A256GCMKW). For "dir", the key is the Content Encryption Key rather than something that wraps one, so name the `enc` it is a key for (A128GCM…A256CBC-HS512) — "dir" itself is not a value here, because no key is made of it.')
+            ->example('A256KW')
+            ->end();
+
+        $key->scalarNode('kid')
+            ->defaultNull()
+            ->info('Key id the sender names in the token\'s outer header. Required as soon as two of a consumer\'s keys share an algorithm — and for "dir" always, because a resolver falling back to the header\'s `alg` would be looking for a key bound to "dir", which no key is.')
+            ->validate()
+                ->ifTrue(static fn(mixed $value): bool => '' === $value)
+                ->thenInvalid('A key\'s "kid" cannot be the empty string; omit it instead.')
+            ->end()
+            ->end();
+    }
+
+    /**
+     * What a `jwe_keys` entry may be bound to: everything that wraps a key,
+     * and everything that encrypts content. Not `dir`, which names how the two
+     * sides agree on a key rather than any key material of its own.
+     *
+     * @return list<string>
+     */
+    private static function jweKeyAlgorithms(): array
+    {
+        return [
+            ...array_values(array_diff(KeyManagementAlgorithms::names(), [KeyManagementAlgorithms::DIRECT])),
+            ...ContentEncryptionAlgorithms::names(),
+        ];
     }
 
     /**
@@ -657,6 +724,39 @@ final class ConfigurationTree
         $algorithms->isRequired();
         $algorithms->requiresAtLeastOneElement();
         self::rejectMaps($algorithms, 'consumers.*.allowed_algorithms');
+
+        // Absent unless written: with no defaults set on it, a consumer that
+        // says nothing about encryption has no `jwe` key at all, which is what
+        // lets the registration ask whether the block is there rather than
+        // whether every option inside it is still at its default.
+        $jwe = $consumer->arrayNode('jwe')
+            ->info('Read this consumer\'s tokens as encrypted ones: a JWE wrapping the signed JWT (RFC 7519 §5.2 nested JWT). Written, it changes what arrives rather than what is checked — the outer layer is decrypted, and what comes out is verified by everything above, unchanged. A bare signed token is then refused, which is the point: an attacker who could strip the encryption and be believed would have been handed the confidentiality of a plaintext token.')
+            ->children();
+
+        $jweKeys = $jwe->arrayNode('keys');
+        $jweKeys->info('Names from the `jwe_keys` section. The key the token\'s outer header names decrypts it, so several here is how an encryption key is rotated — the same shape as `keys`, and the same order: accept the new one, then ask the sender to use it.');
+        $jweKeys->scalarPrototype()->cannotBeEmpty()->end();
+        $jweKeys->isRequired();
+        $jweKeys->requiresAtLeastOneElement();
+        self::rejectMaps($jweKeys, 'consumers.*.jwe.keys');
+
+        $keyManagement = $jwe->arrayNode('allowed_key_management');
+        $keyManagement->info('JOSE `alg` values accepted in the outer header: how the sender and this consumer agree on the key the claims are encrypted with (RFC 7518 §4). "dir" means the configured key is that key; the rest wrap a fresh one.');
+        $keyManagement->enumPrototype()->values(KeyManagementAlgorithms::names())->end();
+        $keyManagement->isRequired();
+        $keyManagement->requiresAtLeastOneElement();
+        $keyManagement->example(['A256KW']);
+        self::rejectMaps($keyManagement, 'consumers.*.jwe.allowed_key_management');
+
+        $contentEncryption = $jwe->arrayNode('allowed_content_encryption');
+        $contentEncryption->info('JOSE `enc` values accepted in the outer header: how the claims themselves are encrypted (RFC 7518 §5). All six are authenticated encryption, so this list keeps nothing dangerous out — it is here because the header of an arriving token must not be what decides how that token is read (RFC 8725 §3.1).');
+        $contentEncryption->enumPrototype()->values(ContentEncryptionAlgorithms::names())->end();
+        $contentEncryption->isRequired();
+        $contentEncryption->requiresAtLeastOneElement();
+        $contentEncryption->example(['A256GCM']);
+        self::rejectMaps($contentEncryption, 'consumers.*.jwe.allowed_content_encryption');
+
+        $jwe->end();
 
         $consumer->scalarNode('realm')
             ->defaultNull()

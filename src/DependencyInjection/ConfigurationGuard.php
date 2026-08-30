@@ -6,6 +6,8 @@ namespace Medzuch\JwtBundle\DependencyInjection;
 
 use InvalidArgumentException;
 use Medzuch\Jwt\Jwt\MediaType;
+use Medzuch\JwtBundle\Algorithm\ContentEncryptionAlgorithms;
+use Medzuch\JwtBundle\Algorithm\KeyManagementAlgorithms;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Oidc\MetadataController;
 use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
@@ -81,9 +83,11 @@ final class ConfigurationGuard
      * setup there is — a private entry and a public entry that carry the same
      * `kid` precisely because they are the same key.
      *
-     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
+     * @param array<string, array{algorithm: string, kid: string|null, ...}> $keys
+     * @param string                                                          $made what a token would have to say which key it was: the verb belongs
+     *                                                                              to the question being asked of the set, and a JWE asks a different one
      */
-    public static function assertKeysAreDistinguishable(string $context, array $keys): void
+    public static function assertKeysAreDistinguishable(string $context, array $keys, string $made = 'signed'): void
     {
         $anonymousByAlgorithm = [];
         $namesByKid = [];
@@ -101,10 +105,11 @@ final class ConfigurationGuard
         foreach ($anonymousByAlgorithm as $algorithm => $names) {
             if (count($names) > 1) {
                 throw new InvalidConfigurationException(sprintf(
-                    '%s uses keys "%s", all bound to %s with no "kid", so a token cannot say which one signed it. Give each of them a kid.',
+                    '%s uses keys "%s", all bound to %s with no "kid", so a token cannot say which one %s it. Give each of them a kid.',
                     $context,
                     implode('", "', $names),
                     $algorithm,
+                    $made,
                 ));
             }
         }
@@ -530,6 +535,136 @@ final class ConfigurationGuard
                 1 === count($unsatisfied) ? 'it' : 'them',
                 implode('/', array_unique($bound)),
             ));
+        }
+    }
+
+    /**
+     * A `dir` key nothing can select is the one way a `jwe_keys` entry is
+     * wrong on its own.
+     *
+     * The library's static resolver takes the `kid` from the header when there
+     * is one and otherwise falls back to the header's `alg` — and for direct
+     * encryption that `alg` is the literal string `dir`, which no key is ever
+     * bound to. So a key that exists to serve `dir` is reachable by `kid` and
+     * by nothing else, and one without a `kid` decrypts nothing, ever.
+     *
+     * The wrapping schemes need no such rule: their keys are bound to the very
+     * `alg` the header names, so the fallback finds them.
+     *
+     * @param array{secret: string, algorithm: string, kid: string|null} $key
+     */
+    public static function assertJweKeyIsSelectable(string $name, array $key): void
+    {
+        if (null !== $key['kid'] || !in_array($key['algorithm'], ContentEncryptionAlgorithms::names(), true)) {
+            return;
+        }
+
+        throw new InvalidConfigurationException(sprintf(
+            'JWE key "%s" is bound to %s, which makes it a "dir" key — the Content Encryption Key itself. Such a key is found by its "kid" and by nothing else, so give it one.',
+            $name,
+            $key['algorithm'],
+        ));
+    }
+
+    /**
+     * Whether a consumer's `jwe` block describes an encrypted token this
+     * consumer could ever open (C12).
+     *
+     * The same two questions {@see assertCanVerify()} asks, in a place where
+     * both have an answer: every key named has to exist, and every algorithm
+     * allowed has to have a key behind it. A JWE asks two more, because it has
+     * two allowlists where a JWS has one — whether every *content* algorithm
+     * allowed can be reached, and whether every key can be selected at all. A
+     * key ruled out by either list is a rotation that will not happen rather
+     * than a spare.
+     *
+     * `dir` is the awkward one throughout: a key for it is bound to the `enc`
+     * it is the Content Encryption Key for, not to the `alg` in the header, so
+     * both lists have to be consulted to say whether it can be reached — and
+     * it is the reason the content list needs checking at all, since anything
+     * that wraps a key wraps one for every `enc` going.
+     *
+     * @param array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>} $jwe
+     * @param array<string, array{secret: string, algorithm: string, kid: string|null}>                                 $keys
+     */
+    public static function assertCanDecrypt(string $context, array $jwe, array $keys): void
+    {
+        $bound = [];
+
+        foreach ($jwe['keys'] as $key) {
+            if (!isset($keys[$key])) {
+                throw new InvalidConfigurationException(sprintf(
+                    '%s decrypts with key "%s", which is not defined under medzuch_jwt.jwe_keys. Defined: %s.',
+                    $context,
+                    $key,
+                    [] === $keys ? 'none' : '"' . implode('", "', array_keys($keys)) . '"',
+                ));
+            }
+
+            $bound[$key] = $keys[$key]['algorithm'];
+        }
+
+        self::assertNamesAreUnique($context, $jwe['keys']);
+        self::assertKeysAreDistinguishable($context, array_intersect_key($keys, array_flip($jwe['keys'])), 'encrypted');
+
+        $direct = array_values(array_intersect($bound, $jwe['allowed_content_encryption']));
+
+        foreach ($jwe['allowed_key_management'] as $algorithm) {
+            $satisfied = KeyManagementAlgorithms::DIRECT === $algorithm
+                ? [] !== $direct
+                : in_array($algorithm, $bound, true);
+
+            if (!$satisfied) {
+                throw new InvalidConfigurationException(sprintf(
+                    '%s allows %s in a token\'s outer header, but none of its JWE keys can be used with it, so such a token could never be decrypted. Its JWE keys are bound to: %s.%s',
+                    $context,
+                    $algorithm,
+                    implode('/', array_unique(array_values($bound))),
+                    KeyManagementAlgorithms::DIRECT === $algorithm
+                        ? sprintf(' A "dir" key is bound to a content-encryption algorithm this consumer also allows (%s).', implode('/', $jwe['allowed_content_encryption']))
+                        : '',
+                ));
+            }
+        }
+
+        // The other direction of the same question, and the one `dir` makes
+        // necessary. Any key-wrapping algorithm wraps a Content Encryption Key
+        // for any `enc`, so where one of those is allowed and has a key behind
+        // it every content algorithm is reachable. Direct encryption has no
+        // such freedom: the key *is* the CEK, bound to one `enc` and refused
+        // for the others by the library — so where `dir` is the only way in,
+        // an `enc` with no key bound to it is a token nothing could open.
+        $wrapping = array_values(array_diff($jwe['allowed_key_management'], [KeyManagementAlgorithms::DIRECT]));
+
+        if ([] === $wrapping) {
+            foreach ($jwe['allowed_content_encryption'] as $contentEncryption) {
+                if (!in_array($contentEncryption, $bound, true)) {
+                    throw new InvalidConfigurationException(sprintf(
+                        '%s allows %s for the content of a token it decrypts with "dir", and none of its JWE keys is bound to it. A "dir" key is the Content Encryption Key itself, so it serves the one algorithm it names and no other. Its JWE keys are bound to: %s.',
+                        $context,
+                        $contentEncryption,
+                        implode('/', array_unique(array_values($bound))),
+                    ));
+                }
+            }
+        }
+
+        foreach ($bound as $key => $algorithm) {
+            $reachable = in_array($algorithm, ContentEncryptionAlgorithms::names(), true)
+                ? in_array(KeyManagementAlgorithms::DIRECT, $jwe['allowed_key_management'], true) && in_array($algorithm, $jwe['allowed_content_encryption'], true)
+                : in_array($algorithm, $jwe['allowed_key_management'], true);
+
+            if (!$reachable) {
+                throw new InvalidConfigurationException(sprintf(
+                    '%s names JWE key "%s", bound to %s, which nothing it allows can use: a token would have to name %s. Allowed here are %s in the outer header and %s for the content.',
+                    $context,
+                    $key,
+                    $algorithm,
+                    in_array($algorithm, ContentEncryptionAlgorithms::names(), true) ? sprintf('"dir" with %s', $algorithm) : $algorithm,
+                    implode('/', $jwe['allowed_key_management']),
+                    implode('/', $jwe['allowed_content_encryption']),
+                ));
+            }
         }
     }
 }

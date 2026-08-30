@@ -6,6 +6,7 @@ namespace Medzuch\JwtBundle\Security;
 
 use Medzuch\Jwt\Exception\AlgorithmNotAllowedException;
 use Medzuch\Jwt\Exception\ClaimValidationException;
+use Medzuch\Jwt\Exception\DecryptionException;
 use Medzuch\Jwt\Exception\ExpiredException;
 use Medzuch\Jwt\Exception\InvalidAudienceException;
 use Medzuch\Jwt\Exception\InvalidHeaderException;
@@ -56,6 +57,18 @@ enum RejectionReason: string
 
     /** The signature does not verify under a key this consumer accepts. */
     case SignatureInvalid = 'signature_invalid';
+
+    /**
+     * The outer layer of an encrypted token would not open: it was not
+     * encrypted to a key this consumer holds, or the ciphertext has been
+     * altered since it was written and the AEAD tag says so.
+     *
+     * Kept apart from {@see self::SignatureInvalid} because they fail in
+     * different halves of the pipeline and are fixed by different people. A
+     * bad signature is a token somebody minted wrong or forged; this is a
+     * sender and a receiver disagreeing about which key is current.
+     */
+    case DecryptionFailed = 'decryption_failed';
 
     /** No key matched the token's `kid`: a rotation half-done, or another issuer's token. */
     case UnknownKey = 'unknown_key';
@@ -122,6 +135,7 @@ enum RejectionReason: string
             $failure instanceof NotYetValidException,
             $failure instanceof IssuedInFutureException => self::NotYetValid,
             $failure instanceof SignatureVerificationException => self::SignatureInvalid,
+            $failure instanceof DecryptionException => self::DecryptionFailed,
             $failure instanceof KeyNotFoundException,
             $failure instanceof KeyMismatchException => self::UnknownKey,
             // Not a rotation half-done but key material that cannot be used —

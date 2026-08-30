@@ -19,6 +19,11 @@ use Throwable;
  * is looking, it is the whole point — the reason, the consumer that decided it,
  * the algorithm and key id the token named, and how long the verifying took.
  *
+ * A row's `enc` is what separates the two ways a claims table can be empty: a
+ * token nothing could decode, and an encrypted one whose claims are real and
+ * behind a key this panel does not hold (C12). Null on every unencrypted token,
+ * which is what it always was before the member existed.
+ *
  * **The token itself is never collected.** Profiler data outlives the request:
  * it is written to disk and served back by a URL. A bearer token in there is a
  * credential in a file, and one that a screenshot in a bug report would carry
@@ -39,7 +44,7 @@ final class JwtDataCollector extends DataCollector
      *
      * @internal to {@see \Medzuch\JwtBundle\Security\TraceableAccessTokenHandler}; an application reads this collector rather than writing to it
      */
-    public function accepted(string $consumer, string $identity, array $claims, ?string $algorithm, ?string $keyId, float $milliseconds): void
+    public function accepted(string $consumer, string $identity, array $claims, ?string $algorithm, ?string $keyId, float $milliseconds, ?string $encryption = null): void
     {
         $this->data['tokens'][] = [
             'consumer' => $consumer,
@@ -49,6 +54,7 @@ final class JwtDataCollector extends DataCollector
             'identity' => $identity,
             'alg' => $algorithm,
             'kid' => $keyId,
+            'enc' => $encryption,
             'duration' => $milliseconds,
             'claims' => $claims,
         ];
@@ -59,7 +65,7 @@ final class JwtDataCollector extends DataCollector
      *
      * @internal to {@see \Medzuch\JwtBundle\Security\TraceableAccessTokenHandler}; an application reads this collector rather than writing to it
      */
-    public function refused(string $consumer, ?RejectionReason $reason, string $detail, ?string $algorithm, ?string $keyId, float $milliseconds, array $claims): void
+    public function refused(string $consumer, ?RejectionReason $reason, string $detail, ?string $algorithm, ?string $keyId, float $milliseconds, array $claims, ?string $encryption = null): void
     {
         $this->data['tokens'][] = [
             'consumer' => $consumer,
@@ -69,6 +75,7 @@ final class JwtDataCollector extends DataCollector
             'identity' => null,
             'alg' => $algorithm,
             'kid' => $keyId,
+            'enc' => $encryption,
             'duration' => $milliseconds,
             'claims' => $claims,
         ];

@@ -58,6 +58,11 @@ has a `.verification` service and no `.signing` one, and a shared secret is both
 bare `medzuch_jwt.key.<key>` is where the half you configured is built and keeps working, but it
 is not in the table — which of the two it means depends on the entry.
 
+**A `jwe_keys` entry has no promised id**, although `medzuch_jwt.jwe_key.<key>` looks like it
+belongs beside those two. The signing rows are there because an application has its own reasons
+to hold the key it signs with; nothing in this documentation asks anyone to decrypt a token by
+hand, and an id promised for a use nobody was given freezes a type for no reader.
+
 **Four ids also answer by argument name**, which is part of the promise: `IdTokenVerifier $partner`
 reaches `medzuch_jwt.id_token.partner`, `TokenDenylistInterface $api` reaches
 `medzuch_jwt.denylist.api`, and both security-event services reach the stream or transmitter of
@@ -69,7 +74,8 @@ suffix naming a part rather than a whole — is wiring, and moves without notice
 
 **Four are deliberately absent although they look like they belong**: `medzuch_jwt.consumer.<consumer>`,
 which is a library consumer or a bare validator depending on whether the consumer names a
-`token_type`; `medzuch_jwt.verifier.<consumer>`, the one the handler is actually given;
+`token_type`; `medzuch_jwt.verifier.<consumer>`, the one the handler is actually given — and
+which is a decrypting decorator in front of one of those where the consumer configures `jwe`;
 `medzuch_jwt.remote_jwks.<set>`, the resolver behind the keys; and `medzuch_jwt.clock`, which
 every dated decision reads. All four are stable and none is
 documented as something to name, and promising an id nobody was told to use freezes the type
@@ -154,11 +160,14 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
   said here rather than discovered. What a dashboard actually stores is the backed value, and
   those do not move: `expired`, `not_yet_valid`, `too_old`, `signature_invalid`, `unknown_key`,
   `algorithm_refused`, `wrong_issuer`, `wrong_audience`, `revoked`, `malformed`,
-  `claims_refused`, `keys_unavailable`, `identity_refused`, `other`.
+  `claims_refused`, `keys_unavailable`, `identity_refused`, `other`, and `decryption_failed`,
+  which is the case C12 added and the demonstration of the paragraph above.
 - **`JwtDataCollector`'s mutators are not yours.** The tracing decorator writes to it; an
   application reads it. The read side is what the table covers, and a panel of your own reads
   rows keyed `consumer`, `verdict` (`accepted` or `refused`), `reason`, `detail`, `identity`,
-  `alg`, `kid`, `duration` and `claims` — keys that may gain company and will not lose members.
+  `alg`, `kid`, `enc`, `duration` and `claims` — keys that may gain company and will not lose
+  members. `enc` is the company C12 brought: null on an unencrypted token, and what separates a
+  row whose claims are empty because nothing decoded from one whose claims are behind a key.
 - **`AssertsBearerChallenges` is a trait**, so its methods land in your test case. A new
   assertion is additive unless you already have a method by that name, which is the one way
   adding to it can break you — new names are chosen to be unlikely, not guaranteed.

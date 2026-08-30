@@ -55,6 +55,12 @@ medzuch_jwt:
         # A remote JWK Set that could not be fetched or parsed — an outage on one side or the other. `warning` by default.
         key_resolution_failed: null # Example: critical
 
+        # An encrypted token whose outer JWE decrypted and authenticated, before anything inside it was read. `debug` by default; read only where a consumer configures `jwe`.
+        decrypted:            null # Example: info
+
+        # An encrypted token that would not decrypt: the wrong key, or ciphertext that has been altered since it was written. `warning` by default, and the one category here that is never the ordinary cost of anything.
+        decryption_failed:    null # Example: critical
+
     # Service id of a PSR-3 logger. Null disables logging entirely.
     logger:               null # Example: monolog.logger.jwt
 
@@ -86,6 +92,21 @@ medzuch_jwt:
             algorithm:            HS256 # One of "HS256"; "HS384"; "HS512"; "RS256"; "RS384"; "RS512"; "ES256"; "ES384"; "ES512"; "EdDSA"
 
             # Key id published in the token header. Required once two keys share an algorithm.
+            kid:                  null
+
+    # Named keys for reading encrypted tokens, referenced by name from a consumer's "jwe" block. Separate from `keys`: those sign and verify, these decrypt, and one key should not do both (RFC 7517 §4.2).
+    jwe_keys:
+
+        # Prototype
+        name:
+
+            # Shared secret, as raw bytes. Its length is fixed by "algorithm" — 16/24/32 bytes for the A128/A192/A256 names, and 32/48/64 for the CBC-HS family, which carries a MAC half (RFC 7518 §5.2.2.1). Use an env reference; a secret is bytes rather than text, so %env(base64:NAME)% is the spelling that survives one. The length cannot be checked while the container is built — the secret is still an env reference then — so a wrong one fails when the key is first built, which `jwt:config:check` is where to do deliberately.
+            secret:               ~ # Required, Example: '%env(base64:JWT_JWE_SECRET)%'
+
+            # What this key is made of. For key wrapping, the `alg` it wraps with (A128KW…A256GCMKW). For "dir", the key is the Content Encryption Key rather than something that wraps one, so name the `enc` it is a key for (A128GCM…A256CBC-HS512) — "dir" itself is not a value here, because no key is made of it.
+            algorithm:            ~ # One of "A128KW"; "A192KW"; "A256KW"; "A128GCMKW"; "A192GCMKW"; "A256GCMKW"; "A128GCM"; "A192GCM"; "A256GCM"; "A128CBC-HS256"; "A192CBC-HS384"; "A256CBC-HS512", Required, Example: A256KW
+
+            # Key id the sender names in the token's outer header. Required as soon as two of a consumer's keys share an algorithm — and for "dir" always, because a resolver falling back to the header's `alg` would be looking for a key bound to "dir", which no key is.
             kid:                  null
 
     # Named remote JWK Sets, referenced by name from anything that verifies: consumers, ID token registrations and security event consumers.
@@ -171,6 +192,24 @@ medzuch_jwt:
 
             # JOSE `alg` values accepted. Anything else is refused before a signature is checked.
             allowed_algorithms:   [] # Required
+
+            # Read this consumer's tokens as encrypted ones: a JWE wrapping the signed JWT (RFC 7519 §5.2 nested JWT). Written, it changes what arrives rather than what is checked — the outer layer is decrypted, and what comes out is verified by everything above, unchanged. A bare signed token is then refused, which is the point: an attacker who could strip the encryption and be believed would have been handed the confidentiality of a plaintext token.
+            jwe:
+
+                # Names from the `jwe_keys` section. The key the token's outer header names decrypts it, so several here is how an encryption key is rotated — the same shape as `keys`, and the same order: accept the new one, then ask the sender to use it.
+                keys:                 [] # Required
+
+                # JOSE `alg` values accepted in the outer header: how the sender and this consumer agree on the key the claims are encrypted with (RFC 7518 §4). "dir" means the configured key is that key; the rest wrap a fresh one.
+                allowed_key_management: [] # Required
+
+                    # Example:
+                    # - A256KW
+
+                # JOSE `enc` values accepted in the outer header: how the claims themselves are encrypted (RFC 7518 §5). All six are authenticated encryption, so this list keeps nothing dangerous out — it is here because the header of an arriving token must not be what decides how that token is read (RFC 8725 §3.1).
+                allowed_content_encryption: [] # Required
+
+                    # Example:
+                    # - A256GCM
 
             # Protection space named in the `WWW-Authenticate` header of this consumer's entry point and scope denials (RFC 6750 §3). Null uses the consumer's name. Symfony has its own `access_token.realm` for the header it sends itself; keep the two equal. A literal, not an env reference: the value is validated, which is what stops a quote or a newline from costing the header, and Symfony refuses to validate a placeholder.
             realm:                null # Example: api

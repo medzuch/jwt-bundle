@@ -231,7 +231,7 @@ default and adds no runtime cost when unconfigured.
 | C9 | Revocation: `TokenDenylistInterface` checked on `jti`, PSR-16 cache implementation, and the denylist registered as a service the application can revoke through. No `NullDenylist`: unconfigured means no service and no lookup, which is the same default said with less | bundle | T2 |
 | C10 | Freshness policy: `max_token_age` (reject old `iat` even if `exp` is generous), configurable `leeway`, injectable PSR-20 clock. The max age is the handler's own check rather than the library's — `ValidatorBuilder` has no notion of one — and carries its own `RejectionReason`, since an application's ceiling and an issuer's expiry are different facts about different clocks | library validator + handler | T1 (leeway/clock), T2 (max age) |
 | C11 | Multi-issuer / multi-tenant: pick the consumer by the token's `iss` (or by host/tenant resolver) before validation, with a strict allowlist | `CompositeResolver`, bundle dispatcher | T3 |
-| C12 | Encrypted (JWE) and nested JWT support on the consumer side | `NestedJwtParser`, `Decrypter` | T3 |
+| C12 | Encrypted (JWE) and nested JWT support on the consumer side. **Landed in Phase 5** as `consumers.<name>.jwe` over a `jwe_keys` registry, as a decorator in front of the verifier the consumer already had — so encryption changes what arrives and nothing about what is then checked. A bare signed token is refused once the block is there, with no opt-out: an attacker able to strip the outer layer and be believed would have taken the confidentiality for the cost of two segments. Symmetric key management only (`dir` and the AES key-wrapping schemes); `Decrypter` rather than `NestedJwtParser`, whose one entry point would verify the inner signature a second time under a second copy of the same allowlist | `Decrypter` | T3 |
 | C13 | `ScopeVoter` + `#[IsGranted('SCOPE_x')]`-style checks and an `is_granted_scope()` expression function. Scopes are read from the `scope` claim — the RFC's delimited string or a JSON list — through a `ProvidesScopes` user, so what decides is the user rather than the mode: `claims` builds one, a `custom` factory can, and so can a store-loaded user. The claim name is not configurable; `scp` and its like belong to a custom factory | Symfony voters | T2 |
 | C14 | Audience policy per consumer: `any` (RFC 7519 §4.1.3, the default) or `exclusive` — refuse a token addressed to anyone else, as RFC 9068 §3 asks. Not "exact match": a consumer answering to two names is addressed by either, so requiring the token to name *all* of them would refuse a legitimate one | library consumer + `AccessTokenHandler` | T2 |
 | C15 | Anonymous-friendly mode: verify a token if present, don't 401 when absent (public endpoints with optional identity). **Landed in Phase 5 as firewall configuration, not code**: Symfony's `access_token` authenticator declines a request carrying no token rather than failing it, so an access rule exempting the path is the whole feature. The authenticator this row allowed for was not needed — see the correction to DEC-1 in §9 | firewall config (documented + pinned by tests) | T3 |
@@ -247,7 +247,7 @@ default and adds no runtime cost when unconfigured.
 | I5 | Login integration: an authentication success handler that returns `{ "access_token": ..., "token_type": "Bearer", "expires_in": ... }`, pluggable into `json_login`/`form_login` | Symfony + I1 | T1 |
 | I6 | `IdTokenIssuer` for apps acting as an OIDC provider | `IdTokenProfile::issuer()` | T3 |
 | I7 | Security Event Token issuer (emit RISC/CAEP events to relying parties). **Landed in Phase 5** as `security_events.issuers`. Hands back the library's builder rather than an argument list, since what varies between two SETs is the events; delivery (RFC 8935 push, RFC 8936 poll) stays the application's | `SetProfile::issuer()` | T3 |
-| I8 | Encrypted/nested issuance (sign-then-encrypt) | `NestedJwtBuilder` | T3 |
+| I8 | Encrypted/nested issuance (sign-then-encrypt). The half C12 does not cover: until it lands, an encrypted token this bundle reads was minted by somebody else, or by the library called directly — which is what `TestTokenFactory::encryptedWith()` does | `NestedJwtBuilder` | T3 |
 | I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered | bundle | T3 (see §8) |
 
 ### 3.3 Key management
@@ -268,7 +268,7 @@ default and adds no runtime cost when unconfigured.
 
 | # | Capability | Backed by | Tier |
 |---|---|---|---|
-| O1 | PSR-3 logging on a dedicated `jwt` Monolog channel, with the library's redacting `SecurityLog` and configurable levels. `log_levels` covers the five categories this bundle can emit, as named arguments so an unset one keeps the library's default rather than a copy of it; the two JWE categories get no option until there is a JWE to log about | `SecurityLog`, `LogLevels` | T1 |
+| O1 | PSR-3 logging on a dedicated `jwt` Monolog channel, with the library's redacting `SecurityLog` and configurable levels. `log_levels` covers all seven categories the library emits, as named arguments so an unset one keeps the library's default rather than a copy of it; the two JWE ones arrived with C12, which is the first thing here with a JWE to log about | `SecurityLog`, `LogLevels` | T1 |
 | O2 | Profiler panel: every token a consumer was shown, the verdict and the O3 reason behind a refusal, the `alg` and `kid` it named, the identity it would have authenticated as, and the milliseconds spent. The token itself is never collected — profiler data outlives the request on disk. Wired by decorating the handler the firewall calls, which is a `ChildDefinition` of ours rather than our service | `DataCollector` | T2 |
 | O3 | `JwtVerifiedEvent` and `JwtRejectedEvent`, the latter carrying a `RejectionReason` — a small stable vocabulary rather than a case per library exception, since a dashboard should not have to learn a new name every time the library grows a leaf. `keys_unavailable` is kept apart from every other reason: an unreachable issuer is an outage, not a verdict on the token | EventDispatcher | T2 |
 | O4 | RFC 6750 `WWW-Authenticate` on refusals. Symfony already answers a rejected token with `error="invalid_token"` and a generic description, so what the bundle adds is the challenge for a request carrying no credentials — no `error`, per §3 — and the `insufficient_scope` 403 naming the scope that would have sufficed (§3.1) | entry point + access denied handler | T2 |
@@ -300,8 +300,11 @@ default and adds no runtime cost when unconfigured.
   cached machine token to internal API calls.
 - **Introspection fallback (RFC 7662)** for deployments mixing JWT and opaque
   tokens behind one firewall.
-- **Proof-of-possession key generation** and JWE-encrypted claims for tokens
-  that traverse untrusted intermediaries (C12/I8).
+- **Proof-of-possession key generation**. JWE-encrypted claims for tokens that
+  traverse untrusted intermediaries are C12, landed in Phase 5 on the consumer
+  side; I8 is the issuing half, and encrypting to a third party's public key
+  (ECDH-ES) waits on a registry of asymmetric encryption keys and a way to
+  publish this application's own.
 
 ---
 
@@ -357,6 +360,12 @@ medzuch_jwt:
       algorithm: RS256
       kid: '2025-01'
 
+  jwe_keys:                          # keys for encrypted tokens; separate from `keys` (RFC 7517 §4.2)
+    payload_2026:
+      secret: '%env(base64:JWT_JWE_SECRET)%'
+      algorithm: A256KW
+      kid: 'enc-2026'
+
   remote_jwks:                       # a set the issuer publishes, named once and shared
     partner_idp:
       uri: 'https://idp.example.com/.well-known/jwks.json'
@@ -385,6 +394,10 @@ medzuch_jwt:
       leeway: 0
       max_token_age: 300
       denylist: { cache_pool: cache.app }
+      jwe:                           # read this consumer's tokens as encrypted ones (C12)
+        keys: [payload_2026]
+        allowed_key_management: [A256KW]
+        allowed_content_encryption: [A256GCM]
       user:
         mode: claims                 # provider (default) | claims | custom
         identity_claim: sub
@@ -443,7 +456,12 @@ Design notes:
   anything else — so the error names the offending config key instead of
   surfacing at the first request as a token problem.
 - **`kid` is explicit, never derived** (DEC-5 in §9): optional for a single-key
-  setup, required as soon as two keys share an algorithm.
+  setup, required as soon as two keys share an algorithm — and always, for a
+  `dir` encryption key, which nothing else can select.
+- **Encryption keys are a registry of their own.** `keys` sign and verify,
+  `jwe_keys` decrypt; RFC 7517 §4.2 asks that one key serve one purpose, the two
+  bind to algorithms from different registries, and the JWK Set publisher would
+  otherwise have to learn to skip half of what it found.
 
 ---
 
