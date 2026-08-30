@@ -856,12 +856,13 @@ a listener that logs them logs whatever they hold: subjects, emails, tenant ids.
 | `not_yet_valid` | `nbf` or `iat` is in the future | clock skew; raise `leeway` if it is small and constant |
 | `too_old` | `iat` is further back than `max_token_age` allows, `exp` notwithstanding | this consumer's ceiling, not the issuer's lifetime |
 | `signature_invalid` | no accepted key verifies it | somebody is trying something |
+| `decryption_failed` | an encrypted token's outer layer would not open | the sender and this consumer disagree about which key is current, or the ciphertext was altered |
 | `unknown_key` | no key matches the token's `kid` | a rotation that has not finished, or another issuer's token |
 | `algorithm_refused` | the `alg` is not in `allowed_algorithms` | a client misconfigured, or an algorithm-confusion attempt |
 | `wrong_issuer` | `iss` is not the configured one | a token from somewhere else |
 | `wrong_audience` | `aud` does not name this consumer, or names another too | the token was minted for a different service |
 | `revoked` | a denylist withdrew this `jti` | working as intended |
-| `malformed` | not a JWT this consumer can read, `typ` included | a client sending the wrong thing |
+| `malformed` | not a JWT this consumer can read, `typ` included — and, for an encrypted consumer, a missing or wrong `cty`, a replicated claim that disagrees, or a bare signed token where a JWE was expected | a client sending the wrong thing |
 | `claims_refused` | a claim is missing, mistyped or refused — the identity claim included | usually a profile mismatch |
 | `keys_unavailable` | the key set would not fetch, or what came back is not usable key material | **an outage, not a verdict on the token** |
 | `identity_refused` | the token verified and named somebody, and the application refused them | your `custom` factory said no |
@@ -919,6 +920,14 @@ and leaving `accepted` at `debug` is how it stays out of production.
 **Set them where they change what you keep, not everywhere.** `verification_failed` and
 `key_resolution_failed` are the two worth watching: one is somebody trying something, the other
 is an outage on the issuer's side rather than a verdict on any token.
+
+**An `accepted` line is not a request that was allowed through.** It says the library finished
+with the token in front of it, and this bundle then goes on asking: a denylist can withdraw it,
+`max_token_age` can refuse it, an `exclusive` audience can, a `custom` factory can, and on an
+encrypted consumer a replicated claim that disagrees with the token inside can. So one request
+may emit `decrypted`, then `accepted`, and still end in a 401 — alerting that treats the accepted
+line as the verdict will count refusals as successes. `JwtVerifiedEvent` is what only fires when
+the whole of this bundle is satisfied.
 
 The setting is application-wide: it reaches every consumer, every ID-token registration and every
 remote JWK Set at once, so two consumers in one application cannot be logged at different levels.
@@ -1182,6 +1191,10 @@ $ php bin/console jwt:config:check
 A secret is bytes rather than text, so `%env(base64:NAME)%` is the spelling that survives an
 environment variable. `php -r 'echo base64_encode(random_bytes(32));'` produces one.
 
+Every entry is checked, including one no consumer names yet — a key left behind after a rotation
+fails the deploy gate rather than waiting to be noticed. Delete the entry when you delete the
+secret.
+
 ### `dir`, and why it needs a `kid`
 
 With `dir` there is no wrapping: the configured key *is* the content key, so it is bound to the
@@ -1247,6 +1260,24 @@ Both are tried by `kid`, so tokens sealed to either still open. Once nothing is 
 one — one token lifetime after the senders moved — drop it. Two keys with no `kid` between them
 are refused at build for the reason a signing pair is: nothing could say which one a token meant.
 
+### Repeating a claim in the outer header
+
+RFC 7519 §5.3 lets a sender copy a claim into the outer header — `iss`, usually, so an
+intermediary can route without holding a key — and requires the copy to agree with the token
+inside. This consumer enforces that, and a disagreement is refused as `malformed`.
+
+**The comparison is exact.** An outer `"aud": "https://api.test"` beside an inner
+`aud: ["https://api.test"]` is a disagreement here, because the producer chose the inner shape
+and a receiver that normalised one side would be deciding that two different documents said the
+same thing. JOSE peers do write the string form, so a sender replicating `aud` has to replicate
+it as it stands.
+
+A name in the outer header with no claim of that name inside is not compared at all: the section
+is about a claim that was repeated, and a JWE protected header is also where a sender puts things
+that were never claims. Registered JOSE header parameters — `alg`, `enc`, `kid`, `typ` and the
+rest — are skipped whatever the token inside carries, so a claim of your own that happens to be
+called `kid` is not measured against the `kid` that said which key to decrypt with.
+
 ### What the allowlists are for
 
 `allowed_key_management` and `allowed_content_encryption` are what this consumer will accept in
@@ -1268,6 +1299,11 @@ name in a list. RSA key encryption is not coming: the library implements none, d
 
 **Only the compact serialization.** The JSON serializations carry several recipients and
 unprotected headers, which a bearer credential in an `Authorization` header has no use for.
+
+**Write `cty` as `JWT` or `application/jwt`, not `application/JWT`.** The library compares media
+types with the case kept after the prefix (medzuch/jwt-php#62), so the mixed-case long form is
+refused as `malformed` until that is fixed. Nothing here works around it: a second implementation
+of media-type comparison is a worse problem than the one it solves.
 
 **Encrypted ID tokens and encrypted security events** are not configurable: `jwe` belongs to
 `consumers`, and the OIDC and SET registrations verify signatures only.

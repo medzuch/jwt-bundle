@@ -80,6 +80,9 @@
                         <tr><th>Why</th><td>{{ token.detail }}</td></tr>
                     {% endif %}
                     <tr><th>Algorithm</th><td>{{ token.alg ?? '(unreadable)' }}</td></tr>
+                    {% if token.enc is defined and token.enc is not null %}
+                        <tr><th>Content encryption</th><td>{{ token.enc }}</td></tr>
+                    {% endif %}
                     <tr><th>Key id</th><td>{{ token.kid ?? '(none named)' }}</td></tr>
                     <tr><th>Took</th><td>{{ token.duration|number_format(2) }} ms</td></tr>
                 </tbody>
@@ -87,7 +90,12 @@
 
             <h4>Claims, as the token has them</h4>
 
-            {% if token.claims is empty %}
+            {% if token.claims is empty and token.enc is defined and token.enc is not null %}
+                {# An encrypted token (C12): the outer header above read without a key
+                   and the claims did not. Saying "this is not a JWT" here would be
+                   describing a token this consumer may well have accepted. #}
+                <div class="empty"><p>The claims are encrypted. The header above is the envelope; what is inside it needs the key the consumer holds.</p></div>
+            {% elseif token.claims is empty %}
                 <div class="empty"><p>Nothing could be decoded: this is not a JWT.</p></div>
             {% else %}
                 <table>

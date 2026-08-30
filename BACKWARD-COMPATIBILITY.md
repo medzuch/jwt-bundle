@@ -165,7 +165,9 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
 - **`JwtDataCollector`'s mutators are not yours.** The tracing decorator writes to it; an
   application reads it. The read side is what the table covers, and a panel of your own reads
   rows keyed `consumer`, `verdict` (`accepted` or `refused`), `reason`, `detail`, `identity`,
-  `alg`, `kid`, `duration` and `claims` — keys that may gain company and will not lose members.
+  `alg`, `kid`, `enc`, `duration` and `claims` — keys that may gain company and will not lose
+  members. `enc` is the company C12 brought: null on an unencrypted token, and what separates a
+  row whose claims are empty because nothing decoded from one whose claims are behind a key.
 - **`AssertsBearerChallenges` is a trait**, so its methods land in your test case. A new
   assertion is additive unless you already have a method by that name, which is the one way
   adding to it can break you — new names are chosen to be unlikely, not guaranteed.

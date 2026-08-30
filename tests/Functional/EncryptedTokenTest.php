@@ -7,6 +7,7 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 use DateInterval;
 use DateTimeImmutable;
 use Medzuch\Jwt\Algorithm\ContentEncryptionAlgorithm;
+use Medzuch\Jwt\Algorithm\Encryption\A128Gcm;
 use Medzuch\Jwt\Algorithm\Encryption\A256CbcHs512;
 use Medzuch\Jwt\Algorithm\Encryption\A256Gcm;
 use Medzuch\Jwt\Algorithm\KeyManagement\A128Kw;
@@ -18,19 +19,23 @@ use Medzuch\Jwt\Jwe\Encrypter;
 use Medzuch\Jwt\Jws\CompactJws;
 use Medzuch\Jwt\Jwt\JwtBuilder;
 use Medzuch\Jwt\Jwt\NestedJwtBuilder;
+use Medzuch\Jwt\Jwt\NestedJwtParser;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\OctKey;
+use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
 use Medzuch\JwtBundle\Security\RejectedTokenException;
 use Medzuch\JwtBundle\Security\RejectionReason;
 use Medzuch\JwtBundle\Security\Verification\NestedTokenVerifier;
+use Medzuch\JwtBundle\Tests\Functional\App\InMemoryDenylist;
 use Medzuch\JwtBundle\Tests\Functional\App\RecordsVerification;
 use Medzuch\JwtBundle\Tests\Functional\App\SecuredKernel;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestDox;
+use ReflectionClass;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Symfony\Component\HttpFoundation\Response;
@@ -215,13 +220,65 @@ final class EncryptedTokenTest extends WebTestCase
     }
 
     /**
+     * The claim the decorator makes, at the three places it would be easiest to
+     * have quietly lost: the checks the handler runs *after* the library is
+     * finished with the token. An expired token proves the library's own half
+     * still runs; these prove the bundle's does.
+     *
+     * @param array<string, mixed>                  $consumer
+     * @param callable(): string                    $token
+     */
+    #[DataProvider('innerPostures')]
+    #[TestDox('a sealed token is still judged by the consumer\'s $posture')]
+    public function testThePostureBehindTheEnvelopeStillRuns(string $posture, array $consumer, callable $token, RejectionReason $expected): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(consumer: $consumer)]);
+
+        self::assertSame($expected, self::refusal($token()), $posture);
+    }
+
+    /**
+     * @return iterable<string, array{string, array<string, mixed>, callable(): string, RejectionReason}>
+     */
+    public static function innerPostures(): iterable
+    {
+        yield 'exclusive audience' => [
+            'exclusive audience policy',
+            ['audience_policy' => 'exclusive'],
+            static fn(): string => self::sealed(self::signed(audience: [self::AUDIENCE, 'https://other.test'])),
+            RejectionReason::WrongAudience,
+        ];
+
+        yield 'max token age' => [
+            'ceiling on how old a token may be',
+            ['max_token_age' => 60],
+            static fn(): string => self::sealed(self::signed(issuedAt: new DateTimeImmutable('-2 hours'), expiresAt: new DateTimeImmutable('+2 hours'))),
+            RejectionReason::TooOld,
+        ];
+
+        yield 'denylist' => [
+            'denylist',
+            ['denylist' => ['service' => 'test.denylist']],
+            static function (): string {
+                $denylist = self::getContainer()->get('test.denylist');
+                self::assertInstanceOf(InMemoryDenylist::class, $denylist);
+                $denylist->revoke('withdrawn', new DateTimeImmutable('+1 hour'));
+
+                return self::sealed(self::signed(jwtId: 'withdrawn'));
+            },
+            RejectionReason::Revoked,
+        ];
+    }
+
+    /**
      * RFC 7515 §4.1.9 makes the `application/` prefix optional on the wire, so
      * the prefixed spelling of the same media type is the same answer. The
      * comparison is the library's own, which is why the mixed-case prefixed
      * form is not asserted here: `MediaType::equivalent()` lowercases the
      * whole value on one branch and only the prefix on the other, so
-     * `application/JWT` and `JWT` come out unequal. Worth fixing upstream;
-     * not worth a second implementation of media-type comparison here.
+     * `application/JWT` and `JWT` come out unequal — medzuch/jwt-php#62. This
+     * asserts the spelling that behaves; a second implementation of media-type
+     * comparison in this bundle would be the wrong fix.
      */
     #[TestDox('"application/jwt" says the same thing as "JWT"')]
     public function testContentTypeIsComparedAsAMediaType(): void
@@ -274,7 +331,7 @@ final class EncryptedTokenTest extends WebTestCase
     #[TestDox('a consumer with a token_type of its own decrypts too')]
     public function testCustomTokenTypeDecrypts(): void
     {
-        self::bootKernel(['medzuch_jwt' => self::configuration(tokenType: 'vnd.acme.session+jwt')]);
+        self::bootKernel(['medzuch_jwt' => self::configuration(consumer: ['token_type' => 'vnd.acme.session+jwt'])]);
 
         $custom = (string) JwtBuilder::create()
             ->type('vnd.acme.session+jwt')
@@ -292,6 +349,53 @@ final class EncryptedTokenTest extends WebTestCase
         self::assertSame(RejectionReason::Malformed, self::refusal(self::sealed(self::signed())));
     }
 
+    /**
+     * The skip list is a copy of the one inside the library's own nested
+     * parser, and a copy is only safe while it stays a copy. Reflection rather
+     * than a second reading of the RFCs: what matters is that the two agree,
+     * and drift shows up in production as a token refused for agreeing with
+     * itself, which is a hard sentence to arrive at from a stack trace.
+     *
+     * Skipped rather than failed if the upstream const is renamed or made
+     * public — that is a change to somebody else's private API, not a defect
+     * here, and a red suite would say the wrong thing about it.
+     */
+    #[TestDox('the JOSE header parameters skipped here are the ones the library skips')]
+    public function testTheSkipListHasNotDriftedFromTheLibrary(): void
+    {
+        $upstream = new ReflectionClass(NestedJwtParser::class);
+
+        if (!$upstream->hasConstant('JOSE_HEADER_PARAMETERS')) {
+            self::markTestSkipped('the library no longer keeps this list under that name');
+        }
+
+        $ours = new ReflectionClass(NestedTokenVerifier::class);
+
+        self::assertSame(
+            $upstream->getConstant('JOSE_HEADER_PARAMETERS'),
+            $ours->getConstant('JOSE_HEADER_PARAMETERS'),
+            'the RFC 7519 §5.3 skip list has drifted from the library\'s',
+        );
+    }
+
+    /**
+     * §5.3 constrains a claim that was *repeated*, which means present on both
+     * sides. A name in the outer header alone is not a disagreement, and it is
+     * not treated as one — a JWE protected header is also where a sender puts
+     * things that were never claims, and refusing those would refuse tokens the
+     * RFCs allow. The library's own nested parser draws the line in the same
+     * place.
+     */
+    #[TestDox('a header name with no claim of that name inside is not a disagreement')]
+    public function testHeaderNamesWithNoClaimAreNotCompared(): void
+    {
+        self::bootKernel();
+
+        $token = self::sealed(self::signed(), ['routing_hint' => 'eu-west']);
+
+        self::assertSame('user-42', self::handler()->getUserBadgeFrom($token)->getUserIdentifier());
+    }
+
     #[TestDox('direct encryption reaches its key by kid')]
     public function testDirectEncryption(): void
     {
@@ -306,6 +410,34 @@ final class EncryptedTokenTest extends WebTestCase
             key: OctKey::fromBinary(self::WRAPPING, 'A256GCM', self::KID),
             keyManagement: new Dir(),
         );
+
+        self::assertSame('user-42', self::handler()->getUserBadgeFrom($token)->getUserIdentifier());
+    }
+
+    /**
+     * The other side of the rule that refuses a content algorithm with no key
+     * behind it: a key that *wraps* one wraps it for any content algorithm
+     * going, so a consumer allowing a wrapping scheme beside `dir` may allow a
+     * content algorithm no `dir` key names — and a token using that pair opens.
+     */
+    #[TestDox('a wrapping key covers a content algorithm no direct key is bound to')]
+    public function testWrappingCoversEveryContentAlgorithm(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(
+            [
+                'keys' => ['sealed', 'direct'],
+                'allowed_key_management' => ['dir', 'A256KW'],
+                'allowed_content_encryption' => ['A256GCM', 'A128GCM'],
+            ],
+            [
+                'sealed' => ['secret' => self::WRAPPING, 'algorithm' => 'A256KW', 'kid' => self::KID],
+                'direct' => ['secret' => self::WRAPPING, 'algorithm' => 'A256GCM', 'kid' => 'dir-1'],
+            ],
+        )]);
+
+        // A128GCM has no key of its own: the wrapped Content Encryption Key is
+        // generated per token, and the configured key only unwraps it.
+        $token = self::sealed(self::signed(), contentEncryption: new A128Gcm());
 
         self::assertSame('user-42', self::handler()->getUserBadgeFrom($token)->getUserIdentifier());
     }
@@ -389,16 +521,28 @@ final class EncryptedTokenTest extends WebTestCase
     }
 
     /**
-     * @param array<string, mixed> $claims
+     * @param array<string, mixed>          $claims
+     * @param string|non-empty-list<string> $audience
      */
-    private static function signed(?DateTimeImmutable $expiresAt = null, string $subject = 'user-42', array $claims = []): string
-    {
-        $builder = AccessTokenProfile::issuer(self::ISSUER, new Hs256(), HmacKey::fromBinary(self::SECRET, 'HS256'))
+    private static function signed(
+        ?DateTimeImmutable $expiresAt = null,
+        string $subject = 'user-42',
+        array $claims = [],
+        string|array $audience = self::AUDIENCE,
+        ?DateTimeImmutable $issuedAt = null,
+        ?string $jwtId = null,
+    ): string {
+        // Dated by a clock of its own where the case needs an `iat` in the
+        // past: `max_token_age` reads that claim, and a token minted now is
+        // never too old however generous the ceiling.
+        $clock = null === $issuedAt ? null : FrozenClock::at($issuedAt->format(DATE_ATOM));
+
+        $builder = AccessTokenProfile::issuer(self::ISSUER, new Hs256(), HmacKey::fromBinary(self::SECRET, 'HS256'), $clock)
             ->issue()
             ->subject($subject)
-            ->audience(self::AUDIENCE)
+            ->audience($audience)
             ->clientId('test-client')
-            ->jwtId(bin2hex(random_bytes(8)));
+            ->jwtId($jwtId ?? bin2hex(random_bytes(8)));
 
         foreach ($claims as $name => $value) {
             $builder = $builder->withClaim($name, $value);
@@ -410,27 +554,26 @@ final class EncryptedTokenTest extends WebTestCase
     /**
      * @param array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>}|null $jwe
      * @param array<string, array{secret: string, algorithm: string, kid?: string}>|null                                    $jweKeys
+     * @param array<string, mixed>                                                                                          $consumer options this consumer sets on top of the defaults below
      *
      * @return array<string, mixed>
      */
-    private static function configuration(?array $jwe = null, ?array $jweKeys = null, ?string $tokenType = null): array
+    private static function configuration(?array $jwe = null, ?array $jweKeys = null, array $consumer = []): array
     {
-        $consumer = [
-            'issuer' => self::ISSUER,
-            'audience' => self::AUDIENCE,
-            'keys' => ['default'],
-            'allowed_algorithms' => ['HS256'],
-            'jwe' => $jwe ?? [
-                'keys' => ['sealed'],
-                'allowed_key_management' => ['A256KW'],
-                'allowed_content_encryption' => ['A256GCM'],
-            ],
-        ];
-
         return [
             'keys' => ['default' => ['hmac' => self::SECRET]],
             'jwe_keys' => $jweKeys ?? ['sealed' => ['secret' => self::WRAPPING, 'algorithm' => 'A256KW', 'kid' => self::KID]],
-            'consumers' => ['api' => null === $tokenType ? $consumer : $consumer + ['token_type' => $tokenType]],
+            'consumers' => ['api' => $consumer + [
+                'issuer' => self::ISSUER,
+                'audience' => self::AUDIENCE,
+                'keys' => ['default'],
+                'allowed_algorithms' => ['HS256'],
+                'jwe' => $jwe ?? [
+                    'keys' => ['sealed'],
+                    'allowed_key_management' => ['A256KW'],
+                    'allowed_content_encryption' => ['A256GCM'],
+                ],
+            ]],
         ];
     }
 

@@ -102,6 +102,15 @@ final class NestedTokenVerifier implements TokenVerifierInterface
      * happens to begin with three base64url segments — is refused for what it
      * says it is rather than admitted for what it looks like.
      *
+     * **After decryption on purpose, although the header is parsed before it.**
+     * Checking first would fail marginally sooner and would name a missing
+     * `cty` even where the key is also wrong. It would also mean answering a
+     * question about a header nothing has authenticated yet: until the AEAD tag
+     * verifies, the protected header is a claim somebody made rather than a
+     * fact, and this consumer says nothing about a token's contents before
+     * then. Nothing is admitted by the wait — the plaintext still cannot be
+     * reached without the key, and this still runs before it is read.
+     *
      * @param array<string, mixed> $header
      *
      * @throws InvalidHeaderException

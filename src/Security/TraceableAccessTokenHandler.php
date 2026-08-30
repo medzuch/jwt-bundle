@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Security;
 
 use Medzuch\Jwt\Exception\JwtException;
+use Medzuch\Jwt\Jwe\CompactSerializer as JweCompactSerializer;
 use Medzuch\Jwt\Jwt\JwtParser;
 use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
@@ -41,7 +42,7 @@ final class TraceableAccessTokenHandler implements AccessTokenHandlerInterface
         // Described first, then timed: reading the header is work the profiler
         // asked for, and a duration presented as "spent verifying" should not
         // include the decorator that measured it.
-        [$algorithm, $keyId, $claims] = self::describe($accessToken);
+        [$algorithm, $keyId, $claims, $encryption] = self::describe($accessToken);
         $started = hrtime(true);
 
         try {
@@ -59,12 +60,13 @@ final class TraceableAccessTokenHandler implements AccessTokenHandlerInterface
                 $keyId,
                 self::since($started),
                 $claims,
+                $encryption,
             );
 
             throw $failure;
         }
 
-        $this->collector->accepted($this->consumer, $badge->getUserIdentifier(), $claims, $algorithm, $keyId, self::since($started));
+        $this->collector->accepted($this->consumer, $badge->getUserIdentifier(), $claims, $algorithm, $keyId, self::since($started), $encryption);
 
         return $badge;
     }
@@ -75,18 +77,54 @@ final class TraceableAccessTokenHandler implements AccessTokenHandlerInterface
      * has no verified claims to show, and what it *said* is exactly what its
      * reader needs to see.
      *
-     * @return array{string|null, string|null, array<string, mixed>}
+     * An encrypted token (C12) has an outer header that reads without a key and
+     * claims that do not, so it answers with the first and an empty second. The
+     * `enc` it comes back with is what tells the panel those two facts apart —
+     * without it, a token this consumer decrypted and accepted would be shown
+     * under the sentence reserved for something that is not a JWT at all.
+     *
+     * This runs on the bearer string before the handler is called, so the
+     * claims inside an encrypted token are not available here even where the
+     * consumer went on to read them: the key belongs to the consumer, and a
+     * decorator that decrypted a second time to fill in a panel would be doing
+     * the expensive half of the work twice on every profiled request.
+     *
+     * @return array{string|null, string|null, array<string, mixed>, string|null}
      */
     private static function describe(string $token): array
     {
         try {
             $parsed = JwtParser::parse($token);
+
+            return [$parsed->header->algorithm(), $parsed->header->keyId(), $parsed->unverifiedClaims->all(), null];
         } catch (JwtException) {
-            // Not a JWT at all, which the panel shows as the refusal it caused.
-            return [null, null, []];
         }
 
-        return [$parsed->header->algorithm(), $parsed->header->keyId(), $parsed->unverifiedClaims->all()];
+        try {
+            $jwe = JweCompactSerializer::deserialize($token);
+        } catch (JwtException) {
+            // Not a JWT at all, which the panel shows as the refusal it caused.
+            return [null, null, [], null];
+        }
+
+        return [self::headerString($jwe->header, 'alg'), self::headerString($jwe->header, 'kid'), [], self::headerString($jwe->header, 'enc')];
+    }
+
+    /**
+     * A JWE header is a plain array rather than the library's `Header`, so
+     * reading a member out of it is a narrowing rather than a property access.
+     * The serializer has already refused a non-string `alg`, `enc` or `kid`, so
+     * the only value this really answers for is an absent one — a token naming
+     * no key, which is how a single-key consumer works. The library narrows the
+     * same three members the same way, in the same place, for the same reason.
+     *
+     * @param array<string, mixed> $header
+     */
+    private static function headerString(array $header, string $name): ?string
+    {
+        $value = $header[$name] ?? null;
+
+        return is_string($value) ? $value : null;
     }
 
     /**

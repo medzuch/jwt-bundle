@@ -512,6 +512,13 @@ final class ConfigurationValidationTest extends KernelTestCase
             '/A "dir" key is bound to a content-encryption algorithm this consumer also allows \(A128GCM\)/',
         ];
 
+        yield 'dir with an unbacked content algorithm' => [
+            'a consumer decrypting only with "dir" and allowing a content algorithm no key is bound to',
+            ['sealed' => ['secret' => self::JWE_SECRET, 'algorithm' => 'A256GCM', 'kid' => 'enc-1']],
+            ['keys' => ['sealed'], 'allowed_key_management' => ['dir'], 'allowed_content_encryption' => ['A256GCM', 'A128GCM']],
+            '/allows A128GCM for the content of a token it decrypts with "dir", and none of its JWE keys is bound to it/',
+        ];
+
         yield 'key nothing allows' => [
             'a key bound to an algorithm the consumer does not allow',
             ['sealed' => $wrapping, 'spare' => ['secret' => substr(self::JWE_SECRET, 0, 24), 'algorithm' => 'A192KW', 'kid' => 'enc-2']],

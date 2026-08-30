@@ -572,14 +572,17 @@ final class ConfigurationGuard
      *
      * The same two questions {@see assertCanVerify()} asks, in a place where
      * both have an answer: every key named has to exist, and every algorithm
-     * allowed has to have a key behind it. A JWE adds a third — a key that is
-     * never selected — because two allowlists narrow the choice here where a
-     * JWS has one, and a key ruled out by either is a rotation that will not
-     * happen rather than a spare.
+     * allowed has to have a key behind it. A JWE asks two more, because it has
+     * two allowlists where a JWS has one — whether every *content* algorithm
+     * allowed can be reached, and whether every key can be selected at all. A
+     * key ruled out by either list is a rotation that will not happen rather
+     * than a spare.
      *
      * `dir` is the awkward one throughout: a key for it is bound to the `enc`
      * it is the Content Encryption Key for, not to the `alg` in the header, so
-     * both lists have to be consulted to say whether it can be reached.
+     * both lists have to be consulted to say whether it can be reached — and
+     * it is the reason the content list needs checking at all, since anything
+     * that wraps a key wraps one for every `enc` going.
      *
      * @param array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>} $jwe
      * @param array<string, array{secret: string, algorithm: string, kid: string|null}>                                 $keys
@@ -621,6 +624,28 @@ final class ConfigurationGuard
                         ? sprintf(' A "dir" key is bound to a content-encryption algorithm this consumer also allows (%s).', implode('/', $jwe['allowed_content_encryption']))
                         : '',
                 ));
+            }
+        }
+
+        // The other direction of the same question, and the one `dir` makes
+        // necessary. Any key-wrapping algorithm wraps a Content Encryption Key
+        // for any `enc`, so where one of those is allowed and has a key behind
+        // it every content algorithm is reachable. Direct encryption has no
+        // such freedom: the key *is* the CEK, bound to one `enc` and refused
+        // for the others by the library — so where `dir` is the only way in,
+        // an `enc` with no key bound to it is a token nothing could open.
+        $wrapping = array_values(array_diff($jwe['allowed_key_management'], [KeyManagementAlgorithms::DIRECT]));
+
+        if ([] === $wrapping) {
+            foreach ($jwe['allowed_content_encryption'] as $contentEncryption) {
+                if (!in_array($contentEncryption, $bound, true)) {
+                    throw new InvalidConfigurationException(sprintf(
+                        '%s allows %s for the content of a token it decrypts with "dir", and none of its JWE keys is bound to it. A "dir" key is the Content Encryption Key itself, so it serves the one algorithm it names and no other. Its JWE keys are bound to: %s.',
+                        $context,
+                        $contentEncryption,
+                        implode('/', array_unique(array_values($bound))),
+                    ));
+                }
             }
         }
 

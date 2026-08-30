@@ -43,7 +43,10 @@ a class or method signature would be.
 
   **`RejectionReason` gains `decryption_failed`**, kept apart from
   `signature_invalid` because the two fail in different halves of the pipeline
-  and are fixed by different people. `log_levels` gains `decrypted` and
+  and are fixed by different people. The profiler panel learned the same
+  distinction: an encrypted token is described by its outer header — a new `enc`
+  member on the collector's rows — instead of being shown under "this is not a
+  JWT", which is what a token this bundle had just accepted used to get. `log_levels` gains `decrypted` and
   `decryption_failed`, the two categories the library always emitted and this
   bundle had nothing to emit them from. `TestTokenFactory::encryptedWith()`
   seals what the factory mints, refusals included, and `jwt:token:inspect`
