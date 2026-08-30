@@ -43,7 +43,7 @@ final class ConsoleCommands
      * rather than the container: the names are known at build time, and a
      * command that could fetch anything could be asked for anything.
      *
-     * @param array{keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, remote_jwks: array<string, mixed>, security_events: array{issuers: array<string, mixed>, consumers: array<string, mixed>}, metadata: array{issuer: string|null, ...}, ...} $config
+     * @param array{keys: array<string, mixed>, jwe_keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, remote_jwks: array<string, mixed>, security_events: array{issuers: array<string, mixed>, consumers: array<string, mixed>}, metadata: array{issuer: string|null, ...}, ...} $config
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
      * @param bool                                                                                                                                                                        $publishes whether a JWK Set service was registered to dump
      */
@@ -113,7 +113,7 @@ final class ConsoleCommands
      * path or an env reference until a factory reads it, so a file nobody
      * deployed is a configuration that compiles and a request that does not.
      *
-     * @param array{keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, security_events: array{issuers: array<string, mixed>, consumers: array<string, mixed>}, metadata: array{issuer: string|null, ...}, ...} $config
+     * @param array{keys: array<string, mixed>, jwe_keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, security_events: array{issuers: array<string, mixed>, consumers: array<string, mixed>}, metadata: array{issuer: string|null, ...}, ...} $config
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                        $keys
      *
      * @return array<string, ReferenceConfigurator>
@@ -137,6 +137,15 @@ final class ConsoleCommands
                     $subjects[sprintf('key "%s" (%s)', $name, $half)] = service(sprintf('medzuch_jwt.key.%s.%s', $name, $half));
                 }
             }
+        }
+
+        foreach (array_keys($config['jwe_keys']) as $name) {
+            // A JWE key is a secret of an exact length — 32 bytes for A256KW,
+            // 64 for A256CBC-HS512 — and the length is not knowable while the
+            // container is built, because the secret is still an env reference
+            // then. This row is where a wrong one stops being a 500 on the
+            // first encrypted request.
+            $subjects[sprintf('JWE key "%s"', $name)] = service('medzuch_jwt.jwe_key.' . $name);
         }
 
         foreach (array_keys($config['consumers']) as $name) {

@@ -6,9 +6,12 @@ namespace Medzuch\JwtBundle\DependencyInjection;
 
 use DateInterval;
 use Medzuch\Jwt\Diagnostics\LogLevels;
+use Medzuch\Jwt\Jwe\Decrypter;
 use Medzuch\Jwt\Jwt\Validator;
 use Medzuch\Jwt\Key\HmacKey;
 use Medzuch\Jwt\Key\JwkSet;
+use Medzuch\Jwt\Key\KeyUse;
+use Medzuch\Jwt\Key\OctKey;
 use Medzuch\Jwt\Key\Resolver\CompositeResolver;
 use Medzuch\Jwt\Key\Resolver\RemoteJwksResolver;
 use Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver;
@@ -16,6 +19,8 @@ use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\Jwt\Profile\SetConsumer;
 use Medzuch\Jwt\Profile\SetProfile;
+use Medzuch\JwtBundle\Algorithm\ContentEncryptionAlgorithms;
+use Medzuch\JwtBundle\Algorithm\KeyManagementAlgorithms;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
@@ -41,6 +46,7 @@ use Medzuch\JwtBundle\Security\User\ClaimRoles;
 use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
 use Medzuch\JwtBundle\Security\Verification\CustomTokenVerifier;
 use Medzuch\JwtBundle\Security\Verification\CustomValidatorFactory;
+use Medzuch\JwtBundle\Security\Verification\NestedTokenVerifier;
 use Medzuch\JwtBundle\Security\Verification\ProfileTokenVerifier;
 use Medzuch\JwtBundle\SecurityEvent\SecurityEventIssuer;
 use Medzuch\JwtBundle\SecurityEvent\SecurityEventVerifier;
@@ -87,10 +93,11 @@ final class ServiceRegistrar
          *     logger: string|null,
          *     log_levels: array<string, string|null>,
          *     keys: array<string, array{hmac?: string, pem_private?: string, pem_public?: string, jwk_private?: string, jwk_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}>,
+         *     jwe_keys: array<string, array{secret: string, algorithm: string, kid: string|null}>,
          *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
-         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}>,
+         *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}, jwe?: array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
          *     security_events: array{issuers: array<string, array{issuer: string, key: string, audience: list<string>}>, consumers: array<string, array{issuer: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, audience: string|null, leeway: int}>},
@@ -127,9 +134,10 @@ final class ServiceRegistrar
 
         $services = $container->services();
         $this->registerKeys($services, $keys);
+        $this->registerJweKeys($services, $config['jwe_keys']);
         $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerIssuers($services, $keys, $config['issuers']);
-        $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
+        $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['jwe_keys'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerSecurityEvents($services, $builder, $keys, $config['security_events'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
@@ -322,6 +330,35 @@ final class ServiceRegistrar
     }
 
     /**
+     * One service per `jwe_keys` entry, built the way every other key is: the
+     * secret stays an env reference until the factory runs, so it never lands
+     * in the compiled container (K9).
+     *
+     * `use: enc` is stated rather than left out. Nothing publishes these — a
+     * symmetric key is never published — but the library reads `use` when it
+     * narrows a key to an algorithm, and a key that says what it is for is one
+     * fewer thing to work out from a stack trace.
+     *
+     * The byte length is the one thing that cannot be checked here and matters
+     * most: `A256KW` takes exactly 32 bytes, `A256CBC-HS512` exactly 64, and
+     * the value is still `%env(...)%` while the container is built. The refusal
+     * comes from {@see OctKey} when the service is first built, which is what
+     * makes these rows worth having in `jwt:config:check`.
+     *
+     * @param array<string, array{secret: string, algorithm: string, kid: string|null}> $keys
+     */
+    private function registerJweKeys(ServicesConfigurator $services, array $keys): void
+    {
+        foreach ($keys as $name => $key) {
+            ConfigurationGuard::assertJweKeyIsSelectable($name, $key);
+
+            $services->set('medzuch_jwt.jwe_key.' . $name, OctKey::class)
+                ->factory([OctKey::class, 'fromBinary'])
+                ->args([$key['secret'], $key['algorithm'], $key['kid'], KeyUse::Enc]);
+        }
+    }
+
+    /**
      * One resolver per named set, so consumers of the same issuer share a
      * cache entry and a refresh window instead of each keeping their own.
      *
@@ -482,11 +519,12 @@ final class ServiceRegistrar
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                                              $keys
-     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}}> $consumers
+     * @param array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}, jwe?: array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>}}> $consumers
+     * @param array<string, array{secret: string, algorithm: string, kid: string|null}> $jweKeys
      * @param array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>      $sets
      * @param array<string, string|null> $logLevels
      */
-    private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $sets, ?string $logger, array $logLevels): void
+    private function registerConsumers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $consumers, array $jweKeys, array $sets, ?string $logger, array $logLevels): void
     {
         foreach ($consumers as $name => $consumer) {
             ConfigurationGuard::assertCanVerify(sprintf('Consumer "%s"', $name), $consumer, $keys, $sets);
@@ -497,6 +535,12 @@ final class ServiceRegistrar
 
             $keySource = self::keySource($services, 'medzuch_jwt.jwk_set.' . $name, 'medzuch_jwt.resolver.' . $name, $consumer);
             $algorithms = array_map(static fn(string $alg): mixed => inline_service(SigningAlgorithms::CLASSES[$alg]), array_values($consumer['allowed_algorithms']));
+
+            // `medzuch_jwt.verifier.<name>` is whatever the handler should
+            // call, encryption included, so a consumer that decrypts moves the
+            // one built here behind it under a suffix rather than making the
+            // handler ask which of two ids it wants.
+            $verifier = 'medzuch_jwt.verifier.' . $name . (isset($consumer['jwe']) ? '.signed' : '');
             $leeway = 0 === $consumer['leeway'] ? null : inline_service(DateInterval::class)->args([sprintf('PT%dS', $consumer['leeway'])]);
 
             if (null === $consumer['token_type']) {
@@ -513,7 +557,7 @@ final class ServiceRegistrar
                         $leeway,
                     ]);
 
-                $services->set('medzuch_jwt.verifier.' . $name, ProfileTokenVerifier::class)
+                $services->set($verifier, ProfileTokenVerifier::class)
                     ->args([service('medzuch_jwt.consumer.' . $name)]);
             } else {
                 // The lower-level API, which `04-api-surface.md` calls the one
@@ -536,8 +580,12 @@ final class ServiceRegistrar
                         $leeway,
                     ]);
 
-                $services->set('medzuch_jwt.verifier.' . $name, CustomTokenVerifier::class)
+                $services->set($verifier, CustomTokenVerifier::class)
                     ->args([service('medzuch_jwt.consumer.' . $name)]);
+            }
+
+            if (isset($consumer['jwe'])) {
+                self::registerDecryption($services, $name, $consumer['jwe'], $jweKeys, $verifier, $logger, $logLevels);
             }
 
             // The two answers RFC 6750 asks for that Symfony has none of: the
@@ -571,6 +619,44 @@ final class ServiceRegistrar
                     service('event_dispatcher')->nullOnInvalid(),
                 ]);
         }
+    }
+
+    /**
+     * The outer layer of an encrypted consumer (C12): a decrypting verifier in
+     * front of the one just built, answering to the id the handler asks for.
+     *
+     * A decorator rather than a branch inside the verifiers, because what the
+     * consumer checks does not change — {@see NestedTokenVerifier} says why at
+     * length. The key set is registered as its own service for the same reason
+     * the verification set is: `debug:container` should be able to show which
+     * keys a consumer decrypts with without anyone unpicking an inline chain.
+     *
+     * @param array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>} $jwe
+     * @param array<string, array{secret: string, algorithm: string, kid: string|null}>                                 $keys
+     * @param array<string, string|null>                                                                                $logLevels
+     */
+    private static function registerDecryption(ServicesConfigurator $services, string $name, array $jwe, array $keys, string $inner, ?string $logger, array $logLevels): void
+    {
+        ConfigurationGuard::assertCanDecrypt(sprintf('Consumer "%s"', $name), $jwe, $keys);
+
+        $services->set('medzuch_jwt.jwe_key_set.' . $name, JwkSet::class)
+            ->factory([JwkSet::class, 'of'])
+            ->args(array_map(static fn(string $key): mixed => service('medzuch_jwt.jwe_key.' . $key), array_values($jwe['keys'])));
+
+        $services->set('medzuch_jwt.verifier.' . $name, NestedTokenVerifier::class)
+            ->args([
+                service($inner),
+                // The library's own decrypter, carrying the logger: the two
+                // JWE categories in `log_levels` are emitted from in there,
+                // and this is the only place in the bundle that builds one.
+                inline_service(Decrypter::class)->args([
+                    null === $logger ? null : service($logger),
+                    self::logLevels($logLevels),
+                ]),
+                inline_service(StaticJwkSetResolver::class)->args([service('medzuch_jwt.jwe_key_set.' . $name)]),
+                array_map(static fn(string $alg): mixed => inline_service(KeyManagementAlgorithms::CLASSES[$alg]), array_values($jwe['allowed_key_management'])),
+                array_map(static fn(string $enc): mixed => inline_service(ContentEncryptionAlgorithms::CLASSES[$enc]), array_values($jwe['allowed_content_encryption'])),
+            ]);
     }
 
     /**

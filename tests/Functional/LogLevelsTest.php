@@ -6,11 +6,16 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 
 use DateInterval;
 use DateTimeImmutable;
+use Medzuch\Jwt\Algorithm\Encryption\A256Gcm;
+use Medzuch\Jwt\Algorithm\KeyManagement\A256Kw;
 use Medzuch\Jwt\Algorithm\Signing\Hs256;
 use Medzuch\Jwt\Algorithm\Signing\Rs256;
 use Medzuch\Jwt\Exception\JwtException;
+use Medzuch\Jwt\Jws\CompactJws;
 use Medzuch\Jwt\Jwt\JwtBuilder;
+use Medzuch\Jwt\Jwt\NestedJwtBuilder;
 use Medzuch\Jwt\Key\HmacKey;
+use Medzuch\Jwt\Key\OctKey;
 use Medzuch\Jwt\Key\RsaPrivateKey;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\Jwt\Profile\IdTokenProfile;
@@ -46,6 +51,9 @@ final class LogLevelsTest extends KernelTestCase
     private const ISSUER = 'https://issuer.test';
     private const AUDIENCE = 'https://api.test';
     private const JWKS_URI = 'https://idp.test/.well-known/jwks.json';
+
+    /** Exactly the 32 bytes A256KW is. */
+    private const SEALING = '0123456789abcdef0123456789abcdef';
 
     /**
      * @param array<array-key, mixed> $options
@@ -165,6 +173,54 @@ final class LogLevelsTest extends KernelTestCase
 
         self::assertSame('user-42', self::remoteHandler()->getUserBadgeFrom(self::remoteToken())->getUserIdentifier());
         self::assertSame('info', self::levelOf('jwks resolved'));
+    }
+
+    #[TestDox('a consumer that decrypts gets the two JWE levels')]
+    public function testDecryptionReachesTheLibrary(): void
+    {
+        // The only service that emits `decrypted` and `decryption_failed`, and
+        // the pair the option list waited on: before C12 nothing here built a
+        // decrypter, so a level for either was one nothing would emit at.
+        self::bootKernel(['medzuch_jwt' => self::jweConfiguration([
+            'decrypted' => 'info',
+            'decryption_failed' => 'critical',
+        ])]);
+
+        self::assertSame('user-42', self::handler()->getUserBadgeFrom(self::sealed(self::token()))->getUserIdentifier());
+        self::assertSame('info', self::levelOf('decrypted'));
+
+        self::logger()->records = [];
+        self::refuse(self::sealed(self::token(), OctKey::fromBinary(strrev(self::SEALING), 'A256KW', 'enc-2026')));
+
+        self::assertSame('critical', self::levelOf('decryption failed'));
+    }
+
+    private static function sealed(string $signed, ?OctKey $key = null): string
+    {
+        $key ??= OctKey::fromBinary(self::SEALING, 'A256KW', 'enc-2026');
+
+        return (string) NestedJwtBuilder::wrap(new CompactJws($signed), new A256Kw(), new A256Gcm(), $key, ['kid' => 'enc-2026']);
+    }
+
+    /**
+     * @param array<string, string> $levels
+     *
+     * @return array<string, mixed>
+     */
+    private static function jweConfiguration(array $levels): array
+    {
+        $configuration = self::configuration($levels);
+        $consumers = $configuration['consumers'];
+        \assert(is_array($consumers) && is_array($consumers['api']));
+        $consumers['api']['jwe'] = [
+            'keys' => ['sealed'],
+            'allowed_key_management' => ['A256KW'],
+            'allowed_content_encryption' => ['A256GCM'],
+        ];
+        $configuration['consumers'] = $consumers;
+        $configuration['jwe_keys'] = ['sealed' => ['secret' => self::SEALING, 'algorithm' => 'A256KW', 'kid' => 'enc-2026']];
+
+        return $configuration;
     }
 
     #[TestDox('a level that is not a PSR-3 one fails at container build')]

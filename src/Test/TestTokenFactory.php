@@ -7,11 +7,14 @@ namespace Medzuch\JwtBundle\Test;
 use DateInterval;
 use DateTimeImmutable;
 use InvalidArgumentException;
+use Medzuch\Jwt\Algorithm\ContentEncryptionAlgorithm;
+use Medzuch\Jwt\Algorithm\KeyManagementAlgorithm;
 use Medzuch\Jwt\Algorithm\Signing\Hs256;
 use Medzuch\Jwt\Algorithm\Signing\Hs384;
 use Medzuch\Jwt\Algorithm\Signing\Hs512;
 use Medzuch\Jwt\Algorithm\SigningAlgorithm;
 use Medzuch\Jwt\Key\HmacKey;
+use Medzuch\Jwt\Key\Key;
 use Medzuch\Jwt\Key\PrivateKey;
 use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\Jwt\Profile\AccessTokenBuilder;
@@ -45,6 +48,7 @@ final class TestTokenFactory
         private readonly string $clientId = 'test-client',
         private readonly int $ttl = 300,
         private readonly ?ClockInterface $clock = null,
+        private readonly ?SealedTokens $envelope = null,
     ) {
         $this->audience = $audience;
     }
@@ -79,6 +83,32 @@ final class TestTokenFactory
     public static function signedWith(string $issuer, string|array $audience, SigningAlgorithm $algorithm, PrivateKey $key): self
     {
         return new self($issuer, self::listOf($audience), $algorithm, $key);
+    }
+
+    /**
+     * Seal every token this factory mints inside a JWE, for a consumer
+     * configured with a `jwe` block (C12): what comes back from `token()` is
+     * then the five-segment string such a firewall expects, with the signed
+     * token this factory would otherwise have returned inside it.
+     *
+     * Takes the library's own objects rather than JOSE names, for the reason
+     * {@see self::signedWith()} does: the algorithm and the key are one
+     * decision, and the key a `dir` recipient holds is bound to the
+     * content-encryption algorithm while a wrapping one is bound to the
+     * key-management algorithm — a factory taking two strings would have to
+     * guess which of those it was being given.
+     *
+     * ```php
+     * $factory = TestTokenFactory::hmac('https://issuer.test', 'https://api.test', $secret)
+     *     ->encryptedWith(new A256Kw(), new A256Gcm(), OctKey::fromBinary($sealing, 'A256KW', 'enc-2026'));
+     * ```
+     *
+     * The refusals keep working: `expired()` and `notYetValid()` are sealed
+     * too, which is what proves a consumer still judges the token inside.
+     */
+    public function encryptedWith(KeyManagementAlgorithm $keyManagement, ContentEncryptionAlgorithm $contentEncryption, Key $recipientKey): self
+    {
+        return $this->copy(envelope: new SealedTokens($keyManagement, $contentEncryption, $recipientKey));
     }
 
     public function withClientId(string $clientId): self
@@ -146,6 +176,7 @@ final class TestTokenFactory
         ?string $clientId = null,
         ?int $ttl = null,
         ?ClockInterface $clock = null,
+        ?SealedTokens $envelope = null,
     ): self {
         return new self(
             $issuer ?? $this->issuer,
@@ -155,6 +186,7 @@ final class TestTokenFactory
             $clientId ?? $this->clientId,
             $ttl ?? $this->ttl,
             $clock ?? $this->clock,
+            $envelope ?? $this->envelope,
         );
     }
 
@@ -166,9 +198,8 @@ final class TestTokenFactory
      */
     public function token(string $subject = 'test-user', array $scopes = [], array $claims = [], ?string $jti = null): string
     {
-        return (string) $this->build($subject, $scopes, $claims, $jti)
-            ->expiresIn(new DateInterval(sprintf('PT%dS', $this->ttl)))
-            ->build();
+        return $this->serialize($this->build($subject, $scopes, $claims, $jti)
+            ->expiresIn(new DateInterval(sprintf('PT%dS', $this->ttl))));
     }
 
     /**
@@ -185,9 +216,8 @@ final class TestTokenFactory
         // reason this method's name promises.
         $issued = new FrozenClock($this->now()->modify('-2 hours'));
 
-        return (string) $this->build($subject, $scopes, $claims, $jti, $issued)
-            ->expiresAt($this->now()->modify('-1 hour'))
-            ->build();
+        return $this->serialize($this->build($subject, $scopes, $claims, $jti, $issued)
+            ->expiresAt($this->now()->modify('-1 hour')));
     }
 
     /**
@@ -196,10 +226,21 @@ final class TestTokenFactory
      */
     public function notYetValid(string $subject = 'test-user', array $scopes = [], array $claims = [], ?string $jti = null): string
     {
-        return (string) $this->build($subject, $scopes, $claims, $jti)
+        return $this->serialize($this->build($subject, $scopes, $claims, $jti)
             ->notBefore($this->now()->modify('+1 hour'))
-            ->expiresIn(new DateInterval('PT2H'))
-            ->build();
+            ->expiresIn(new DateInterval('PT2H')));
+    }
+
+    /**
+     * The one place a builder becomes a string, so that every token this
+     * factory mints — the good one and the two refusals — is sealed or not by
+     * the same decision.
+     */
+    private function serialize(AccessTokenBuilder $builder): string
+    {
+        $signed = $builder->build();
+
+        return null === $this->envelope ? (string) $signed : $this->envelope->seal($signed);
     }
 
     /**

@@ -108,6 +108,30 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertSame(3, substr_count($tester->getDisplay(), 'FAIL'));
     }
 
+    /**
+     * The one length in this bundle nothing else can catch. An HMAC secret has
+     * a floor; a JWE key has an exact size — 32 bytes for A256KW, 64 for
+     * A256CBC-HS512 — and the value is an env reference while the container is
+     * built, so this command is where a deploy finds out.
+     */
+    #[TestDox('a JWE secret of the wrong length is caught before an encrypted token finds it')]
+    public function testJweSecretOfTheWrongLength(): void
+    {
+        $configuration = self::configuration();
+        $configuration['jwe_keys'] = ['sealed' => ['secret' => 'sixteen-bytes!!!', 'algorithm' => 'A256KW', 'kid' => 'enc-2026']];
+        $configuration['consumers']['api']['jwe'] = [
+            'keys' => ['sealed'],
+            'allowed_key_management' => ['A256KW'],
+            'allowed_content_encryption' => ['A256GCM'],
+        ];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('JWE key "sealed"', $tester->getDisplay());
+        self::assertStringContainsString('exactly 32 bytes', $tester->getDisplay());
+    }
+
     #[TestDox('an issuer that cannot be reached fails the check, and --skip-remote leaves it alone')]
     public function testRemoteSetIsReached(): void
     {

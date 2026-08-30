@@ -7,6 +7,7 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 use Medzuch\JwtBundle\MedzuchJwtBundle;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
@@ -23,6 +24,9 @@ final class ConfigurationValidationTest extends KernelTestCase
     use RestoresExceptionHandler;
 
     private const SECRET = 'a-shared-secret-of-at-least-32-bytes!';
+
+    /** Exactly 32 bytes, which A256KW and a `dir` key for A256GCM both are. */
+    private const JWE_SECRET = '0123456789abcdef0123456789abcdef';
 
     /** Never parsed: every case below is refused before any key is built. */
     private const PEM = "-----BEGIN PUBLIC KEY-----\nnot-a-real-key\n-----END PUBLIC KEY-----";
@@ -453,6 +457,88 @@ final class ConfigurationValidationTest extends KernelTestCase
             'keys' => ['default' => ['hmac' => self::SECRET]],
             'consumers' => ['api' => self::consumer(['realm' => 'api", error="insufficient_scope'])],
         ]]);
+    }
+
+    /**
+     * @param array<string, mixed> $jwe
+     * @param array<string, mixed> $jweKeys
+     */
+    #[DataProvider('unopenableConfigurations')]
+    #[TestDox('$defect fails at container build')]
+    public function testEncryptionThatCouldNeverOpenAToken(string $defect, array $jweKeys, array $jwe, string $expected): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches($expected);
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'jwe_keys' => $jweKeys,
+            'consumers' => ['api' => self::consumer(['jwe' => $jwe])],
+        ]]);
+    }
+
+    /**
+     * @return iterable<string, array{string, array<string, mixed>, array<string, mixed>, string}>
+     */
+    public static function unopenableConfigurations(): iterable
+    {
+        $wrapping = ['secret' => self::JWE_SECRET, 'algorithm' => 'A256KW', 'kid' => 'enc-1'];
+
+        yield 'unknown key' => [
+            'a consumer naming a JWE key that does not exist',
+            ['sealed' => $wrapping],
+            ['keys' => ['typo'], 'allowed_key_management' => ['A256KW'], 'allowed_content_encryption' => ['A256GCM']],
+            '/decrypts with key "typo", which is not defined under medzuch_jwt.jwe_keys/',
+        ];
+
+        yield 'dir without a kid' => [
+            'a key for "dir" with no kid, which no resolver could ever reach',
+            ['sealed' => ['secret' => self::JWE_SECRET, 'algorithm' => 'A256GCM']],
+            ['keys' => ['sealed'], 'allowed_key_management' => ['dir'], 'allowed_content_encryption' => ['A256GCM']],
+            '/found by its "kid" and by nothing else/',
+        ];
+
+        yield 'algorithm with no key' => [
+            'an allowed key-management algorithm no key can be used with',
+            ['sealed' => $wrapping],
+            ['keys' => ['sealed'], 'allowed_key_management' => ['A192KW'], 'allowed_content_encryption' => ['A256GCM']],
+            '/allows A192KW .*could never be decrypted/',
+        ];
+
+        yield 'dir with no key for the content' => [
+            'a consumer allowing "dir" whose only key is for a content algorithm it refuses',
+            ['sealed' => ['secret' => self::JWE_SECRET, 'algorithm' => 'A256GCM', 'kid' => 'enc-1']],
+            ['keys' => ['sealed'], 'allowed_key_management' => ['dir'], 'allowed_content_encryption' => ['A128GCM']],
+            '/A "dir" key is bound to a content-encryption algorithm this consumer also allows \(A128GCM\)/',
+        ];
+
+        yield 'key nothing allows' => [
+            'a key bound to an algorithm the consumer does not allow',
+            ['sealed' => $wrapping, 'spare' => ['secret' => substr(self::JWE_SECRET, 0, 24), 'algorithm' => 'A192KW', 'kid' => 'enc-2']],
+            ['keys' => ['sealed', 'spare'], 'allowed_key_management' => ['A256KW'], 'allowed_content_encryption' => ['A256GCM']],
+            '/names JWE key "spare", bound to A192KW, which nothing it allows can use/',
+        ];
+
+        yield 'indistinguishable' => [
+            'two JWE keys on one algorithm with no kid between them',
+            ['first' => ['secret' => self::JWE_SECRET, 'algorithm' => 'A256KW'], 'second' => ['secret' => strrev(self::JWE_SECRET), 'algorithm' => 'A256KW']],
+            ['keys' => ['first', 'second'], 'allowed_key_management' => ['A256KW'], 'allowed_content_encryption' => ['A256GCM']],
+            '/cannot say which one encrypted it/',
+        ];
+
+        yield 'shared kid' => [
+            'two JWE keys sharing a kid, where selection reaches only the first',
+            ['first' => $wrapping, 'second' => ['secret' => strrev(self::JWE_SECRET), 'algorithm' => 'A256KW', 'kid' => 'enc-1']],
+            ['keys' => ['first', 'second'], 'allowed_key_management' => ['A256KW'], 'allowed_content_encryption' => ['A256GCM']],
+            '/share the kid "enc-1"/',
+        ];
+
+        yield 'named twice' => [
+            'one JWE key named twice, which puts it in the set twice',
+            ['sealed' => $wrapping],
+            ['keys' => ['sealed', 'sealed'], 'allowed_key_management' => ['A256KW'], 'allowed_content_encryption' => ['A256GCM']],
+            '/names key "sealed" more than once/',
+        ];
     }
 
     /**
