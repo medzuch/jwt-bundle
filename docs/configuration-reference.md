@@ -94,7 +94,7 @@ medzuch_jwt:
             # Key id published in the token header. Required once two keys share an algorithm.
             kid:                  null
 
-    # Named keys for reading encrypted tokens, referenced by name from a consumer's "jwe" block. Separate from `keys`: those sign and verify, these decrypt, and one key should not do both (RFC 7517 §4.2).
+    # Named keys for encrypted tokens, referenced by name from a "jwe" block on a consumer, which decrypts with them, or on an issuer, which encrypts with them. Separate from `keys`: those sign and verify, these encrypt and decrypt, and one key should not do both (RFC 7517 §4.2).
     jwe_keys:
 
         # Prototype
@@ -106,7 +106,7 @@ medzuch_jwt:
             # What this key is made of. For key wrapping, the `alg` it wraps with (A128KW…A256GCMKW). For "dir", the key is the Content Encryption Key rather than something that wraps one, so name the `enc` it is a key for (A128GCM…A256CBC-HS512) — "dir" itself is not a value here, because no key is made of it.
             algorithm:            ~ # One of "A128KW"; "A192KW"; "A256KW"; "A128GCMKW"; "A192GCMKW"; "A256GCMKW"; "A128GCM"; "A192GCM"; "A256GCM"; "A128CBC-HS256"; "A192CBC-HS384"; "A256CBC-HS512", Required, Example: A256KW
 
-            # Key id the sender names in the token's outer header. Required as soon as two of a consumer's keys share an algorithm — and for "dir" always, because a resolver falling back to the header's `alg` would be looking for a key bound to "dir", which no key is.
+            # Key id in the token's outer header: written there by an issuer sealing with this key, and what a consumer selects on. Required as soon as two of a consumer's keys share an algorithm — and for "dir" always, because a resolver falling back to the header's `alg` would be looking for a key bound to "dir", which no key is.
             kid:                  null
 
     # Named remote JWK Sets, referenced by name from anything that verifies: consumers, ID token registrations and security event consumers.

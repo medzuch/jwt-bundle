@@ -14,9 +14,9 @@ a class or method signature would be.
 ### Added
 
 - **An issuer can seal what it mints** (I8), under a `jwe` block on
-  `issuers.<name>`: the token is signed first and the signature encrypted after
-  (RFC 7519 §11.2 asks for that order, and the type of what goes in is the only
-  order this can express). It closes the pair with C12 — an application that is
+  `issuers.<name>`: the token is signed first and the whole signed token
+  encrypted after (RFC 7519 §11.2 asks for that order, and the type of what goes
+  in is the only order this can express). It closes the pair with C12 — an application that is
   both ends now writes both blocks and never leaves the bundle.
 
   **One key and one algorithm of each kind**, where the reading side takes two

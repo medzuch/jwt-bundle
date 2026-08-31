@@ -598,11 +598,22 @@ final class ConfigurationValidationTest extends KernelTestCase
             '/encrypts with "dir" and A128GCM and JWE key "sealed", which is bound to A256GCM/',
         ];
 
+        // The two crossed-purpose rows. Both messages have to offer a way out
+        // the option would accept: a key-management name is not something
+        // content can be encrypted with, and a content-encryption name is not
+        // something a key can be wrapped with, so the advice changes sides.
         yield 'wrapping key used directly' => [
             'an issuer encrypting directly with a key that wraps',
             ['sealed' => $wrapping],
             ['key' => 'sealed', 'key_management' => 'dir', 'content_encryption' => 'A256GCM'],
-            '/A "dir" key is the Content Encryption Key itself/',
+            '/this one wraps keys instead — name a key bound to A256GCM, or wrap with it by setting key_management to A256KW/',
+        ];
+
+        yield 'content key used to wrap' => [
+            'an issuer wrapping with a key that is a Content Encryption Key',
+            ['sealed' => ['secret' => self::JWE_SECRET, 'algorithm' => 'A256GCM', 'kid' => 'enc-1']],
+            ['key' => 'sealed', 'key_management' => 'A256KW', 'content_encryption' => 'A256GCM'],
+            '/this one is a Content Encryption Key — name a key bound to A256KW, or use it directly with key_management "dir" and content_encryption A256GCM/',
         ];
 
         yield 'replicating a header parameter' => [

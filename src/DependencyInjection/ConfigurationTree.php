@@ -201,7 +201,7 @@ final class ConfigurationTree
     private static function configureJweKeys(NodeBuilder $children): void
     {
         $key = $children->arrayNode('jwe_keys')
-            ->info('Named keys for reading encrypted tokens, referenced by name from a consumer\'s "jwe" block. Separate from `keys`: those sign and verify, these decrypt, and one key should not do both (RFC 7517 §4.2).')
+            ->info('Named keys for encrypted tokens, referenced by name from a "jwe" block on a consumer, which decrypts with them, or on an issuer, which encrypts with them. Separate from `keys`: those sign and verify, these encrypt and decrypt, and one key should not do both (RFC 7517 §4.2).')
             ->useAttributeAsKey('name')
             ->arrayPrototype()
             ->children();
@@ -222,7 +222,7 @@ final class ConfigurationTree
 
         $key->scalarNode('kid')
             ->defaultNull()
-            ->info('Key id the sender names in the token\'s outer header. Required as soon as two of a consumer\'s keys share an algorithm — and for "dir" always, because a resolver falling back to the header\'s `alg` would be looking for a key bound to "dir", which no key is.')
+            ->info('Key id in the token\'s outer header: written there by an issuer sealing with this key, and what a consumer selects on. Required as soon as two of a consumer\'s keys share an algorithm — and for "dir" always, because a resolver falling back to the header\'s `alg` would be looking for a key bound to "dir", which no key is.')
             ->validate()
                 ->ifTrue(static fn(mixed $value): bool => '' === $value)
                 ->thenInvalid('A key\'s "kid" cannot be the empty string; omit it instead.')

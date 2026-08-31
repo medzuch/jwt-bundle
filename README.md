@@ -131,6 +131,10 @@ A successful login now answers with RFC 6750 fields, under `Cache-Control: no-st
 { "access_token": "eyJ0eXAiOiJhdCtqd3QiLCJhbGciOiJIUzI1NiJ9...", "token_type": "Bearer", "expires_in": 900 }
 ```
 
+That `access_token` is whatever the issuer mints. An issuer with a `jwe` block seals what it
+signs, so the same field then carries a five-segment JWE rather than the three-segment JWS above
+— the handler passes it through either way, and RFC 6750 says nothing about its shape.
+
 **The handler mints from the identity and nothing else.** It calls `issue()` with the user
 identifier, so the token carries what configuration decided — audience, TTL,
 `issuers.<name>.claims` — plus whatever your claim providers and `JwtIssuingEvent` listeners add.
@@ -1301,8 +1305,9 @@ types with the case kept after the prefix (medzuch/jwt-php#62), so the mixed-cas
 refused as `malformed` until that is fixed. Nothing here works around it: a second implementation
 of media-type comparison is a worse problem than the one it solves.
 
-**Encrypted ID tokens and encrypted security events** are not configurable: `jwe` belongs to
-`consumers`, and the OIDC and SET registrations verify signatures only.
+**Encrypted ID tokens and encrypted security events** are not configurable. `jwe` belongs to
+`consumers` and to `issuers` — the section below is the issuing half — and the OIDC and SET
+registrations sign and verify only.
 
 ## Minting an encrypted token
 

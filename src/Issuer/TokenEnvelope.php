@@ -46,6 +46,13 @@ final class TokenEnvelope
      * The outer header carries the key's `kid` where it has one, because that
      * is what a receiver selects on — for `dir` it is the only thing it can
      * select on. `cty: JWT` is the builder's, and RFC 7519 §5.2 requires it.
+     *
+     * The `kid` is written last of the two, so a replicated claim that happens
+     * to be called `kid` cannot take its place. The configuration refuses that
+     * name before it reaches here, and the invariant belongs to the object
+     * that would be broken by it: a claim overwriting the `kid` would name a
+     * key the recipient does not have, and the token nobody could open would
+     * be one this issuer minted on purpose.
      */
     public function seal(CompactJws $signed): string
     {
@@ -58,7 +65,7 @@ final class TokenEnvelope
             $this->keyManagement,
             $this->contentEncryption,
             $this->recipientKey,
-            [...$header, ...$this->replicate($signed)],
+            [...$this->replicate($signed), ...$header],
         );
     }
 

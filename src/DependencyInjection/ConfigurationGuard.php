@@ -703,17 +703,39 @@ final class ConfigurationGuard
             return;
         }
 
+        $direct = KeyManagementAlgorithms::DIRECT === $jwe['key_management'];
+
         throw new InvalidConfigurationException(sprintf(
             '%s encrypts with %s and JWE key "%s", which is bound to %s. %s',
             $context,
-            KeyManagementAlgorithms::DIRECT === $jwe['key_management']
-                ? sprintf('"dir" and %s', $jwe['content_encryption'])
-                : $jwe['key_management'],
+            $direct ? sprintf('"dir" and %s', $jwe['content_encryption']) : $jwe['key_management'],
             $jwe['key'],
             $bound,
-            KeyManagementAlgorithms::DIRECT === $jwe['key_management']
-                ? sprintf('A "dir" key is the Content Encryption Key itself, so it has to be a key for %s — name a key bound to it, or encrypt the content with %s.', $jwe['content_encryption'], $bound)
-                : sprintf('A key that wraps is bound to the algorithm it wraps with — name a key bound to %s, or wrap with %s.', $jwe['key_management'], $bound),
+            self::adviseOnTheKey($direct, $needed, $bound),
         ));
+    }
+
+    /**
+     * What to do about a key that is not made of what the algorithm needs.
+     *
+     * Two settings can be wrong, so the sentence offers both ways out: name a
+     * key the algorithm can use, or use the algorithm the key is for. The
+     * second half is the one that has to know what kind of name `$bound` is —
+     * a key bound to a content-encryption algorithm cannot wrap anything and
+     * one bound to a key-management algorithm cannot encrypt content, so
+     * advising either across that line would send an operator to a value the
+     * option does not accept. Crossing it also means changing both settings
+     * rather than one, and the sentence says so.
+     */
+    private static function adviseOnTheKey(bool $direct, string $needed, string $bound): string
+    {
+        $boundIsContentKey = in_array($bound, ContentEncryptionAlgorithms::names(), true);
+
+        return match (true) {
+            $direct && $boundIsContentKey => sprintf('A "dir" key is the Content Encryption Key itself, so it has to be a key for %s — name a key bound to it, or encrypt the content with %s.', $needed, $bound),
+            $direct => sprintf('A "dir" key is the Content Encryption Key itself, and this one wraps keys instead — name a key bound to %s, or wrap with it by setting key_management to %s.', $needed, $bound),
+            $boundIsContentKey => sprintf('A key that wraps is bound to the algorithm it wraps with, and this one is a Content Encryption Key — name a key bound to %s, or use it directly with key_management "dir" and content_encryption %s.', $needed, $bound),
+            default => sprintf('A key that wraps is bound to the algorithm it wraps with — name a key bound to %s, or wrap with %s.', $needed, $bound),
+        };
     }
 }

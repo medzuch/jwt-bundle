@@ -4,7 +4,14 @@ declare(strict_types=1);
 
 namespace Medzuch\JwtBundle\Tests\Functional;
 
+use Medzuch\Jwt\Algorithm\Encryption\A256Gcm;
+use Medzuch\Jwt\Algorithm\KeyManagement\A256Kw;
+use Medzuch\Jwt\Algorithm\Signing\Hs256;
 use Medzuch\Jwt\Jwt\ClaimsSet;
+use Medzuch\Jwt\Jwt\JwtBuilder;
+use Medzuch\Jwt\Key\HmacKey;
+use Medzuch\Jwt\Key\KeyUse;
+use Medzuch\Jwt\Key\OctKey;
 use Medzuch\Jwt\Primitives\Base64Url;
 use Medzuch\Jwt\Primitives\Json;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
@@ -84,7 +91,10 @@ final class EncryptedIssuanceTest extends WebTestCase
 
         self::assertCount(5, explode('.', $token), 'a JWE has five segments where a signed token has three');
 
-        self::assertSame(
+        // Canonicalizing: a JSON object has no order, and which member the
+        // library writes first is not what this case is about. That every
+        // member is there and no other is, is.
+        self::assertEqualsCanonicalizing(
             ['kid' => self::KID, 'cty' => 'JWT', 'alg' => 'A256KW', 'enc' => 'A256GCM'],
             self::outerHeader($token),
         );
@@ -138,7 +148,7 @@ final class EncryptedIssuanceTest extends WebTestCase
 
         $token = self::issuer()->issue('alice')->value;
 
-        self::assertSame(['kid' => self::KID, 'cty' => 'JWT', 'alg' => 'dir', 'enc' => 'A256GCM'], self::outerHeader($token));
+        self::assertEqualsCanonicalizing(['kid' => self::KID, 'cty' => 'JWT', 'alg' => 'dir', 'enc' => 'A256GCM'], self::outerHeader($token));
         self::assertSame('alice', self::handler()->getUserBadgeFrom($token)->getUserIdentifier());
     }
 
@@ -226,8 +236,70 @@ final class EncryptedIssuanceTest extends WebTestCase
 
         $token = self::issuer()->issue('alice')->value;
 
-        self::assertSame(['cty' => 'JWT', 'alg' => 'A256KW', 'enc' => 'A256GCM'], self::outerHeader($token));
+        self::assertEqualsCanonicalizing(['cty' => 'JWT', 'alg' => 'A256KW', 'enc' => 'A256GCM'], self::outerHeader($token));
         self::assertSame('alice', self::handler()->getUserBadgeFrom($token)->getUserIdentifier());
+    }
+
+    /**
+     * A second family, because the first is the one everything else here is
+     * written in: AES-GCM key wrapping, and a CBC-HS content algorithm whose
+     * Content Encryption Key is twice the length of its own key. Nothing in
+     * the bundle chooses differently between them — it is the same
+     * `NestedJwtBuilder::wrap()` call — which is exactly why a second family
+     * is worth minting through rather than reasoning about.
+     */
+    #[TestDox('another family of algorithms round-trips the same way')]
+    public function testASecondAlgorithmFamily(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(
+            // 16 bytes: what A128GCMKW is made of. The content key it wraps is
+            // 48 bytes for A192CBC-HS384 and is minted fresh per token.
+            jweKeys: ['sealed' => ['secret' => substr(self::SEALING, 0, 16), 'algorithm' => 'A128GCMKW', 'kid' => self::KID]],
+            issuerJwe: ['key' => 'sealed', 'key_management' => 'A128GCMKW', 'content_encryption' => 'A192CBC-HS384'],
+            consumerJwe: ['keys' => ['sealed'], 'allowed_key_management' => ['A128GCMKW'], 'allowed_content_encryption' => ['A192CBC-HS384']],
+        )]);
+
+        $token = self::issuer()->issue('alice')->value;
+        $header = self::outerHeader($token);
+
+        self::assertSame('A128GCMKW', $header['alg'] ?? null);
+        self::assertSame('A192CBC-HS384', $header['enc'] ?? null);
+        // AES-GCM key wrapping contributes its own `iv` and `tag` to the
+        // protected header, which is the library's business and not this
+        // bundle's — asserted only so the case notices if they stop arriving.
+        self::assertArrayHasKey('iv', $header);
+        self::assertArrayHasKey('tag', $header);
+
+        self::assertSame('alice', self::handler()->getUserBadgeFrom($token)->getUserIdentifier());
+    }
+
+    /**
+     * The configuration refuses a replicated claim named after a JOSE header
+     * parameter, so this cannot arrive through a container. Asserted on the
+     * object anyway: the invariant is the envelope's, and a `kid` naming a key
+     * the recipient does not have would be a token nobody could open, minted
+     * on purpose.
+     */
+    #[TestDox('a replicated claim cannot take the place of the key\'s kid')]
+    public function testTheKeyIdIsNotOverwritable(): void
+    {
+        self::bootKernel();
+
+        $envelope = new TokenEnvelope(
+            new A256Kw(),
+            new A256Gcm(),
+            OctKey::fromBinary(self::SEALING, 'A256KW', self::KID, KeyUse::Enc),
+            ['kid'],
+        );
+
+        $signed = JwtBuilder::create()
+            ->issuer(self::ISSUER)
+            ->subject('alice')
+            ->withClaim('kid', 'not-a-key-id')
+            ->signWith(new Hs256(), HmacKey::fromBinary(self::SECRET, 'HS256'))
+            ->build();
+
+        self::assertSame(self::KID, self::outerHeader($envelope->seal($signed))['kid'] ?? null);
     }
 
     #[TestDox('an issuer without the block still mints a signed token')]
