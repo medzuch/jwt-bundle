@@ -169,6 +169,24 @@ medzuch_jwt:
                 # Prototype
                 name:                 ~
 
+            # Seal this issuer's tokens: sign first, then encrypt the result as a JWE (RFC 7519 §5.2 nested JWT, §11.2 for the order). What the caller gets back is the sealed token; its `jti` and lifetime are unchanged, because encryption is what the token travels in rather than part of what it says. The recipient needs the matching key — a consumer of this application's own is configured with `consumers.*.jwe`.
+            jwe:
+
+                # Name from the `jwe_keys` section: the key the recipient will decrypt with. One key, not a list — a sender uses the key it was told to use.
+                key:                  ~ # Required
+
+                # JOSE `alg` written into the outer header: how the recipient gets the key the claims are encrypted with (RFC 7518 §4). "dir" uses the configured key as that key; the rest wrap a fresh one with it. Must be what the key is for — a wrapping key is bound to the `alg` it wraps with, and a "dir" key to the `enc` below.
+                key_management:       ~ # One of "dir"; "A128KW"; "A192KW"; "A256KW"; "A128GCMKW"; "A192GCMKW"; "A256GCMKW", Required, Example: A256KW
+
+                # JOSE `enc` written into the outer header: how the claims themselves are encrypted (RFC 7518 §5). All six are authenticated encryption; pick one the recipient allows.
+                content_encryption:   ~ # One of "A128GCM"; "A192GCM"; "A256GCM"; "A128CBC-HS256"; "A192CBC-HS384"; "A256CBC-HS512", Required, Example: A256GCM
+
+                # Claims copied into the outer header as well, where an intermediary has to read one without holding a key — `iss`, usually, so a gateway can route (RFC 7519 §5.3). The copy is read back out of the signed token, so it is the claim exactly; a receiver compares the two and must reject a token where they disagree. Nothing else about the token changes, and a name the token does not carry is not written. Empty is the default: a claim in the outer header is a claim nothing encrypted.
+                replicated_claims:    []
+
+                    # Example:
+                    # - iss
+
     # Named consumers. A firewall names one through token_handler.
     consumers:
 

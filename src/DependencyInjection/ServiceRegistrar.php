@@ -25,6 +25,7 @@ use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\DataCollector\JwtDataCollector;
 use Medzuch\JwtBundle\Issuer\AccessTokenIssuer;
 use Medzuch\JwtBundle\Issuer\TokenClaimProviderInterface;
+use Medzuch\JwtBundle\Issuer\TokenEnvelope;
 use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Oidc\DiscoveredJwksResolver;
@@ -94,7 +95,7 @@ final class ServiceRegistrar
          *     log_levels: array<string, string|null>,
          *     keys: array<string, array{hmac?: string, pem_private?: string, pem_public?: string, jwk_private?: string, jwk_public?: string, pem_passphrase?: string, algorithm: string, kid: string|null}>,
          *     jwe_keys: array<string, array{secret: string, algorithm: string, kid: string|null}>,
-         *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}>,
+         *     issuers: array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>, jwe?: array{key: string, key_management: string, content_encryption: string, replicated_claims: list<string>}}>,
          *     jwks: array{keys: list<string>, cache_max_age: int},
          *     remote_jwks: array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}, jwe?: array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>}}>,
@@ -136,7 +137,7 @@ final class ServiceRegistrar
         $this->registerKeys($services, $keys);
         $this->registerJweKeys($services, $config['jwe_keys']);
         $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger'], $config['log_levels']);
-        $this->registerIssuers($services, $keys, $config['issuers']);
+        $this->registerIssuers($services, $keys, $config['issuers'], $config['jwe_keys']);
         $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['jwe_keys'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
@@ -415,9 +416,10 @@ final class ServiceRegistrar
 
     /**
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                    $keys
-     * @param array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>}> $issuers
+     * @param array<string, array{issuer: string, key: string, client_id: string, ttl: int, audience: list<string>, claims: array<string, mixed>, jwe?: array{key: string, key_management: string, content_encryption: string, replicated_claims: list<string>}}> $issuers
+     * @param array<string, array{secret: string, algorithm: string, kid: string|null}>                                                           $jweKeys
      */
-    private function registerIssuers(ServicesConfigurator $services, array $keys, array $issuers): void
+    private function registerIssuers(ServicesConfigurator $services, array $keys, array $issuers, array $jweKeys): void
     {
         foreach ($issuers as $name => $issuer) {
             ConfigurationGuard::assertCanSign(sprintf('Issuer "%s"', $name), $issuer['key'], $keys);
@@ -444,6 +446,7 @@ final class ServiceRegistrar
                     // Symfony application — a unit test, a script — there is no
                     // dispatcher, and issuance is not the place to require one.
                     service('event_dispatcher')->nullOnInvalid(),
+                    isset($issuer['jwe']) ? self::envelope(sprintf('Issuer "%s"', $name), $issuer['jwe'], $jweKeys) : null,
                 ]);
 
             $services->set('medzuch_jwt.login.' . $name, AccessTokenSuccessHandler::class)
@@ -456,6 +459,30 @@ final class ServiceRegistrar
         if (isset($issuers['default'])) {
             $services->alias(AccessTokenIssuer::class, 'medzuch_jwt.issuer.default');
         }
+    }
+
+    /**
+     * The envelope one issuer seals with (I8), inline because it is that
+     * issuer's and nothing else can reach it — the same reason the decrypting
+     * side builds its own.
+     *
+     * The algorithms arrive here as the names the configuration wrote and go in
+     * as the library's objects, which is where an `alg` this bundle supports
+     * and one it does not part company.
+     *
+     * @param array{key: string, key_management: string, content_encryption: string, replicated_claims: list<string>} $jwe
+     * @param array<string, array{secret: string, algorithm: string, kid: string|null}>                               $jweKeys
+     */
+    private static function envelope(string $context, array $jwe, array $jweKeys): mixed
+    {
+        ConfigurationGuard::assertCanEncrypt($context, $jwe, $jweKeys);
+
+        return inline_service(TokenEnvelope::class)->args([
+            inline_service(KeyManagementAlgorithms::CLASSES[$jwe['key_management']]),
+            inline_service(ContentEncryptionAlgorithms::CLASSES[$jwe['content_encryption']]),
+            service('medzuch_jwt.jwe_key.' . $jwe['key']),
+            $jwe['replicated_claims'],
+        ]);
     }
 
     /**

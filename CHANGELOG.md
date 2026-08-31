@@ -13,6 +13,36 @@ a class or method signature would be.
 
 ### Added
 
+- **An issuer can seal what it mints** (I8), under a `jwe` block on
+  `issuers.<name>`: the token is signed first and the signature encrypted after
+  (RFC 7519 §11.2 asks for that order, and the type of what goes in is the only
+  order this can express). It closes the pair with C12 — an application that is
+  both ends now writes both blocks and never leaves the bundle.
+
+  **One key and one algorithm of each kind**, where the reading side takes two
+  allowlists and a list of keys. A receiver has to accept everything its senders
+  might still be using; a sender picks. Rotating a sealing key is that asymmetry
+  in practice: the receiving side's list grows first, and `key` here changes
+  afterwards.
+
+  **`replicated_claims`** copies claims into the outer header for an
+  intermediary that holds no key — `iss`, so a gateway can route (RFC 7519
+  §5.3). The value is read back out of the token that was just signed rather
+  than assembled a second time, so the copy is the claim exactly, shape
+  included; a receiver compares the two and must reject a token where they
+  disagree, and this bundle's consumer does. A claim the token does not carry is
+  not written, and a name that is a registered JOSE header parameter is refused
+  at build. The default replicates nothing: every replicated claim is a claim
+  you decided not to encrypt.
+
+  Nothing above the envelope moved. The claims, the `expiresIn` reported back
+  and the `jti` an application records to revoke on all belong to the token
+  inside, and the issuance events fire on claims rather than on ciphertext. The
+  container refuses an issuer whose key is not made of what its algorithm needs
+  — `A256KW` with an `A192KW` key, or `dir` with a content key for a different
+  `enc` — which is otherwise a 500 on a token endpoint rather than a failed
+  deploy.
+
 - **A consumer can read encrypted tokens** (C12), under a new `jwe` block and a
   new top-level `jwe_keys` section. What arrives is then a JWE wrapping the
   signed JWT (RFC 7519 §5.2 nested JWT); what is checked afterwards is
@@ -53,7 +83,7 @@ a class or method signature would be.
   prints an encrypted token's outer header and still asks the consumer for a
   verdict instead of calling it something it cannot read.
 
-  Minting encrypted tokens is I8 and is not in this release.
+  Minting them is I8, in this release as well.
 
 - **This application can publish its own RFC 8414 metadata** (K8), under a new
   `metadata` section and `medzuch_jwt.metadata_controller`. It closes the pair

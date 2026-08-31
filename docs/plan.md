@@ -247,7 +247,7 @@ default and adds no runtime cost when unconfigured.
 | I5 | Login integration: an authentication success handler that returns `{ "access_token": ..., "token_type": "Bearer", "expires_in": ... }`, pluggable into `json_login`/`form_login` | Symfony + I1 | T1 |
 | I6 | `IdTokenIssuer` for apps acting as an OIDC provider | `IdTokenProfile::issuer()` | T3 |
 | I7 | Security Event Token issuer (emit RISC/CAEP events to relying parties). **Landed in Phase 5** as `security_events.issuers`. Hands back the library's builder rather than an argument list, since what varies between two SETs is the events; delivery (RFC 8935 push, RFC 8936 poll) stays the application's | `SetProfile::issuer()` | T3 |
-| I8 | Encrypted/nested issuance (sign-then-encrypt). The half C12 does not cover: until it lands, an encrypted token this bundle reads was minted by somebody else, or by the library called directly — which is what `TestTokenFactory::encryptedWith()` does | `NestedJwtBuilder` | T3 |
+| I8 | Encrypted/nested issuance (sign-then-encrypt). **Landed in Phase 5** as `issuers.<name>.jwe`, one key and one algorithm of each kind where the reading side takes lists — a receiver accepts what its senders still use, a sender picks. `replicated_claims` copies a claim into the outer header for an intermediary that holds no key (RFC 7519 §5.3), read back out of the signed token so the two cannot drift | `NestedJwtBuilder` | T3 |
 | I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered | bundle | T3 (see §8) |
 
 ### 3.3 Key management
@@ -302,9 +302,9 @@ default and adds no runtime cost when unconfigured.
   tokens behind one firewall.
 - **Proof-of-possession key generation**. JWE-encrypted claims for tokens that
   traverse untrusted intermediaries are C12, landed in Phase 5 on the consumer
-  side; I8 is the issuing half, and encrypting to a third party's public key
-  (ECDH-ES) waits on a registry of asymmetric encryption keys and a way to
-  publish this application's own.
+  side, with I8 the issuing half beside it. Encrypting to a third party's
+  public key (ECDH-ES) waits on a registry of asymmetric encryption keys and a
+  way to publish this application's own.
 
 ---
 
@@ -382,6 +382,11 @@ medzuch_jwt:
       audience: ['%env(APP_URL)%']
       ttl: 900
       claims: { }                    # static extra claims; dynamic ones via I3/I4
+      jwe:                           # seal what this issuer mints (I8)
+        key: payload_2026
+        key_management: A256KW
+        content_encryption: A256GCM
+        replicated_claims: [iss]     # copied into the outer header (RFC 7519 §5.3)
 
   consumers:
     api:
@@ -459,9 +464,14 @@ Design notes:
   setup, required as soon as two keys share an algorithm — and always, for a
   `dir` encryption key, which nothing else can select.
 - **Encryption keys are a registry of their own.** `keys` sign and verify,
-  `jwe_keys` decrypt; RFC 7517 §4.2 asks that one key serve one purpose, the two
-  bind to algorithms from different registries, and the JWK Set publisher would
-  otherwise have to learn to skip half of what it found.
+  `jwe_keys` encrypt and decrypt; RFC 7517 §4.2 asks that one key serve one
+  purpose, the two bind to algorithms from different registries, and the JWK Set
+  publisher would otherwise have to learn to skip half of what it found.
+- **A receiver takes lists and a sender takes one.** `consumers.*.jwe` names
+  keys and two allowlists because it has to accept whatever its senders are
+  still using; `issuers.*.jwe` names one key and one algorithm of each kind,
+  because a sender picks. Rotation is that asymmetry: the receiving side grows
+  its list first, the sending side changes one name afterwards.
 
 ---
 

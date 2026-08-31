@@ -11,6 +11,7 @@ use Medzuch\JwtBundle\Algorithm\KeyManagementAlgorithms;
 use Medzuch\JwtBundle\Algorithm\SigningAlgorithms;
 use Medzuch\JwtBundle\Issuer\ReservedClaims;
 use Medzuch\JwtBundle\Security\Http\Challenge;
+use Medzuch\JwtBundle\Security\Verification\NestedTokenVerifier;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
 use Symfony\Component\Config\Definition\Configurator\DefinitionConfigurator;
@@ -606,6 +607,65 @@ final class ConfigurationTree
                 '"' . implode('", "', ReservedClaims::REGISTERED) . '"',
             ))
             ->end();
+
+        self::configureIssuerEncryption($issuer);
+    }
+
+    /**
+     * Sealing what an issuer mints: sign, then encrypt (I8), the mirror of the
+     * `jwe` block a consumer reads with.
+     *
+     * Singular where that one is plural, and for the reason the reading side is
+     * plural: a receiver has to accept every algorithm and key its senders
+     * might still be using, while a sender picks one of each. Rotation is
+     * therefore the other side's list growing first and this one name changing
+     * afterwards.
+     *
+     * As on a consumer, the block carries no defaults, so an issuer that says
+     * nothing about encryption has no `jwe` key at all — which is what lets the
+     * registration ask whether the block was written rather than whether
+     * everything in it is still at some default.
+     */
+    private static function configureIssuerEncryption(NodeBuilder $issuer): void
+    {
+        $jwe = $issuer->arrayNode('jwe')
+            ->info('Seal this issuer\'s tokens: sign first, then encrypt the result as a JWE (RFC 7519 §5.2 nested JWT, §11.2 for the order). What the caller gets back is the sealed token; its `jti` and lifetime are unchanged, because encryption is what the token travels in rather than part of what it says. The recipient needs the matching key — a consumer of this application\'s own is configured with `consumers.*.jwe`.')
+            ->children();
+
+        $jwe->scalarNode('key')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('Name from the `jwe_keys` section: the key the recipient will decrypt with. One key, not a list — a sender uses the key it was told to use.')
+            ->end();
+
+        $jwe->enumNode('key_management')
+            ->values(KeyManagementAlgorithms::names())
+            ->isRequired()
+            ->info('JOSE `alg` written into the outer header: how the recipient gets the key the claims are encrypted with (RFC 7518 §4). "dir" uses the configured key as that key; the rest wrap a fresh one with it. Must be what the key is for — a wrapping key is bound to the `alg` it wraps with, and a "dir" key to the `enc` below.')
+            ->example('A256KW')
+            ->end();
+
+        $jwe->enumNode('content_encryption')
+            ->values(ContentEncryptionAlgorithms::names())
+            ->isRequired()
+            ->info('JOSE `enc` written into the outer header: how the claims themselves are encrypted (RFC 7518 §5). All six are authenticated encryption; pick one the recipient allows.')
+            ->example('A256GCM')
+            ->end();
+
+        $replicated = $jwe->arrayNode('replicated_claims');
+        $replicated->info('Claims copied into the outer header as well, where an intermediary has to read one without holding a key — `iss`, usually, so a gateway can route (RFC 7519 §5.3). The copy is read back out of the signed token, so it is the claim exactly; a receiver compares the two and must reject a token where they disagree. Nothing else about the token changes, and a name the token does not carry is not written. Empty is the default: a claim in the outer header is a claim nothing encrypted.');
+        $replicated->scalarPrototype()->cannotBeEmpty()->end();
+        $replicated->example(['iss']);
+        self::rejectMaps($replicated, 'issuers.*.jwe.replicated_claims');
+        $replicated->validate()
+            ->ifTrue(static fn(mixed $value): bool => is_array($value) && [] !== array_intersect(array_filter($value, is_string(...)), NestedTokenVerifier::JOSE_HEADER_PARAMETERS))
+            ->thenInvalid(sprintf(
+                'A replicated claim cannot be named after a registered JOSE header parameter (%s): the outer header is where those mean something else, and a receiver skips them rather than comparing them to a claim. Got %%s',
+                implode(', ', NestedTokenVerifier::JOSE_HEADER_PARAMETERS),
+            ))
+            ->end();
+
+        $jwe->end();
     }
 
     private static function configureJwks(NodeBuilder $children): void

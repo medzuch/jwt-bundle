@@ -19,6 +19,7 @@ use Medzuch\Jwt\Key\PrivateKey;
 use Medzuch\Jwt\Primitives\FrozenClock;
 use Medzuch\Jwt\Profile\AccessTokenBuilder;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
+use Medzuch\JwtBundle\Issuer\TokenEnvelope;
 use Psr\Clock\ClockInterface;
 
 /**
@@ -48,7 +49,7 @@ final class TestTokenFactory
         private readonly string $clientId = 'test-client',
         private readonly int $ttl = 300,
         private readonly ?ClockInterface $clock = null,
-        private readonly ?SealedTokens $envelope = null,
+        private readonly ?TokenEnvelope $envelope = null,
     ) {
         $this->audience = $audience;
     }
@@ -108,7 +109,7 @@ final class TestTokenFactory
      */
     public function encryptedWith(KeyManagementAlgorithm $keyManagement, ContentEncryptionAlgorithm $contentEncryption, Key $recipientKey): self
     {
-        return $this->copy(envelope: new SealedTokens($keyManagement, $contentEncryption, $recipientKey));
+        return $this->copy(envelope: new TokenEnvelope($keyManagement, $contentEncryption, $recipientKey));
     }
 
     public function withClientId(string $clientId): self
@@ -176,7 +177,7 @@ final class TestTokenFactory
         ?string $clientId = null,
         ?int $ttl = null,
         ?ClockInterface $clock = null,
-        ?SealedTokens $envelope = null,
+        ?TokenEnvelope $envelope = null,
     ): self {
         return new self(
             $issuer ?? $this->issuer,

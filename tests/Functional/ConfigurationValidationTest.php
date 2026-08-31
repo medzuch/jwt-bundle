@@ -549,6 +549,71 @@ final class ConfigurationValidationTest extends KernelTestCase
     }
 
     /**
+     * @param array<string, mixed> $jwe
+     * @param array<string, mixed> $jweKeys
+     */
+    #[DataProvider('unsealableConfigurations')]
+    #[TestDox('$defect fails at container build')]
+    public function testEncryptionThatCouldNeverSealAToken(string $defect, array $jweKeys, array $jwe, string $expected): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches($expected);
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'jwe_keys' => $jweKeys,
+            'issuers' => ['default' => self::issuer(['jwe' => $jwe])],
+        ]]);
+    }
+
+    /**
+     * The sending half of the same question (I8), and a shorter list: an issuer
+     * names one key and one algorithm of each kind, so the only way to get it
+     * wrong is to name a key that is not made of what the algorithm needs.
+     *
+     * @return iterable<string, array{string, array<string, mixed>, array<string, mixed>, string}>
+     */
+    public static function unsealableConfigurations(): iterable
+    {
+        $wrapping = ['secret' => self::JWE_SECRET, 'algorithm' => 'A256KW', 'kid' => 'enc-1'];
+
+        yield 'unknown key' => [
+            'an issuer naming a JWE key that does not exist',
+            ['sealed' => $wrapping],
+            ['key' => 'typo', 'key_management' => 'A256KW', 'content_encryption' => 'A256GCM'],
+            '/encrypts with key "typo", which is not defined under medzuch_jwt.jwe_keys/',
+        ];
+
+        yield 'key for another algorithm' => [
+            'an issuer wrapping with an algorithm its key is not bound to',
+            ['sealed' => $wrapping],
+            ['key' => 'sealed', 'key_management' => 'A192KW', 'content_encryption' => 'A256GCM'],
+            '/encrypts with A192KW and JWE key "sealed", which is bound to A256KW.*name a key bound to A192KW/',
+        ];
+
+        yield 'dir key for another content algorithm' => [
+            'an issuer encrypting directly with a key that is a key for something else',
+            ['sealed' => ['secret' => self::JWE_SECRET, 'algorithm' => 'A256GCM', 'kid' => 'enc-1']],
+            ['key' => 'sealed', 'key_management' => 'dir', 'content_encryption' => 'A128GCM'],
+            '/encrypts with "dir" and A128GCM and JWE key "sealed", which is bound to A256GCM/',
+        ];
+
+        yield 'wrapping key used directly' => [
+            'an issuer encrypting directly with a key that wraps',
+            ['sealed' => $wrapping],
+            ['key' => 'sealed', 'key_management' => 'dir', 'content_encryption' => 'A256GCM'],
+            '/A "dir" key is the Content Encryption Key itself/',
+        ];
+
+        yield 'replicating a header parameter' => [
+            'an issuer replicating a claim named after a JOSE header parameter',
+            ['sealed' => $wrapping],
+            ['key' => 'sealed', 'key_management' => 'A256KW', 'content_encryption' => 'A256GCM', 'replicated_claims' => ['iss', 'kid']],
+            '/cannot be named after a registered JOSE header parameter/',
+        ];
+    }
+
+    /**
      * @param array<string, mixed> $overrides
      *
      * @return array<string, mixed>
