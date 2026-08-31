@@ -32,6 +32,7 @@ is the promise; the class behind it is not:
 | Id | Answers | What names it |
 |---|---|---|
 | `medzuch_jwt.handler.<consumer>` | `Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface` | a firewall's `access_token.token_handler` |
+| `medzuch_jwt.dispatcher.<dispatcher>` | `Symfony\Component\Security\Http\AccessToken\AccessTokenHandlerInterface` | a firewall's `access_token.token_handler` |
 | `medzuch_jwt.entry_point.<consumer>` | `Symfony\Component\Security\Http\EntryPoint\AuthenticationEntryPointInterface` | a firewall's `entry_point` |
 | `medzuch_jwt.access_denied.<consumer>` | `Symfony\Component\Security\Http\Authorization\AccessDeniedHandlerInterface` | a firewall's `access_denied_handler` |
 | `medzuch_jwt.denylist.<consumer>` | `Medzuch\JwtBundle\Revocation\TokenDenylistInterface` | your code, to revoke a token |
@@ -52,6 +53,13 @@ it is not given, and answers JSON with an `ETag` — the JWK Set from one, this 
 RFC 8414 metadata from the other. That is what is promised. `medzuch_jwt.metadata_controller`
 exists only when `metadata.issuer` is configured, the way the JWK Set rows exist only when
 there are keys to publish.
+
+**A dispatcher answers the same question as a handler**, because a firewall asks one: it picks
+the consumer expecting the issuer the token names, and that consumer judges it. The `entry_point`
+and `access_denied` rows above are its as well — a dispatcher's name where the `<consumer>` is —
+since the challenge for a request carrying no token belongs to the firewall rather than to
+whichever tenant a token would have reached. A dispatcher's name may not be a consumer's, and the
+container refuses one that is.
 
 **A key answers by role because only one role may exist**: an entry given a public half alone
 has a `.verification` service and no `.signing` one, and a shared secret is both at once. The

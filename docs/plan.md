@@ -230,7 +230,7 @@ default and adds no runtime cost when unconfigured.
 | C8 | Security Event Token consumer (receiving RISC/CAEP-style events). **Landed in Phase 5** as `security_events.consumers`. Replay detection is the receiver's: a SET has no `exp` (RFC 8417 §4.1.4), so the denylist — whose contract takes the moment an entry may be forgotten — is not the seam for it | `SetProfile::consumer()` | T3 |
 | C9 | Revocation: `TokenDenylistInterface` checked on `jti`, PSR-16 cache implementation, and the denylist registered as a service the application can revoke through. No `NullDenylist`: unconfigured means no service and no lookup, which is the same default said with less | bundle | T2 |
 | C10 | Freshness policy: `max_token_age` (reject old `iat` even if `exp` is generous), configurable `leeway`, injectable PSR-20 clock. The max age is the handler's own check rather than the library's — `ValidatorBuilder` has no notion of one — and carries its own `RejectionReason`, since an application's ceiling and an issuer's expiry are different facts about different clocks | library validator + handler | T1 (leeway/clock), T2 (max age) |
-| C11 | Multi-issuer / multi-tenant: pick the consumer by the token's `iss` (or by host/tenant resolver) before validation, with a strict allowlist | `CompositeResolver`, bundle dispatcher | T3 |
+| C11 | Multi-issuer / multi-tenant: pick the consumer by the token's `iss` before validation, with a strict allowlist. **Landed in Phase 5** as `dispatchers.<name>`, whose routing table is the listed consumers themselves — each already declares the `iss` it expects, so the value is written once and an env reference still works. Reading an unverified `iss` is safe because choosing a judge grants nothing: the consumer selected asks every question it would have asked anyway, on its own keys. No fallback consumer, and a host/tenant resolver is the application's own handler rather than a second selection strategy here | bundle dispatcher | T3 |
 | C12 | Encrypted (JWE) and nested JWT support on the consumer side. **Landed in Phase 5** as `consumers.<name>.jwe` over a `jwe_keys` registry, as a decorator in front of the verifier the consumer already had — so encryption changes what arrives and nothing about what is then checked. A bare signed token is refused once the block is there, with no opt-out: an attacker able to strip the outer layer and be believed would have taken the confidentiality for the cost of two segments. Symmetric key management only (`dir` and the AES key-wrapping schemes); `Decrypter` rather than `NestedJwtParser`, whose one entry point would verify the inner signature a second time under a second copy of the same allowlist | `Decrypter` | T3 |
 | C13 | `ScopeVoter` + `#[IsGranted('SCOPE_x')]`-style checks and an `is_granted_scope()` expression function. Scopes are read from the `scope` claim — the RFC's delimited string or a JSON list — through a `ProvidesScopes` user, so what decides is the user rather than the mode: `claims` builds one, a `custom` factory can, and so can a store-loaded user. The claim name is not configurable; `scp` and its like belong to a custom factory | Symfony voters | T2 |
 | C14 | Audience policy per consumer: `any` (RFC 7519 §4.1.3, the default) or `exclusive` — refuse a token addressed to anyone else, as RFC 9068 §3 asks. Not "exact match": a consumer answering to two names is addressed by either, so requiring the token to name *all* of them would refuse a legitimate one | library consumer + `AccessTokenHandler` | T2 |
@@ -414,6 +414,11 @@ medzuch_jwt:
       allowed_algorithms: [RS256, ES256]
       user: { mode: custom, factory: App\Security\TenantUserFactory }
 
+  dispatchers:                       # one firewall, several tenants, the token choosing (C11)
+    tenants:                         # a name of its own: a consumer's would be the same id
+      consumers: [api, partner]
+      realm: api
+
   token_extractors:
     spa_cookie:
       cookie: __Host-jwt
@@ -467,6 +472,10 @@ Design notes:
   `jwe_keys` encrypt and decrypt; RFC 7517 §4.2 asks that one key serve one
   purpose, the two bind to algorithms from different registries, and the JWK Set
   publisher would otherwise have to learn to skip half of what it found.
+- **A dispatcher's routing table is its consumers.** Each already declares the
+  `iss` it expects, so C11 writes that value once: a second copy in a routing
+  map would be a place for the two to disagree, and a YAML key cannot be an env
+  reference the way a tenant's issuer usually is.
 - **A receiver takes lists and a sender takes one.** `consumers.*.jwe` names
   keys and two allowlists because it has to accept whatever its senders are
   still using; `issuers.*.jwe` names one key and one algorithm of each kind,
@@ -645,9 +654,10 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   phase ran long enough that stamping an interim minor would have promised
   nothing the BC policy did not already say better.)*
 - **Phase 5+ — Standards-track (post-1.0).** §3.6, together with the T3 rows
-  that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1) and
-  D6's Flex recipe (§3.5): DPoP, mTLS binding, token exchange, introspection
-  fallback, JWE/nested tokens, SET issue/consume, discovery documents.
+  that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1, landed)
+  and D6's Flex recipe (§3.5, still open): DPoP, mTLS binding, token exchange,
+  introspection fallback, JWE/nested tokens, SET issue/consume, discovery
+  documents.
   *(K7 landed first, and the order is worth recording: what the library already
   carries decides what is a bundle-sized change. JWE and SET are whole
   implementations in `medzuch/jwt-php` already, so C12/I8 and C8/I7 are wiring;

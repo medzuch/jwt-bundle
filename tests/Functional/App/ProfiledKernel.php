@@ -68,6 +68,19 @@ final class ProfiledKernel extends Kernel
         $container->addCompilerPass(new PublicForTestsPass(), PassConfig::TYPE_BEFORE_REMOVING);
     }
 
+    /**
+     * Whether the firewall's handler is a dispatcher rather than a consumer
+     * (C11), which is what a dispatcher called "api" means here.
+     *
+     * @param array<array-key, mixed> $config
+     */
+    private static function dispatches(array $config): bool
+    {
+        $dispatchers = $config['dispatchers'] ?? null;
+
+        return is_array($dispatchers) && isset($dispatchers['api']);
+    }
+
     protected function configureContainer(ContainerConfigurator $container): void
     {
         $container->extension('framework', [
@@ -88,7 +101,12 @@ final class ProfiledKernel extends Kernel
                 'pattern' => '^/api',
                 'stateless' => true,
                 'provider' => 'users',
-                'access_token' => ['token_handler' => 'medzuch_jwt.handler.api'],
+                // A dispatcher called "api" is what the firewall names where
+                // one is configured (C11): the panel traces what the firewall
+                // calls, and with a dispatcher in front that is the dispatcher.
+                'access_token' => ['token_handler' => self::dispatches($this->bundleConfig)
+                    ? 'medzuch_jwt.dispatcher.api'
+                    : 'medzuch_jwt.handler.api'],
             ]],
             'access_control' => [['path' => '^/api', 'roles' => 'IS_AUTHENTICATED_FULLY']],
         ]);

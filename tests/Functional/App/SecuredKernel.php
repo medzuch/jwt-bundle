@@ -104,12 +104,21 @@ final class SecuredKernel extends Kernel
             ];
         }
 
-        if (self::configures($this->bundleConfig, 'consumers', 'api')) {
+        // A firewall names one handler, and either kind answers: a consumer,
+        // or a dispatcher standing in front of several (C11). A dispatcher
+        // called "api" wins, because a kernel configured with both meant the
+        // one that routes.
+        $dispatches = self::configures($this->bundleConfig, 'dispatchers', 'api');
+
+        if ($dispatches || self::configures($this->bundleConfig, 'consumers', 'api')) {
             // Symfony's realm, which its own rejected-token header carries.
             // It is a second knob beside the consumer's, and the two are worth
             // keeping equal — the README says so, and this is what proves the
             // README right.
-            $accessToken = ['token_handler' => 'medzuch_jwt.handler.api', 'realm' => 'reports-api'];
+            $accessToken = [
+                'token_handler' => $dispatches ? 'medzuch_jwt.dispatcher.api' : 'medzuch_jwt.handler.api',
+                'realm' => 'reports-api',
+            ];
 
             // The firewall names the extractors, as an application's would:
             // the bundle registers them, security.yaml chooses them, and the

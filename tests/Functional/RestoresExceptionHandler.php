@@ -22,6 +22,17 @@ trait RestoresExceptionHandler
     {
         parent::tearDown();
 
+        $this->restoreExceptionHandler();
+    }
+
+    /**
+     * The restoration on its own, for a case class that needs a `tearDown()`
+     * of its own: a method on the class wins over a trait's silently, and the
+     * handler would simply stay up — which the current Symfony does not report
+     * and the 6.4 floor does, as sixteen risky tests.
+     */
+    protected function restoreExceptionHandler(): void
+    {
         $current = set_exception_handler(null);
         restore_exception_handler();
 

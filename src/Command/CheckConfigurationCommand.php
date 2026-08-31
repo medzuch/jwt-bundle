@@ -42,7 +42,7 @@ use Throwable;
  */
 #[AsCommand(
     name: 'jwt:config:check',
-    description: 'Build every configured key, consumer, issuer and verifier, reach every remote key set, and report what fails',
+    description: 'Build every configured key, consumer, issuer, dispatcher and verifier, reach every remote key set, and report what fails',
 )]
 final class CheckConfigurationCommand extends Command
 {
@@ -79,7 +79,8 @@ final class CheckConfigurationCommand extends Command
                 The container refuses the mistakes it can see when it is built. This is for
                 the ones it cannot: a key file that was not deployed, an env variable that
                 arrived empty, a secret shorter than its algorithm allows, an issuer whose
-                JWK Set cannot be reached from here.
+                JWK Set cannot be reached from here, two tenants behind one dispatcher whose
+                environment variables turn out to name the same issuer.
 
                 Exit status is 0 when everything answered, 1 when anything did not, and 2
                 when this application configures nothing to check — a gate should not go

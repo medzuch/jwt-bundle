@@ -48,11 +48,17 @@ final class InspectTokenCommand extends Command
     private const INSTANTS = ['exp', 'iat', 'nbf', 'auth_time'];
 
     /**
-     * @param ServiceProviderInterface<AccessTokenHandlerInterface> $consumers
+     * @param ServiceProviderInterface<AccessTokenHandlerInterface> $consumers consumers and dispatchers
+     *                                                                         alike: a firewall names either
+     * @param list<string>                                          $dispatchers which of those names is a
+     *                                                                           dispatcher (C11), so the
+     *                                                                           verdict can be attributed to
+     *                                                                           the thing that gave it
      */
     public function __construct(
         private readonly ServiceProviderInterface $consumers,
         private readonly ClockInterface $clock,
+        private readonly array $dispatchers = [],
     ) {
         parent::__construct();
     }
@@ -61,7 +67,7 @@ final class InspectTokenCommand extends Command
     {
         $this
             ->addArgument('token', InputArgument::REQUIRED, 'The compact token, or "-" to read it from standard input')
-            ->addOption('consumer', null, InputOption::VALUE_REQUIRED, 'Name of the configured consumer to verify against. Without it, one configured consumer is used and several are refused')
+            ->addOption('consumer', null, InputOption::VALUE_REQUIRED, 'Name of the configured consumer — or dispatcher — to verify against. Without it, one configured consumer is used, a lone dispatcher is preferred to the consumers behind it, and anything else is refused')
             ->setHelp(<<<'HELP'
                 Decodes a token and, where a consumer is configured, verifies it.
 
@@ -114,7 +120,7 @@ final class InspectTokenCommand extends Command
             return Command::INVALID;
         }
 
-        $name = self::string($input, 'consumer') ?? self::onlyConsumer($this->consumers);
+        $name = self::string($input, 'consumer') ?? $this->theOneToAsk();
 
         if (null === $name) {
             return $this->withoutAConsumer($io);
@@ -145,7 +151,7 @@ final class InspectTokenCommand extends Command
         $handler = $this->consumers->get($name);
 
         if (!$handler instanceof AccessTokenHandlerInterface) {
-            $io->error(sprintf('The service behind consumer "%s" is not an access-token handler.', $name));
+            $io->error(sprintf('The service behind %s "%s" is not an access-token handler.', strtolower($this->nounFor($name)), $name));
 
             return Command::FAILURE;
         }
@@ -155,7 +161,7 @@ final class InspectTokenCommand extends Command
         } catch (AuthenticationException $refusal) {
             $reason = $refusal instanceof RejectedTokenException ? $refusal->reason->value : 'other';
 
-            $io->error(sprintf('Consumer "%s" refuses this token: %s', $name, $reason));
+            $io->error(sprintf('%s "%s" refuses this token: %s', $this->nounFor($name), $name, $reason));
             $io->writeln($refusal->getMessage());
 
             // The library's account of what went wrong, which is the sentence
@@ -169,7 +175,7 @@ final class InspectTokenCommand extends Command
             return Command::FAILURE;
         }
 
-        $io->success(sprintf('Consumer "%s" accepts this token.', $name));
+        $io->success(sprintf('%s "%s" accepts this token.', $this->nounFor($name), $name));
         // The name on the badge, which for `user.mode: provider` and `claims`
         // is who Symfony would go and look for — not proof that it finds them.
         $io->writeln(sprintf('It would authenticate as <info>%s</info>.', OutputFormatter::escape($badge->getUserIdentifier())));
@@ -315,17 +321,35 @@ final class InspectTokenCommand extends Command
     }
 
     /**
-     * One configured consumer is the common case and naming it every time would
-     * be a ceremony; several are ambiguous, and picking one would answer a
-     * question nobody asked.
+     * What to ask when nothing was named. One configured consumer is the
+     * common case and naming it every time would be a ceremony; several are
+     * ambiguous, and picking one would answer a question nobody asked.
      *
-     * @param ServiceProviderInterface<AccessTokenHandlerInterface> $consumers
+     * A lone dispatcher is preferred to the consumers behind it, which is not
+     * a tie-break but the same answer: a dispatcher is the front door — what a
+     * firewall points at — and asking it exercises the routing as well as the
+     * consumer it routes to. Two dispatchers are ambiguous again.
      */
-    private static function onlyConsumer(ServiceProviderInterface $consumers): ?string
+    private function theOneToAsk(): ?string
     {
-        $names = array_keys($consumers->getProvidedServices());
+        if (1 === count($this->dispatchers)) {
+            return $this->dispatchers[array_key_first($this->dispatchers)];
+        }
+
+        $names = array_keys($this->consumers->getProvidedServices());
 
         return 1 === count($names) ? $names[0] : null;
+    }
+
+    /**
+     * What the verdict line calls the thing that gave it. A dispatcher's answer
+     * is the answer of the consumer it routed to, and calling it a consumer
+     * would teach the wrong noun to whoever is reading the output to find out
+     * which tenant took the token.
+     */
+    private function nounFor(string $name): string
+    {
+        return in_array($name, $this->dispatchers, true) ? 'Dispatcher' : 'Consumer';
     }
 
     private static function token(InputInterface $input): string

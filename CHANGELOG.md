@@ -13,6 +13,43 @@ a class or method signature would be.
 
 ### Added
 
+- **Several issuers behind one firewall** (C11), under a new `dispatchers`
+  section and `medzuch_jwt.dispatcher.<name>`. A dispatcher reads the issuer an
+  arriving token names and hands it to the consumer expecting that issuer; a
+  firewall points at it exactly as it would at a handler.
+
+  **The routing table is the consumers themselves.** Each already declares the
+  `iss` it expects, so there is nowhere to write the value twice and nowhere for
+  two copies to disagree — and a per-tenant issuer can stay an environment
+  variable, which a key in a YAML map could not be.
+
+  **The issuer it reads is unverified, and that is safe because routing grants
+  nothing.** The consumer selected then asks every question it would have asked
+  anyway, against its own keys, so relabelling a token to reach another tenant
+  buys the right to be refused there. The allowlist is the listed consumers and
+  nothing else: an issuer none of them expects is refused as `wrong_issuer`
+  before a key is fetched, and a token that names none is refused the same way;
+  a string that is not a token at all is `malformed`, which is the answer a
+  consumer named directly would have given. There is no fallback consumer and
+  there will not be one.
+
+  An encrypted token routes on the `iss` replicated into its outer header
+  (RFC 7519 §5.3), which is the case that section exists for and what I8's
+  `replicated_claims` writes. The `WWW-Authenticate` realm belongs to the
+  dispatcher — a challenge goes out before anything could say which tenant the
+  caller meant — so `medzuch_jwt.entry_point.<name>` and
+  `medzuch_jwt.access_denied.<name>` answer to a dispatcher's name too.
+  Everything else stays the consumer's: the verified event names the tenant that
+  accepted the token, and a denylist is still per consumer.
+
+  Two consumers expecting one issuer make the route ambiguous, and that is
+  asked twice: two `issuer` values that are already the same string are refused
+  when the container is built, and two different `%env(...)%` references that
+  resolve to one URL when the dispatcher is — which `jwt:config:check` builds,
+  so a deploy finds it. `jwt:token:inspect` takes a dispatcher's name, is what
+  `--consumer` falls back to when one is configured, and says `Dispatcher` in
+  its verdict, because the answer is the routed consumer's.
+
 - **An issuer can seal what it mints** (I8), under a `jwe` block on
   `issuers.<name>`: the token is signed first and the whole signed token
   encrypted after (RFC 7519 §11.2 asks for that order, and the type of what goes

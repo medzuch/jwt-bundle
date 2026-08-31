@@ -738,4 +738,82 @@ final class ConfigurationGuard
             default => sprintf('A key that wraps is bound to the algorithm it wraps with — name a key bound to %s, or wrap with %s.', $needed, $bound),
         };
     }
+
+    /**
+     * Whether a dispatcher describes a firewall that could route anything
+     * (C11).
+     *
+     * Three questions, none of which the tree can ask: every consumer named
+     * has to exist, none may be named twice — a route cannot be a rotation —
+     * and the dispatcher's own name must not be a consumer's, because both
+     * are things a firewall names and one id cannot be two handlers.
+     *
+     * Two consumers expecting the same issuer is the fourth, and it is asked
+     * twice. Two `issuer` values that are already the same string here — two
+     * literals, or two copies of one `%env(...)%` placeholder — are a mistake
+     * the container can see, and this bundle refuses what it can see. Two
+     * *different* placeholders resolving to one URL cannot be seen until
+     * something reads them, so the dispatcher asks again when it is built and
+     * `jwt:config:check` builds every one.
+     *
+     * @param array{consumers: list<string>, realm: string|null} $dispatcher
+     * @param array<string, array<string, mixed>> $consumers
+     */
+    public static function assertCanDispatch(string $name, array $dispatcher, array $consumers): void
+    {
+        $context = sprintf('Dispatcher "%s"', $name);
+
+        if (isset($consumers[$name])) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s has the name of a configured consumer. Both are handlers a firewall names, and one of them would have to answer to the other\'s service id.',
+                $context,
+            ));
+        }
+
+        foreach ($dispatcher['consumers'] as $consumer) {
+            if (!isset($consumers[$consumer])) {
+                throw new InvalidConfigurationException(sprintf(
+                    '%s routes to consumer "%s", which is not defined under medzuch_jwt.consumers. Defined: %s.',
+                    $context,
+                    $consumer,
+                    [] === $consumers ? 'none' : '"' . implode('", "', array_keys($consumers)) . '"',
+                ));
+            }
+        }
+
+        $duplicates = array_keys(array_filter(array_count_values($dispatcher['consumers']), static fn(int $count): bool => $count > 1));
+
+        if ([] !== $duplicates) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s names consumer "%s" more than once. A consumer is reached by the issuer it expects, so naming it twice cannot mean two routes.',
+                $context,
+                implode('", "', $duplicates),
+            ));
+        }
+
+        $routes = [];
+
+        foreach ($dispatcher['consumers'] as $consumer) {
+            $issuer = $consumers[$consumer]['issuer'];
+
+            if (!is_string($issuer)) {
+                continue;
+            }
+
+            if (isset($routes[$issuer])) {
+                throw new InvalidConfigurationException(sprintf(
+                    '%s cannot choose between consumers "%s" and "%s": both expect issuer %s, and the token names one issuer. Consumers behind one dispatcher are told apart by their `iss` and by nothing else.',
+                    $context,
+                    $routes[$issuer],
+                    $consumer,
+                    // Printed rather than interpolated bare, because half the
+                    // time it is an env placeholder and quoting it as a URL
+                    // would read like one that had been resolved.
+                    sprintf('"%s"', $issuer),
+                ));
+            }
+
+            $routes[$issuer] = $consumer;
+        }
+    }
 }

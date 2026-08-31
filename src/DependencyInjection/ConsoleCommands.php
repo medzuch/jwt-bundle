@@ -9,6 +9,7 @@ use Medzuch\JwtBundle\Command\CreateTokenCommand;
 use Medzuch\JwtBundle\Command\DumpJwksCommand;
 use Medzuch\JwtBundle\Command\GenerateKeyCommand;
 use Medzuch\JwtBundle\Command\InspectTokenCommand;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ReferenceConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ServicesConfigurator;
@@ -43,7 +44,7 @@ final class ConsoleCommands
      * rather than the container: the names are known at build time, and a
      * command that could fetch anything could be asked for anything.
      *
-     * @param array{keys: array<string, mixed>, jwe_keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, remote_jwks: array<string, mixed>, security_events: array{issuers: array<string, mixed>, consumers: array<string, mixed>}, metadata: array{issuer: string|null, ...}, ...} $config
+     * @param array{keys: array<string, mixed>, jwe_keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, dispatchers: array<string, mixed>, id_tokens: array<string, mixed>, remote_jwks: array<string, mixed>, security_events: array{issuers: array<string, mixed>, consumers: array<string, mixed>}, metadata: array{issuer: string|null, ...}, ...} $config
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                                                              $keys
      * @param bool                                                                                                                                                                        $publishes whether a JWK Set service was registered to dump
      */
@@ -54,7 +55,27 @@ final class ConsoleCommands
         }
 
         $issuers = array_keys($config['issuers']);
-        $consumers = array_keys($config['consumers']);
+        // Dispatchers stand beside consumers here for the same reason a
+        // firewall may name either: `--consumer api` should reach whatever
+        // answers for "api", and a dispatcher's verdict is the verdict of the
+        // consumer it routed to.
+        $dispatchers = array_keys($config['dispatchers']);
+        $collisions = array_intersect($dispatchers, array_keys($config['consumers']));
+
+        if ([] !== $collisions) {
+            // Refused already, by the guard that runs when a dispatcher is
+            // registered — and asked again here because this is the array that
+            // depends on it. The locator below is keyed by name, so a name
+            // belonging to both would not be an error: it would be one entry
+            // quietly answering for the other, and `--consumer` would reach a
+            // service nobody named.
+            throw new InvalidConfigurationException(sprintf(
+                'medzuch_jwt.dispatchers and medzuch_jwt.consumers both define "%s". Both are handlers a firewall names, and one of them would have to answer to the other\'s name.',
+                implode('", "', $collisions),
+            ));
+        }
+
+        $consumers = [...array_keys($config['consumers']), ...$dispatchers];
 
         $services->set('medzuch_jwt.command.key_generate', GenerateKeyCommand::class)
             ->tag('console.command', ['command' => 'jwt:key:generate']);
@@ -81,9 +102,15 @@ final class ConsoleCommands
             ->args([
                 service_locator(array_combine(
                     $consumers,
-                    array_map(static fn(string $name): ReferenceConfigurator => service('medzuch_jwt.handler.' . $name), $consumers),
+                    array_map(
+                        static fn(string $name): ReferenceConfigurator => service(
+                            (isset($config['dispatchers'][$name]) ? 'medzuch_jwt.dispatcher.' : 'medzuch_jwt.handler.') . $name,
+                        ),
+                        $consumers,
+                    ),
                 )),
                 service('medzuch_jwt.clock'),
+                $dispatchers,
             ])
             ->tag('console.command', ['command' => 'jwt:token:inspect']);
 
@@ -113,7 +140,7 @@ final class ConsoleCommands
      * path or an env reference until a factory reads it, so a file nobody
      * deployed is a configuration that compiles and a request that does not.
      *
-     * @param array{keys: array<string, mixed>, jwe_keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, id_tokens: array<string, mixed>, security_events: array{issuers: array<string, mixed>, consumers: array<string, mixed>}, metadata: array{issuer: string|null, ...}, ...} $config
+     * @param array{keys: array<string, mixed>, jwe_keys: array<string, mixed>, issuers: array<string, mixed>, consumers: array<string, mixed>, dispatchers: array<string, mixed>, id_tokens: array<string, mixed>, security_events: array{issuers: array<string, mixed>, consumers: array<string, mixed>}, metadata: array{issuer: string|null, ...}, ...} $config
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}>                                        $keys
      *
      * @return array<string, ReferenceConfigurator>
@@ -157,6 +184,13 @@ final class ConsoleCommands
 
         foreach (array_keys($config['issuers']) as $name) {
             $subjects[sprintf('issuer "%s"', $name)] = service('medzuch_jwt.issuer.' . $name);
+        }
+
+        foreach (array_keys($config['dispatchers']) as $name) {
+            // The row where two tenants sharing an issuer stops being a token
+            // routed to whichever was listed first: an `issuer` is an env
+            // reference until something builds it, and this is that something.
+            $subjects[sprintf('dispatcher "%s"', $name)] = service('medzuch_jwt.dispatcher.' . $name);
         }
 
         foreach (array_keys($config['id_tokens']) as $name) {

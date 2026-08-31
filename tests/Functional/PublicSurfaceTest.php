@@ -41,6 +41,9 @@ final class PublicSurfaceTest extends KernelTestCase
      */
     private const NAMES = [
         '<consumer>' => 'api',
+        // Not "api": a dispatcher and a consumer cannot share a name, since
+        // both are things a firewall points at.
+        '<dispatcher>' => 'tenants',
         '<issuer>' => 'api',
         '<registration>' => 'partner',
         '<extractor>' => 'spa',
@@ -78,6 +81,7 @@ final class PublicSurfaceTest extends KernelTestCase
                     'denylist' => ['cache' => 'test.cache'],
                 ],
             ],
+            'dispatchers' => ['tenants' => ['consumers' => ['api']]],
             'id_tokens' => [
                 'partner' => ['issuer' => 'https://idp.test', 'client_id' => 'client', 'keys' => ['signer'], 'allowed_algorithms' => ['HS256']],
             ],

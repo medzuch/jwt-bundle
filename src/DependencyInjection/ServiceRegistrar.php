@@ -43,6 +43,7 @@ use Medzuch\JwtBundle\Security\Http\InsufficientScopeHandler;
 use Medzuch\JwtBundle\Security\Identity\ClaimsUserResolver;
 use Medzuch\JwtBundle\Security\Identity\CustomUserResolver;
 use Medzuch\JwtBundle\Security\Identity\ProviderUserResolver;
+use Medzuch\JwtBundle\Security\IssuerDispatchingHandler;
 use Medzuch\JwtBundle\Security\User\ClaimRoles;
 use Medzuch\JwtBundle\Security\User\JwtUserFactoryInterface;
 use Medzuch\JwtBundle\Security\Verification\CustomTokenVerifier;
@@ -62,6 +63,7 @@ use Symfony\Component\ExpressionLanguage\ExpressionFunction;
 
 use function Symfony\Component\DependencyInjection\Loader\Configurator\inline_service;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
+use function Symfony\Component\DependencyInjection\Loader\Configurator\service_locator;
 use function Symfony\Component\DependencyInjection\Loader\Configurator\tagged_iterator;
 
 /**
@@ -100,6 +102,7 @@ final class ServiceRegistrar
          *     remote_jwks: array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}, jwe?: array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
+         *     dispatchers: array<string, array{consumers: list<string>, realm: string|null}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
          *     security_events: array{issuers: array<string, array{issuer: string, key: string, audience: list<string>}>, consumers: array<string, array{issuer: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, audience: string|null, leeway: int}>},
          *     metadata: array{issuer: string|null, jwks_uri: string|null, extra: array<string, mixed>, cache_max_age: int},
@@ -139,6 +142,7 @@ final class ServiceRegistrar
         $this->registerRemoteJwks($services, $builder, $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerIssuers($services, $keys, $config['issuers'], $config['jwe_keys']);
         $this->registerConsumers($services, $builder, $keys, $config['consumers'], $config['jwe_keys'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
+        $this->registerDispatchers($services, $config['dispatchers'], $config['consumers']);
         $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerSecurityEvents($services, $builder, $keys, $config['security_events'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
@@ -643,6 +647,56 @@ final class ServiceRegistrar
                     $consumer['max_token_age'],
                     $consumer['leeway'],
                     self::registerDenylist($services, $builder, $name, $consumer['denylist'], $consumer['leeway']),
+                    service('event_dispatcher')->nullOnInvalid(),
+                ]);
+        }
+    }
+
+    /**
+     * One firewall, several consumers, the token choosing (C11).
+     *
+     * Registered as `medzuch_jwt.dispatcher.<name>` rather than under the
+     * handler prefix: a firewall names either, and an id that could be a
+     * consumer or something that picks between consumers would answer two
+     * questions with one name. Tagged like a handler all the same, because the
+     * profiler traces what a firewall calls and this is what a firewall calls.
+     *
+     * The consumers arrive as a locator, so the request builds the one it
+     * routed to. Their issuers arrive beside it as plain arguments — which is
+     * what lets a `%env(...)%` per tenant work, since the container resolves
+     * those on the way in and nothing here has to read one at build.
+     *
+     * @param array<string, array{consumers: list<string>, realm: string|null}> $dispatchers
+     * @param array<string, array{issuer: string, ...}>     $consumers
+     */
+    private function registerDispatchers(ServicesConfigurator $services, array $dispatchers, array $consumers): void
+    {
+        foreach ($dispatchers as $name => $dispatcher) {
+            ConfigurationGuard::assertCanDispatch($name, $dispatcher, $consumers);
+
+            $routed = array_values($dispatcher['consumers']);
+
+            // The firewall's two RFC 6750 answers belong to whatever it names,
+            // and here that is this. A consumer's realm could not stand in for
+            // it: a challenge goes out where there is no valid token, which is
+            // before anything could say whose tenant the caller meant.
+            $realm = $dispatcher['realm'] ?? $name;
+
+            $services->set('medzuch_jwt.entry_point.' . $name, BearerEntryPoint::class)
+                ->args([$realm]);
+
+            $services->set('medzuch_jwt.access_denied.' . $name, InsufficientScopeHandler::class)
+                ->args([$realm]);
+
+            $services->set('medzuch_jwt.dispatcher.' . $name, IssuerDispatchingHandler::class)
+                ->tag('medzuch_jwt.token_handler', ['consumer' => $name])
+                ->args([
+                    array_combine($routed, array_map(static fn(string $consumer): string => $consumers[$consumer]['issuer'], $routed)),
+                    service_locator(array_combine(
+                        $routed,
+                        array_map(static fn(string $consumer): mixed => service('medzuch_jwt.handler.' . $consumer), $routed),
+                    )),
+                    $name,
                     service('event_dispatcher')->nullOnInvalid(),
                 ]);
         }

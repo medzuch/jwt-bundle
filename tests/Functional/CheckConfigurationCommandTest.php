@@ -132,6 +132,36 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertStringContainsString('exactly 32 bytes', $tester->getDisplay());
     }
 
+    /**
+     * The one dispatcher question the container cannot answer: two tenants
+     * whose *different* env references resolve to the same issuer. Written the
+     * same way they are refused at build; written as two variables that happen
+     * to hold one URL, nothing can see it until something reads them — so this
+     * row is that something, and where a deploy finds out instead of a request
+     * being routed to whichever tenant was listed first.
+     */
+    #[TestDox('two tenants expecting one issuer is a row in the report, not a routed token')]
+    public function testDispatcherWithAmbiguousRoutes(): void
+    {
+        $_ENV['OTHER_TENANT_ISSUER'] = 'https://issuer.test';
+        putenv('OTHER_TENANT_ISSUER=https://issuer.test');
+
+        $configuration = self::configuration();
+        $configuration['consumers']['other'] = ['issuer' => '%env(OTHER_TENANT_ISSUER)%'] + $configuration['consumers']['api'];
+        $configuration['dispatchers'] = ['tenants' => ['consumers' => ['api', 'other']]];
+
+        try {
+            $tester = self::check(configuration: $configuration);
+        } finally {
+            unset($_ENV['OTHER_TENANT_ISSUER']);
+            putenv('OTHER_TENANT_ISSUER');
+        }
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('dispatcher "tenants"', $tester->getDisplay());
+        self::assertStringContainsString('cannot choose between consumers', $tester->getDisplay());
+    }
+
     #[TestDox('an issuer that cannot be reached fails the check, and --skip-remote leaves it alone')]
     public function testRemoteSetIsReached(): void
     {

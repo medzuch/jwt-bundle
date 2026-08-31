@@ -19,6 +19,7 @@ use PHPUnit\Framework\Attributes\TestDox;
 use Psr\Container\ContainerInterface;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\HttpKernel\Profiler\Profile;
 use Twig\Environment;
@@ -345,6 +346,55 @@ final class ProfilerPanelTest extends WebTestCase
         return $configuration;
     }
 
+    /**
+     * With a dispatcher in front (C11) the panel names the dispatcher, because
+     * the panel names what the firewall called. Which tenant judged the token
+     * is in the row already — it is the `iss` among the claims — and the
+     * verified event carries the consumer's own name for anything counting.
+     */
+    #[TestDox('a dispatcher is the row, and the claims say which tenant it routed to')]
+    public function testDispatchedTokenIsCollectedUnderTheDispatcher(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::dispatchedConfiguration()]);
+        $client->enableProfiler();
+
+        $client->request('GET', '/api/whoami', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::tokens()->token('alice'),
+        ]);
+
+        self::assertResponseIsSuccessful();
+
+        $tokens = self::collector($client)->tokens();
+
+        self::assertCount(1, $tokens, 'the dispatcher is traced, and the consumer behind it is not traced again');
+        self::assertSame('api', $tokens[0]['consumer']);
+        self::assertSame('accepted', $tokens[0]['verdict']);
+
+        $claims = $tokens[0]['claims'];
+        self::assertIsArray($claims);
+        self::assertSame(self::ISSUER, $claims['iss'] ?? null);
+    }
+
+    #[TestDox('a token no consumer expects is collected as the dispatcher refusing it')]
+    public function testUnroutableTokenIsCollected(): void
+    {
+        $client = self::createClient(['medzuch_jwt' => self::dispatchedConfiguration()]);
+        $client->enableProfiler();
+
+        $elsewhere = TestTokenFactory::hmac('https://elsewhere.test', self::AUDIENCE, self::SECRET);
+
+        $client->request('GET', '/api/whoami', server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $elsewhere->token('alice')]);
+
+        self::assertSame(Response::HTTP_UNAUTHORIZED, $client->getResponse()->getStatusCode());
+
+        $tokens = self::collector($client)->tokens();
+
+        self::assertCount(1, $tokens);
+        self::assertSame('api', $tokens[0]['consumer']);
+        self::assertSame('refused', $tokens[0]['verdict']);
+        self::assertSame('wrong_issuer', $tokens[0]['reason']);
+    }
+
     #[TestDox('a refusal the application decided keeps the reason the event gives it')]
     public function testIdentityRefusalKeepsItsReason(): void
     {
@@ -502,6 +552,23 @@ final class ProfilerPanelTest extends WebTestCase
     private static function tokens(): TestTokenFactory
     {
         return TestTokenFactory::hmac(self::ISSUER, self::AUDIENCE, self::SECRET);
+    }
+
+    /**
+     * The same consumer, reached through a dispatcher rather than named by the
+     * firewall directly. The consumer keeps its name; the dispatcher takes the
+     * one the firewall points at, since the two cannot share it.
+     *
+     * @return array<string, mixed>
+     */
+    private static function dispatchedConfiguration(): array
+    {
+        $configuration = self::configuration();
+        $configuration['consumers']['tenant'] = $configuration['consumers']['api'];
+        unset($configuration['consumers']['api']);
+        $configuration['dispatchers'] = ['api' => ['consumers' => ['tenant']]];
+
+        return $configuration;
     }
 
     /**
