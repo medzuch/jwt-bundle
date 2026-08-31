@@ -204,7 +204,10 @@ medzuch_jwt:
 
 **An OIDC relying party** verifies a provider's ID tokens where they arrive — the login callback
 — rather than on a firewall, and is configured differently enough to have its own section:
-[Verifying an ID token](#verifying-an-id-token-oidc-relying-party).
+[Verifying an ID token](#verifying-an-id-token-oidc-relying-party). **An OIDC provider** is the
+other end of that: [Issuing ID tokens](#issuing-id-tokens-oidc-provider) mints what a relying
+party verifies. Running the rest of an authorization server — consent, grants, PKCE — is not this
+package's job, and [§8 of `docs/plan.md`](docs/plan.md) says why.
 
 **A security event transmitter or receiver** mints and accepts RFC 8417 SETs — RISC and CAEP
 events — which travel between an identity provider and the applications that trust it, outside
@@ -1740,8 +1743,11 @@ carries an `ETag` over the document, so `cache_max_age: 0` means revalidate rath
 `/.well-known/openid-configuration`; the two differ in what the document carries, not in how it
 is served, so route the same controller wherever your readers look — and put what that spelling
 needs in `extra`. OIDC Discovery additionally requires `authorization_endpoint`,
-`subject_types_supported` and `id_token_signing_alg_values_supported`; this bundle knows none of
-the three, so an OIDC document needs them named there.
+`subject_types_supported` and `id_token_signing_alg_values_supported`; this bundle fills in none
+of the three, so an OIDC document needs them named there. The third is knowable where
+`id_token_issuers` is configured — it is that key's `algorithm` — and is still not filled in:
+`metadata` carries `issuer` and `jwks_uri` and leaves the rest to `extra`, because the rest
+describes an authorization server this package deliberately does not run.
 
 **Two things the paths do not share.** An issuer identifier *with a path* — a Keycloak realm,
 say — is read at `identifier + /.well-known/openid-configuration` by OIDC Discovery, while
@@ -1948,6 +1954,99 @@ What is checked: signature and algorithm, `iss`, `aud` against your `client_id`,
 token names more than one audience, `exp`/`iat`, the claims OIDC requires, and the `nonce` when
 you pass one. **`at_hash` is not** — binding an ID token to an access token needs support the
 library does not have yet, and this bundle does not reimplement crypto its library is missing.
+
+## Issuing ID tokens (OIDC provider)
+
+The other end of the same pair: an application that *is* the identity provider, minting the ID
+token a relying party will verify.
+
+```yaml
+medzuch_jwt:
+    keys:
+        signing:
+            pem_private: '%kernel.project_dir%/config/jwt/op.pem'
+            algorithm: RS256
+            kid: op-2026
+        published:                                          # the same key's public half,
+            pem_public: '%kernel.project_dir%/config/jwt/op.pub'   # which relying parties fetch
+            algorithm: RS256
+            kid: op-2026
+
+    id_token_issuers:
+        op:
+            issuer: '%env(APP_URL)%'
+            key: signing
+            ttl: 300
+
+    jwks:
+        keys: [published]
+```
+
+```php
+use Medzuch\JwtBundle\Oidc\IdTokenIssuer;
+
+public function token(Request $request, IdTokenIssuer $op): Response
+{
+    $idToken = $op->issue($user->getId(), $authorizationRequest->clientId)
+        ->nonce($authorizationRequest->nonce)          // echo back what the client sent
+        ->authTime($session->authenticatedAt)
+        ->withClaim('email', $user->email)             // whatever the granted scopes allow
+        ->build();
+
+    // …alongside the access token, in the token-endpoint response
+}
+```
+
+`sub`, `aud` and the lifetime are arguments rather than claims to chain: OIDC Core §2 makes all
+three required, so a token missing one is minted happily by any builder and refused by every
+honest relying party. The rest is what varies.
+
+**It hands back a builder, not a token.** What varies between two ID tokens is `nonce`,
+`auth_time`, `acr`, `amr`, `azp` and whatever profile claims the scopes granted, and the
+library's `IdTokenBuilder` has a typed setter for each. An argument list would either be long or
+would push those through an untyped claims map, and `SecurityEventIssuer` is here for the same
+reason. An access token is the opposite case — one shape, minted the same way each time — and
+`AccessTokenIssuer::issue()` returns a token accordingly.
+
+**The client id belongs to the request.** A provider mints for whichever relying party asked, so
+`issue()` takes it. `client_id` in the configuration is a default for an application that serves
+exactly one client and should not repeat its name at every call; without either, `issue()` throws
+rather than minting a token no relying party may accept (OIDC Core §3.1.3.7).
+
+**Sign with an asymmetric key and publish it.** A relying party verifies with the public half it
+fetched from your JWK Set, which is what [`jwks`](#publishing-a-jwk-set) serves. A shared secret
+would have to be handed to every client, and a client that can verify with it can mint with it —
+identities for anyone, signed by you.
+
+**An ID token is not an access token**, and this bundle's own consumers refuse one: they verify
+the RFC 9068 profile, whose `typ` is `at+jwt`, and an ID token is refused on the header before a
+claim is read. If your provider also issues access tokens, that is
+[`issuers`](#issuing-tokens--an-authorization-server), minting a different token from the same
+key.
+
+**The other direction is refused too, and it is the one a single deployment makes reachable.**
+OIDC asks for no `typ` on an ID token, so nothing in the profile would stop an *access* token
+from verifying as one wherever its `aud` happened to equal a relying party's `client_id` — and
+that means a credential minted for an API, presented at a login callback, logging somebody in.
+`IdTokenVerifier` refuses a token whose header says `at+jwt` before it checks anything else. No
+provider labels an ID token as an access token, which is what makes the label worth reading.
+
+**Issuance is not announced.** `JwtIssuingEvent` and `JwtIssuedEvent` are not dispatched here, so
+an application auditing on the second records access tokens and not identities. That follows from
+handing back a builder: the token is assembled after this bundle's last line has run, so there is
+no point at which it sees the finished claim set. Audit from the caller, which holds the built
+token. Claim providers are access-token machinery for the same reason and do not run.
+
+**`at_hash` and `c_hash` are not produced**, the counterpart of `at_hash` not being checked on the
+verifying side: binding an ID token to the access token or code issued beside it (OIDC Core
+§3.1.3.6) needs support the library does not have, and this bundle does not reimplement crypto its
+library is missing. A strict relying party is entitled to refuse a pair that omits them.
+**Encrypted ID tokens** (OIDC Core §10.2) are not configurable either: `jwe` belongs to `issuers`
+and `consumers`.
+
+`ttl` is 300 seconds by default rather than the 900 an access token gets: an ID token is read
+once, at the end of the flow that produced it. A caller wanting a different lifetime for one
+token calls `expiresIn()` on the builder, which is the last word.
 
 ## Sending and receiving security events
 
@@ -2369,7 +2468,8 @@ looking like rejected tokens at runtime:
 - a key given the wrong kind of material for its algorithm — a secret for `RS256`, a PEM for
   `HS256` or for `EdDSA`, more than one kind at once, or none
 - a consumer verifying with a private-only key, or an issuer signing with a public-only one —
-  a security-event stream is held to the same rule, and named as a stream when it breaks it
+  a security-event stream and an ID-token issuer are held to the same rule, and each named for
+  what it is when it breaks it
 - a security-event consumer with nothing to verify with: no `keys` and no `remote_jwks`
 - a consumer that could never open an encrypted token: a `jwe_keys` name that does not exist, an
   allowed `alg` no configured key can be used with, a key bound to something the consumer does

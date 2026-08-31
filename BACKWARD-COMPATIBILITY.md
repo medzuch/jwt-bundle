@@ -39,6 +39,7 @@ is the promise; the class behind it is not:
 | `medzuch_jwt.issuer.<issuer>` | `Medzuch\JwtBundle\Issuer\AccessTokenIssuer` | your code, to mint one |
 | `medzuch_jwt.login.<issuer>` | `Symfony\Component\Security\Http\Authentication\AuthenticationSuccessHandlerInterface` | an authenticator's `success_handler` |
 | `medzuch_jwt.id_token.<registration>` | `Medzuch\JwtBundle\Oidc\IdTokenVerifier` | your code, to verify an ID token |
+| `medzuch_jwt.id_token_issuer.<provider>` | `Medzuch\JwtBundle\Oidc\IdTokenIssuer` | your code, to mint an ID token |
 | `medzuch_jwt.security_event_issuer.<stream>` | `Medzuch\JwtBundle\SecurityEvent\SecurityEventIssuer` | your code, to mint a security event |
 | `medzuch_jwt.security_event_consumer.<transmitter>` | `Medzuch\JwtBundle\SecurityEvent\SecurityEventVerifier` | your code, to verify one |
 | `medzuch_jwt.token_extractor.<extractor>` | `Symfony\Component\Security\Http\AccessToken\AccessTokenExtractorInterface` | a firewall's `access_token.token_extractors` |
@@ -71,8 +72,9 @@ belongs beside those two. The signing rows are there because an application has 
 to hold the key it signs with; nothing in this documentation asks anyone to decrypt a token by
 hand, and an id promised for a use nobody was given freezes a type for no reader.
 
-**Four ids also answer by argument name**, which is part of the promise: `IdTokenVerifier $partner`
-reaches `medzuch_jwt.id_token.partner`, `TokenDenylistInterface $api` reaches
+**Five ids also answer by argument name**, which is part of the promise: `IdTokenVerifier $partner`
+reaches `medzuch_jwt.id_token.partner`, `IdTokenIssuer $op` reaches
+`medzuch_jwt.id_token_issuer.op`, `TokenDenylistInterface $api` reaches
 `medzuch_jwt.denylist.api`, and both security-event services reach the stream or transmitter of
 that name. Access-token issuers do not: only one named `default` is reachable by type, and the
 rest are named explicitly.
@@ -135,6 +137,7 @@ Only these, and each only in the way its row says:
 | `Security\User\ProvidesScopes` | type-hint it | `scopes()` | — | **yes** |
 | `Revocation\TokenDenylistInterface` | inject it | `revoke()`, `isRevoked()` | — | **yes** |
 | `Oidc\IdTokenVerifier` | inject it | yes | no | — |
+| `Oidc\IdTokenIssuer` | inject it | yes | no | — |
 | `SecurityEvent\SecurityEventIssuer` | inject it | yes | no | — |
 | `SecurityEvent\SecurityEventVerifier` | inject it | yes | no | — |
 | `DataCollector\JwtDataCollector` | read it, in a panel of your own | its readers | no | — |
@@ -157,7 +160,7 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
   `setClaim()` and `removeClaim()` are how a listener contributes, so their signatures are as
   fixed as any interface method.
 - **A service is obtained, not constructed.** `AccessTokenIssuer`, `IdTokenVerifier`,
-  `SecurityEventIssuer` and `SecurityEventVerifier` have
+  `IdTokenIssuer`, `SecurityEventIssuer` and `SecurityEventVerifier` have
   public constructors because PHP has no package-private, and what is promised is the id and the
   methods, not the constructor's arguments. `IssuedToken` and `TokenIssuance` are the other way
   round — you receive them from us, and a test fixture that builds one is building the same thing
@@ -208,7 +211,7 @@ New names may be added. These three do not move.
 Some of what this package hands you belongs to the library underneath it: a `ClaimsSet` from
 `JwtVerifiedEvent::$claims`, `JwtUser::claims()`, `IdTokenVerifier::verify()` and
 `SecurityEventVerifier::verify()`; the `SetBuilder` that `SecurityEventIssuer::issue()` hands
-back; the
+back and the `IdTokenBuilder` that `IdTokenIssuer::issue()` does; the
 `PrivateKey` and `PublicKey` a key service answers; the algorithms and keys `TestTokenFactory`
 takes; the `JwtException` hierarchy `RejectionReason::of()` reads.
 

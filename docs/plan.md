@@ -245,7 +245,7 @@ default and adds no runtime cost when unconfigured.
 | I3 | `TokenClaimProviderInterface` autoconfigured services — apps contribute claims (tenant, email, entitlements) without subclassing the issuer. Handed a `TokenIssuance`, so a provider can serve one issuer of several; refused the claims the issuer decides itself, since a provider runs for tokens it was never asked about | DI tags | T2 |
 | I4 | `JwtIssuingEvent` (mutable claims, dispatched last so it sees the whole set) + `JwtIssuedEvent` (audit hook, carrying the `jti` and never the token) | EventDispatcher | T2 |
 | I5 | Login integration: an authentication success handler that returns `{ "access_token": ..., "token_type": "Bearer", "expires_in": ... }`, pluggable into `json_login`/`form_login` | Symfony + I1 | T1 |
-| I6 | `IdTokenIssuer` for apps acting as an OIDC provider | `IdTokenProfile::issuer()` | T3 |
+| I6 | `IdTokenIssuer` for apps acting as an OIDC provider. **Landed in Phase 5** as `id_token_issuers`, a section of its own because `id_tokens` is the relying-party half and already public configuration. Hands back the library's builder, as I7 does and for the same reason — `nonce`, `auth_time`, `acr`, `amr` and the profile claims are what vary — while `sub` and the relying party's `client_id` are arguments, since OIDC Core §2 requires both and neither varies in that way. It also closed a confusion only one deployment holding both ends can reach: `IdTokenVerifier` now refuses a token typed `at+jwt`. No issuance events, no claim providers, no `at_hash` | `IdTokenProfile::issuer()` | T3 |
 | I7 | Security Event Token issuer (emit RISC/CAEP events to relying parties). **Landed in Phase 5** as `security_events.issuers`. Hands back the library's builder rather than an argument list, since what varies between two SETs is the events; delivery (RFC 8935 push, RFC 8936 poll) stays the application's | `SetProfile::issuer()` | T3 |
 | I8 | Encrypted/nested issuance (sign-then-encrypt). **Landed in Phase 5** as `issuers.<name>.jwe`, one key and one algorithm of each kind where the reading side takes lists — a receiver accepts what its senders still use, a sender picks. `replicated_claims` copies a claim into the outer header for an intermediary that holds no key (RFC 7519 §5.3), read back out of the signed token so the two cannot drift | `NestedJwtBuilder` | T3 |
 | I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered | bundle | T3 (see §8) |
@@ -431,6 +431,12 @@ medzuch_jwt:
       remote_jwks: partner_idp
       allowed_algorithms: [RS256]
 
+  id_token_issuers:                  # …and this application as the provider (I6)
+    op:
+      issuer: '%env(APP_URL)%'
+      key: rsa_2026
+      ttl: 300
+
   jwks:                              # the application routes to the controller itself (DEC-6)
     keys: [rsa_2026, rsa_2025]       # public halves only
     cache_max_age: 300
@@ -519,8 +525,9 @@ consumer and command:
   else's business. A `default` issuer is aliased to `AccessTokenIssuer` for
   autowiring. There is no issuer interface: one implementation with nothing to
   swap it for would be a seam nobody uses.
-- `medzuch_jwt.id_token.<name>` — the OIDC relying-party verifier, aliased for
-  autowiring by argument name.
+- `medzuch_jwt.id_token.<name>` — the OIDC relying-party verifier, and
+  `medzuch_jwt.id_token_issuer.<name>` the provider that mints what one
+  verifies (I6). Both aliased for autowiring by argument name.
 - `medzuch_jwt.jwks.key_set` and `medzuch_jwt.jwks_controller` — the published
   set and the action that serves it, registered only where `jwks.keys` names
   keys. The command that dumps the same set is registered on the same
@@ -847,7 +854,11 @@ audience that has nothing to do with an API call, so a token minted for a
 browser session would authorise a machine one. The bundle therefore registers
 `medzuch_jwt.id_token.<name>` (an `IdTokenVerifier`, public and injectable by
 argument name) and no handler: there is a service at the point where an ID
-token legitimately arrives, and nothing that fits into `access_token`. The
+token legitimately arrives, and nothing that fits into `access_token`. I6 added
+the other end — `medzuch_jwt.id_token_issuer.<name>`, called from a token
+endpoint — and the same reasoning shapes it: a service where the flow is, and
+the verifier refuses a token typed `at+jwt`, so a deployment holding both ends
+cannot have one accepted as the other in either direction. The
 `nonce` is an argument rather than configuration for the same class of reason —
 it belongs to one authentication request, and a value fixed at deploy is not a
 nonce. *Reopens if* a deployment appears where an ID token is the only

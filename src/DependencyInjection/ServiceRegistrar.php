@@ -17,6 +17,7 @@ use Medzuch\Jwt\Key\Resolver\RemoteJwksResolver;
 use Medzuch\Jwt\Key\Resolver\StaticJwkSetResolver;
 use Medzuch\Jwt\Profile\AccessTokenConsumer;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
+use Medzuch\Jwt\Profile\IdTokenProfile;
 use Medzuch\Jwt\Profile\SetConsumer;
 use Medzuch\Jwt\Profile\SetProfile;
 use Medzuch\JwtBundle\Algorithm\ContentEncryptionAlgorithms;
@@ -29,6 +30,7 @@ use Medzuch\JwtBundle\Issuer\TokenEnvelope;
 use Medzuch\JwtBundle\Jwks\JwksController;
 use Medzuch\JwtBundle\Key\KeyLoader;
 use Medzuch\JwtBundle\Oidc\DiscoveredJwksResolver;
+use Medzuch\JwtBundle\Oidc\IdTokenIssuer;
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
 use Medzuch\JwtBundle\Oidc\MetadataController;
 use Medzuch\JwtBundle\Revocation\CacheTokenDenylist;
@@ -102,6 +104,7 @@ final class ServiceRegistrar
          *     remote_jwks: array<string, array{uri: string|null, discovery: string|null, http_client: string, request_factory: string|null, cache_pool: string|null, cache: string|null, cache_ttl: int, min_refresh: int, max_body_bytes: int}>,
          *     consumers: array<string, array{issuer: string, audience: list<string>, audience_policy: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, realm: string|null, leeway: int, token_type: string|null, required_claims: list<string>, max_token_age: int|null, denylist: array{service: string|null, cache_pool: string|null, cache: string|null, prefix: string}, user: array{mode: string, identity_claim: string, factory: string|null, roles: array{claim: string|null, separator: string|null, prefix: string, defaults: list<string>}}, jwe?: array{keys: list<string>, allowed_key_management: list<string>, allowed_content_encryption: list<string>}}>,
          *     id_tokens: array<string, array{issuer: string, client_id: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, leeway: int}>,
+         *     id_token_issuers: array<string, array{issuer: string, key: string, ttl: int, client_id: string|null}>,
          *     dispatchers: array<string, array{consumers: list<string>, realm: string|null}>,
          *     token_extractors: array<string, array{cookie: string, same_site_only: bool}>,
          *     security_events: array{issuers: array<string, array{issuer: string, key: string, audience: list<string>}>, consumers: array<string, array{issuer: string, keys: list<string>, remote_jwks: string|null, allowed_algorithms: list<string>, audience: string|null, leeway: int}>},
@@ -145,6 +148,7 @@ final class ServiceRegistrar
         $this->registerDispatchers($services, $config['dispatchers'], $config['consumers']);
         $this->registerTokenExtractors($services, $config['token_extractors']);
         $this->registerIdTokens($services, $builder, $keys, $config['id_tokens'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
+        $this->registerIdTokenIssuers($services, $builder, $keys, $config['id_token_issuers']);
         $this->registerSecurityEvents($services, $builder, $keys, $config['security_events'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerMetadata($services, $builder, $config['metadata']);
 
@@ -773,6 +777,42 @@ final class ServiceRegistrar
             // `IdTokenVerifier $partner` and get the registration called
             // "partner" rather than a container lookup by string.
             $builder->registerAliasForArgument($id, IdTokenVerifier::class, $name);
+        }
+    }
+
+    /**
+     * This application as an OpenID Connect provider (I6).
+     *
+     * The same two services an access-token issuer gets — a profile bound to
+     * one identity and one key, and the issuer in front of it — and public for
+     * the reason {@see IdTokenVerifier} is: an ID token is minted from a
+     * controller at the end of an authorization flow, and there is no firewall
+     * to inject it into.
+     *
+     * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
+     * @param array<string, array{issuer: string, key: string, ttl: int, client_id: string|null}>                                                                                                                             $issuers
+     */
+    private function registerIdTokenIssuers(ServicesConfigurator $services, ContainerBuilder $builder, array $keys, array $issuers): void
+    {
+        foreach ($issuers as $name => $issuer) {
+            ConfigurationGuard::assertCanSign(sprintf('ID token issuer "%s"', $name), $issuer['key'], $keys);
+
+            $id = 'medzuch_jwt.id_token_issuer.' . $name;
+
+            $services->set($id . '.profile', IdTokenProfile::class)
+                ->factory([IdTokenProfile::class, 'issuer'])
+                ->args([
+                    $issuer['issuer'],
+                    inline_service(SigningAlgorithms::CLASSES[$keys[$issuer['key']]['algorithm']]),
+                    service('medzuch_jwt.key.' . $issuer['key'] . '.signing'),
+                    service('medzuch_jwt.clock'),
+                ]);
+
+            $services->set($id, IdTokenIssuer::class)
+                ->args([service($id . '.profile'), $issuer['ttl'], $issuer['client_id']])
+                ->public();
+
+            $builder->registerAliasForArgument($id, IdTokenIssuer::class, $name);
         }
     }
 

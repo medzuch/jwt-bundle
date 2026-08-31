@@ -341,6 +341,24 @@ medzuch_jwt:
             # Clock-skew tolerance in seconds for exp/nbf/iat. The ceiling is the library's.
             leeway:               0
 
+    # Named OIDC provider identities: this application minting ID tokens for relying parties. The mirror of `id_tokens`, which verifies somebody else's. Each signs with one key, as one `iss`.
+    id_token_issuers:
+
+        # Prototype
+        name:
+
+            # The `iss` every ID token from here carries, and what a relying party pins. The same identifier this application publishes as `metadata.issuer` where it publishes one (RFC 8414).
+            issuer:               ~ # Required, Example: '%env(APP_URL)%'
+
+            # Name from the `keys` section, whose private half signs. Relying parties fetch the public half, so this is normally an asymmetric key published under `jwks` — a shared secret would have to be given to every client, and then every client could mint identities.
+            key:                  ~ # Required, Example: signing
+
+            # Lifetime in seconds. Shorter than an access token's by default: an ID token is read once, at the end of the flow that produced it, and is not a credential to be presented afterwards (OIDC Core §2).
+            ttl:                  300
+
+            # Default `aud`: the relying party an ID token is for. Optional, and null is the ordinary answer for a provider serving several clients — `issue()` takes the client id per token, and only falls back to this. Naming one is for the application with a single relying party.
+            client_id:            null # Example: '%env(OIDC_CLIENT_ID)%'
+
     # RFC 8417 Security Event Tokens: `issuers` transmits them, `consumers` receives them. Neither is a bearer credential, so neither is wired into a firewall.
     security_events:
 

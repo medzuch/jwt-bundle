@@ -479,6 +479,14 @@ final class DocumentationExamplesTest extends KernelTestCase
             }
         }
 
+        $providers = $configuration['id_token_issuers'] ?? [];
+
+        if (is_array($providers)) {
+            foreach (array_keys($providers) as $provider) {
+                $ids[] = sprintf('medzuch_jwt.id_token_issuer.%s', $provider);
+            }
+        }
+
         $registrations = $configuration['id_tokens'] ?? [];
 
         if (is_array($registrations)) {
@@ -566,7 +574,12 @@ final class DocumentationExamplesTest extends KernelTestCase
             static function (string $heading): string {
                 $heading = strtolower(trim(str_replace('`', '', $heading)));
 
-                return (string) preg_replace('/\s+/', '-', (string) preg_replace('/[^\w\s-]/u', '', $heading));
+                // One dash per space, not per run of them: GitHub does the
+                // same, so a heading whose punctuation it strips — an em dash
+                // between two words — anchors with two dashes where the space
+                // either side of it was. Collapsing them here would accept a
+                // link that 404s on GitHub.
+                return (string) preg_replace('/\s/', '-', (string) preg_replace('/[^\w\s-]/u', '', $heading));
             },
             $matches[1],
         );

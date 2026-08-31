@@ -211,10 +211,11 @@ final class ConfigurationGuard
     /**
      * A named key exists and has the private half signing needs.
      *
-     * Shared by access-token issuers and security-event streams because the
-     * question is the same one, and a second copy would be a second chance for
-     * the two to answer it differently. `$context` carries the noun so the
-     * message names what the reader wrote — an issuer, or a stream.
+     * Shared by access-token issuers, security-event streams and ID token
+     * providers because the question is the same one, and a second copy would
+     * be a second chance for them to answer it differently. `$context` carries
+     * the noun so the message names what the reader wrote — an issuer, a
+     * stream, or a provider.
      *
      * @param array<string, array{hmac: string|null, pem_private: string|null, pem_public: string|null, jwk_private: string|null, jwk_public: string|null, pem_passphrase: string|null, algorithm: string, kid: string|null}> $keys
      */
