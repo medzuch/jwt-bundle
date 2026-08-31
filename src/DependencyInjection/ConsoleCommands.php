@@ -9,6 +9,7 @@ use Medzuch\JwtBundle\Command\CreateTokenCommand;
 use Medzuch\JwtBundle\Command\DumpJwksCommand;
 use Medzuch\JwtBundle\Command\GenerateKeyCommand;
 use Medzuch\JwtBundle\Command\InspectTokenCommand;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ReferenceConfigurator;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ServicesConfigurator;
@@ -58,10 +59,23 @@ final class ConsoleCommands
         // firewall may name either: `--consumer api` should reach whatever
         // answers for "api", and a dispatcher's verdict is the verdict of the
         // consumer it routed to.
-        $consumers = [
-            ...array_keys($config['consumers']),
-            ...array_keys($config['dispatchers']),
-        ];
+        $dispatchers = array_keys($config['dispatchers']);
+        $collisions = array_intersect($dispatchers, array_keys($config['consumers']));
+
+        if ([] !== $collisions) {
+            // Refused already, by the guard that runs when a dispatcher is
+            // registered — and asked again here because this is the array that
+            // depends on it. The locator below is keyed by name, so a name
+            // belonging to both would not be an error: it would be one entry
+            // quietly answering for the other, and `--consumer` would reach a
+            // service nobody named.
+            throw new InvalidConfigurationException(sprintf(
+                'medzuch_jwt.dispatchers and medzuch_jwt.consumers both define "%s". Both are handlers a firewall names, and one of them would have to answer to the other\'s name.',
+                implode('", "', $collisions),
+            ));
+        }
+
+        $consumers = [...array_keys($config['consumers']), ...$dispatchers];
 
         $services->set('medzuch_jwt.command.key_generate', GenerateKeyCommand::class)
             ->tag('console.command', ['command' => 'jwt:key:generate']);
@@ -96,6 +110,7 @@ final class ConsoleCommands
                     ),
                 )),
                 service('medzuch_jwt.clock'),
+                $dispatchers,
             ])
             ->tag('console.command', ['command' => 'jwt:token:inspect']);
 

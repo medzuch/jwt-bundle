@@ -302,7 +302,7 @@ medzuch_jwt:
                 # - tenant_a
                 # - tenant_b
 
-            # Protection space named in the `WWW-Authenticate` header of this dispatcher's entry point and scope denials (RFC 6750 §3). Null uses the dispatcher's name. The realm belongs here rather than to the consumers behind it: a challenge goes out when there is no valid token, which is before anything could say which tenant the caller meant.
+            # Protection space named in the `WWW-Authenticate` header of this dispatcher's entry point and scope denials (RFC 6750 §3). Null uses the dispatcher's name. The realm belongs here rather than to the consumers behind it: a challenge goes out when there is no valid token, which is before anything could say which tenant the caller meant. Symfony has its own `access_token.realm` for the header it sends itself; keep the two equal. A literal, not an env reference: the value is validated, which is what stops a quote or a newline from costing the header, and Symfony refuses to validate a placeholder.
             realm:                null # Example: api
 
     # Named token extractors. Reference them from a firewall's `access_token.token_extractors`, beside Symfony's own security.access_token_extractor.header, .query_string and .request_body.

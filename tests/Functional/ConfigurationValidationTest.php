@@ -560,7 +560,9 @@ final class ConfigurationValidationTest extends KernelTestCase
 
         self::bootKernel(['medzuch_jwt' => [
             'keys' => ['default' => ['hmac' => self::SECRET]],
-            'consumers' => ['api' => self::consumer()],
+            // Two consumers written identically, which is what makes the
+            // same-issuer row a mistake the container can see.
+            'consumers' => ['api' => self::consumer(), 'twin' => self::consumer()],
             'dispatchers' => $dispatchers,
         ]]);
     }
@@ -591,6 +593,12 @@ final class ConfigurationValidationTest extends KernelTestCase
             'a dispatcher naming one consumer twice',
             ['tenants' => ['consumers' => ['api', 'api']]],
             '/names consumer "api" more than once/',
+        ];
+
+        yield 'two consumers on one issuer' => [
+            'a dispatcher whose consumers expect the same issuer, written the same way',
+            ['tenants' => ['consumers' => ['api', 'twin']]],
+            '/cannot choose between consumers "api" and "twin": both expect issuer/',
         ];
 
         yield 'realm with a quote' => [

@@ -1161,7 +1161,12 @@ security:
             entry_point: medzuch_jwt.entry_point.api
             access_token:
                 token_handler: medzuch_jwt.dispatcher.api
+                realm: api
 ```
+
+The realm is written twice for the reason it is written twice for a consumer: `dispatchers.*.realm`
+is what the entry point challenges an empty request with, and `access_token.realm` is what
+Symfony puts on the token it rejected itself. Keep them equal.
 
 **The routing table is the consumers themselves.** Each already declares the `iss` it expects,
 and that value is what a token is matched against — there is nowhere to write it twice and so
@@ -1194,7 +1199,12 @@ the consumers behind it.
 Everything else stays the consumer's. `JwtVerifiedEvent` names the tenant that accepted the
 token, the log line is that consumer's, and a denylist is per consumer, as it was. The profiler
 panel names the dispatcher, because it names whatever the firewall called; the `iss` among the
-row's claims says which tenant took it from there.
+row's claims says which tenant took it from there, and a listener counting per tenant reads
+`JwtVerifiedEvent::$consumer` rather than the panel.
+
+**A refusal that never reached a tenant is the dispatcher's**, announced under its name so a
+listener can count it: `wrong_issuer` for an issuer nothing expects, and `malformed` for a string
+that is not a token at all — the same two answers a consumer named directly would have given.
 
 A dispatcher's name cannot be a consumer's: both are things a firewall points at, and one name
 cannot answer for two. The consumers arrive through a service locator, so a request builds the

@@ -197,11 +197,59 @@ refused stops being answerable, and the refusals a caller sees depend on the ord
 Two firewalls say the same thing with the route deciding, which is a decision the application
 has already made.
 
-If the two token sources genuinely cannot be told apart by the request — the same route serves
-both — the bundle cannot do it today: a consumer verifies against one issuer's name and rejects
-every other `iss`. The answer is not fall-through but dispatch, choosing the consumer from the
-token's `iss` against an allowlist *before* verification, which is C11 in §3.1 of
-[`docs/plan.md`](plan.md) — T3, post-1.0.
+### When the route cannot tell them apart
+
+Two firewalls work because the path decides. Where the same route serves both sources, name a
+**dispatcher** instead: it reads the issuer the token claims and hands it to the consumer
+expecting that issuer.
+
+```yaml
+medzuch_jwt:
+    keys:
+        own: { hmac: '%env(JWT_SECRET)%' }
+        partner: { pem_public: '%kernel.project_dir%/config/jwt/partner.pem', algorithm: RS256 }
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [own]
+            allowed_algorithms: [HS256]
+        partner:
+            issuer: 'https://idp.partner.example'
+            audience: '%env(APP_URL)%'
+            keys: [partner]
+            allowed_algorithms: [RS256]
+            user: { mode: claims }
+
+    dispatchers:
+        gateway:
+            consumers: [api, partner]
+            realm: api
+```
+
+```yaml
+# config/packages/security.yaml
+security:
+    firewalls:
+        api:
+            pattern: ^/api
+            stateless: true
+            entry_point: medzuch_jwt.entry_point.gateway
+            access_token:
+                token_handler: medzuch_jwt.dispatcher.gateway
+                realm: api
+```
+
+This is not fall-through. The `iss` chooses one consumer, that consumer verifies everything from
+the beginning against its own keys, and an issuer neither expects is refused as `wrong_issuer`
+before a key is fetched. Reading an unverified `iss` gives nothing away, because choosing a judge
+grants nothing — README ["Several issuers behind one firewall"](../README.md#several-issuers-behind-one-firewall)
+has the argument in full, and the limits: one issuer per consumer, no fallback, and a JWE routes
+only on an `iss` its sender replicated into the outer header.
+
+Keep the two-firewall recipe where the route already decides. It is the plainer thing to read,
+and it does not ask the token what it is.
 
 ## One deployment, several tenants
 
@@ -297,12 +345,14 @@ A user class that does not answers every `SCOPE_*` check with a 403 — the safe
 confusing one if you were expecting the `scope` claim to be enough. `user.mode: claims` builds a
 `JwtUser` that already implements it; a `custom` factory builds whatever you wrote.
 
-**What is not here.** One signing key serves every tenant, and a tenant is a claim rather than
-its own issuer. Per-tenant issuers — a different `iss`, a different key, chosen per request — is
-C11 in §3.1 of [`docs/plan.md`](plan.md), T3 and post-1.0. Where tenants must not share a key
-today, they have to be separate consumers and issuers, named in configuration and selected by
-the firewall the request matched — which works when tenants are few and fixed, and does not when
-they are rows in a table.
+**What this recipe is, and what it is not.** One signing key serves every tenant, and a tenant is
+a claim rather than its own issuer. It is the right shape when tenants are rows in a table.
+
+Where tenants must not share a key, each becomes its own issuer and its own consumer, and a
+**dispatcher** puts them behind one firewall — see the recipe above and README
+["Several issuers behind one firewall"](../README.md#several-issuers-behind-one-firewall). That
+works when tenants are few and fixed, since each is a named block in configuration; it does not
+when they are rows in a table, and no configuration tree would.
 
 ## A browser SPA on a `__Host-` cookie
 
@@ -517,7 +567,8 @@ from none.
 The container refuses to build on a configuration mistake, which catches the deploy before it
 starts. What it cannot catch is the material behind the configuration: a key file nobody
 deployed, an env variable that is empty in production, an issuer that is unreachable from this
-network. Those are factory arguments, so they fail on the first request instead.
+network, two tenants behind one dispatcher whose environment variables turn out to name the same
+issuer. Those are factory arguments, so they fail on the first request instead.
 
 `jwt:config:check` builds all of it up front:
 
@@ -534,7 +585,7 @@ The exit status is the gate:
 | Status | Meaning |
 |---|---|
 | `0` | Everything configured was built, and every remote set that was not skipped was reached. |
-| `1` | Something failed: a key, a consumer, an issuer, an ID-token registration, or a fetch. |
+| `1` | Something failed: a key, a consumer, an issuer, a dispatcher, an ID-token registration, or a fetch. |
 | `2` | Nothing is configured. |
 
 `2` is deliberately not `0`. A deploy step written as `jwt:config:check && deploy` would

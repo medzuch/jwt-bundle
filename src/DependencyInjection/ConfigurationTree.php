@@ -670,16 +670,6 @@ final class ConfigurationTree
     }
 
     /**
-     * One firewall in front of several consumers, choosing between them by the
-     * issuer the arriving token names (C11).
-     *
-     * The routing table is the consumers themselves: each already declares the
-     * `iss` it expects, and repeating that value here would be a second place
-     * to write it and a first place for the two to disagree. It also keeps the
-     * table working where the issuer is an env reference, which a per-tenant
-     * URL usually is — a key in a YAML map could not be one.
-     */
-    /**
      * The protection space a 401 from this firewall names, wherever a firewall
      * can be pointed at something: a consumer, and a dispatcher standing in
      * front of several. One declaration because the validation is the whole
@@ -707,6 +697,22 @@ final class ConfigurationTree
             ->end();
     }
 
+    /**
+     * One firewall in front of several consumers, choosing between them by the
+     * issuer the arriving token names (C11).
+     *
+     * The routing table is the consumers themselves: each already declares the
+     * `iss` it expects, and repeating that value here would be a second place
+     * to write it and a first place for the two to disagree. It also keeps the
+     * table working where the issuer is an env reference, which a per-tenant
+     * URL usually is — a key in a YAML map could not be one.
+     *
+     * What that shape cannot express is two consumers expecting the *same*
+     * issuer behind one dispatcher, told apart by `aud` or by a `typ` of their
+     * own. That is the correct refusal for routing on `iss` rather than a
+     * missing feature: an application needing it writes its own handler, which
+     * is one method.
+     */
     private static function configureDispatchers(NodeBuilder $children): void
     {
         $dispatcher = $children->arrayNode('dispatchers')
@@ -723,7 +729,7 @@ final class ConfigurationTree
         $consumers->example(['tenant_a', 'tenant_b']);
         self::rejectMaps($consumers, 'dispatchers.*.consumers');
 
-        self::declareRealm($dispatcher, 'Protection space named in the `WWW-Authenticate` header of this dispatcher\'s entry point and scope denials (RFC 6750 §3). Null uses the dispatcher\'s name. The realm belongs here rather than to the consumers behind it: a challenge goes out when there is no valid token, which is before anything could say which tenant the caller meant.');
+        self::declareRealm($dispatcher, 'Protection space named in the `WWW-Authenticate` header of this dispatcher\'s entry point and scope denials (RFC 6750 §3). Null uses the dispatcher\'s name. The realm belongs here rather than to the consumers behind it: a challenge goes out when there is no valid token, which is before anything could say which tenant the caller meant. Symfony has its own `access_token.realm` for the header it sends itself; keep the two equal. A literal, not an env reference: the value is validated, which is what stops a quote or a newline from costing the header, and Symfony refuses to validate a placeholder.');
 
         $dispatcher->end();
     }

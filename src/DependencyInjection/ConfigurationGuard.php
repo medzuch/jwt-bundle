@@ -748,11 +748,13 @@ final class ConfigurationGuard
      * and the dispatcher's own name must not be a consumer's, because both
      * are things a firewall names and one id cannot be two handlers.
      *
-     * What it cannot ask here is whether two of those consumers expect the
-     * same issuer, which is the mistake that leaves a token routed to
-     * whichever was listed first. An `issuer` is routinely `%env(...)%` and has
-     * no value while the container is built, so the dispatcher asks it of
-     * itself when it is constructed, and `jwt:config:check` builds every one.
+     * Two consumers expecting the same issuer is the fourth, and it is asked
+     * twice. Two `issuer` values that are already the same string here — two
+     * literals, or two copies of one `%env(...)%` placeholder — are a mistake
+     * the container can see, and this bundle refuses what it can see. Two
+     * *different* placeholders resolving to one URL cannot be seen until
+     * something reads them, so the dispatcher asks again when it is built and
+     * `jwt:config:check` builds every one.
      *
      * @param array{consumers: list<string>, realm: string|null} $dispatcher
      * @param array<string, array<string, mixed>> $consumers
@@ -787,6 +789,31 @@ final class ConfigurationGuard
                 $context,
                 implode('", "', $duplicates),
             ));
+        }
+
+        $routes = [];
+
+        foreach ($dispatcher['consumers'] as $consumer) {
+            $issuer = $consumers[$consumer]['issuer'];
+
+            if (!is_string($issuer)) {
+                continue;
+            }
+
+            if (isset($routes[$issuer])) {
+                throw new InvalidConfigurationException(sprintf(
+                    '%s cannot choose between consumers "%s" and "%s": both expect issuer %s, and the token names one issuer. Consumers behind one dispatcher are told apart by their `iss` and by nothing else.',
+                    $context,
+                    $routes[$issuer],
+                    $consumer,
+                    // Printed rather than interpolated bare, because half the
+                    // time it is an env placeholder and quoting it as a URL
+                    // would read like one that had been resolved.
+                    sprintf('"%s"', $issuer),
+                ));
+            }
+
+            $routes[$issuer] = $consumer;
         }
     }
 }

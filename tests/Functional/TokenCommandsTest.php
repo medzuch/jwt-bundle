@@ -361,12 +361,23 @@ final class TokenCommandsTest extends KernelTestCase
         $accepted = self::console('jwt:token:inspect', ['token' => self::tokenNaming('user-42'), '--consumer' => 'tenants'], null, $configuration);
 
         self::assertSame(Command::SUCCESS, $accepted->getStatusCode(), $accepted->getDisplay());
-        self::assertStringContainsString('Consumer "tenants" accepts this token', $accepted->getDisplay());
+        // The noun is the dispatcher's: its answer is the routed consumer's,
+        // and calling it a consumer would teach the wrong word to whoever is
+        // reading this to find out which tenant took the token.
+        self::assertStringContainsString('Dispatcher "tenants" accepts this token', $accepted->getDisplay());
 
         $elsewhere = self::console('jwt:token:inspect', ['token' => self::tokenFromElsewhere(), '--consumer' => 'tenants'], null, $configuration);
 
         self::assertSame(Command::FAILURE, $elsewhere->getStatusCode());
-        self::assertStringContainsString('refuses this token: wrong_issuer', $elsewhere->getDisplay());
+        self::assertStringContainsString('Dispatcher "tenants" refuses this token: wrong_issuer', $elsewhere->getDisplay());
+
+        // And it is what `--consumer` falls back to: a dispatcher is the front
+        // door, so asking it exercises the routing as well as the consumer
+        // behind it, where naming neither used to be ambiguous.
+        $unnamed = self::console('jwt:token:inspect', ['token' => self::tokenNaming('user-42')], null, $configuration);
+
+        self::assertSame(Command::SUCCESS, $unnamed->getStatusCode(), $unnamed->getDisplay());
+        self::assertStringContainsString('Dispatcher "tenants" accepts this token', $unnamed->getDisplay());
     }
 
     #[TestDox('with several consumers configured, inspect refuses to pick one')]

@@ -42,7 +42,16 @@ use UnexpectedValueException;
 #[CoversClass(IssuerDispatchingHandler::class)]
 final class IssuerDispatchTest extends WebTestCase
 {
-    use RestoresExceptionHandler;
+    // Aliased rather than inherited: a `tearDown()` on the class wins over the
+    // trait's silently, and the handler FrameworkBundle installs would have
+    // stayed up — which PHPUnit reports as a risky test on the Symfony floor
+    // and not on the current line.
+    use RestoresExceptionHandler {
+        tearDown as private restoreExceptionHandler;
+    }
+
+    /** @var list<string> environment variables a case set, and this has to unset */
+    private static array $environment = [];
 
     private const A = 'https://a.tenants.test';
     private const B = 'https://b.tenants.test';
@@ -53,6 +62,18 @@ final class IssuerDispatchTest extends WebTestCase
 
     /** Exactly 32 bytes, so it is what A256KW is made of. */
     private const SEALING = '0123456789abcdef0123456789abcdef';
+
+    protected function tearDown(): void
+    {
+        foreach (self::$environment as $name) {
+            unset($_ENV[$name]);
+            putenv($name);
+        }
+
+        self::$environment = [];
+
+        $this->restoreExceptionHandler();
+    }
 
     /**
      * @param array<array-key, mixed> $options
@@ -149,12 +170,79 @@ final class IssuerDispatchTest extends WebTestCase
         self::assertSame(RejectionReason::WrongIssuer, self::refusal(self::unsigned()));
     }
 
-    #[TestDox('something that is not a token at all is refused rather than routed')]
+    /**
+     * `malformed`, not `wrong_issuer`: a broken bearer string is the answer a
+     * consumer named directly would have given, and a client shipping them is
+     * a different thing to chase than a tenant nobody configured. The
+     * dispatcher keeps the two apart rather than folding both into its own
+     * question.
+     */
+    #[TestDox('something that is not a token at all is malformed, not an unknown tenant')]
     public function testGarbage(): void
     {
         self::bootKernel();
 
-        self::assertSame(RejectionReason::WrongIssuer, self::refusal('not.a.jwt'));
+        self::assertSame(RejectionReason::Malformed, self::refusal('not.a.jwt'));
+    }
+
+    /**
+     * The reason the consumers arrive as a locator: a dispatcher in front of
+     * twenty tenants must not open twenty denylists to answer one token. Read
+     * off the container, which is the only place the claim is observable.
+     */
+    #[TestDox('only the consumer a token routed to is built')]
+    public function testTheOtherTenantIsNeverBuilt(): void
+    {
+        self::bootKernel();
+
+        $container = self::getContainer();
+
+        self::dispatcher()->getUserBadgeFrom(self::tokenFrom(self::B, self::SECRET_B));
+
+        self::assertTrue($container->initialized('medzuch_jwt.handler.tenant_b'));
+        self::assertFalse($container->initialized('medzuch_jwt.handler.tenant_a'));
+    }
+
+    /**
+     * An issuer that resolves to nothing — an environment variable nobody set
+     * — is a route no token could mean and one an empty `iss` would land on.
+     * Visible in the same place the ambiguity is, and refused there.
+     */
+    #[TestDox('a consumer whose issuer is empty is refused when the dispatcher is built')]
+    public function testAnEmptyIssuer(): void
+    {
+        self::withEnvironment(['TENANT_B_ISSUER' => '']);
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(issuerOfB: '%env(TENANT_B_ISSUER)%')]);
+
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessageMatches('/routes to consumer "tenant_b", whose issuer is empty/');
+
+        self::dispatcher();
+    }
+
+    /**
+     * One tenant sending encrypted tokens and another sending signed ones is
+     * an ordinary migration, and the order `issuerOf()` reads in is what makes
+     * it work: three segments are tried first, five only if that fails.
+     */
+    #[TestDox('a signed tenant and an encrypted tenant sit behind one dispatcher')]
+    public function testMixedTenants(): void
+    {
+        self::bootKernel(['medzuch_jwt' => self::configuration(sealedTenant: 'tenant_b')]);
+
+        self::assertSame('alice', self::dispatcher()->getUserBadgeFrom(self::tokenFrom(self::A, self::SECRET_A))->getUserIdentifier());
+        self::assertSame('tenant_a', self::listener()->verified[0]->consumer);
+
+        $sealed = self::sealed(self::tokenFrom(self::B, self::SECRET_B), ['iss' => self::B]);
+
+        self::assertSame('alice', self::dispatcher()->getUserBadgeFrom($sealed)->getUserIdentifier());
+        self::assertSame('tenant_b', self::listener()->verified[1]->consumer);
+
+        // And neither is offered to the other: a signed token naming the
+        // encrypted tenant is refused for having no envelope, not accepted for
+        // looking like the token the other tenant sends.
+        self::assertSame(RejectionReason::Malformed, self::refusal(self::tokenFrom(self::B, self::SECRET_B)));
     }
 
     /**
@@ -203,9 +291,27 @@ final class IssuerDispatchTest extends WebTestCase
         self::bootKernel(['medzuch_jwt' => self::configuration(sealed: true)]);
 
         self::assertSame(
-            RejectionReason::SignatureInvalid,
-            self::refusal(self::sealed(self::tokenFrom(self::A, self::SECRET_A), ['iss' => self::B])),
+            RejectionReason::UnknownKey,
+            self::refusal(self::sealed(self::tokenFrom(self::A, self::SECRET_A), ['iss' => self::B], 'tenant_a')),
         );
+    }
+
+    /**
+     * Through the firewall rather than through the handler: an unroutable
+     * token is a 401 an application ships, not the 500 an exception escaping
+     * the handler would be.
+     */
+    #[TestDox('a token no tenant expects is a 401 through the firewall, not an error')]
+    public function testUnknownIssuerIsAnUnauthorizedResponse(): void
+    {
+        $client = self::createClient(['firewall' => true]);
+
+        $client->request('GET', '/api/whoami', server: [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::tokenFrom('https://c.tenants.test', self::SECRET_A),
+        ]);
+
+        self::assertSame(Response::HTTP_UNAUTHORIZED, $client->getResponse()->getStatusCode());
+        self::assertStringContainsString('Bearer', (string) $client->getResponse()->headers->get('WWW-Authenticate'));
     }
 
     #[TestDox('a request with no token gets the dispatcher\'s own realm')]
@@ -220,19 +326,39 @@ final class IssuerDispatchTest extends WebTestCase
     }
 
     /**
-     * Not a container-build check, because an `issuer` is routinely an env
-     * reference and has no value until the service is built. `jwt:config:check`
-     * builds every dispatcher, which is where a deploy finds this.
+     * Two consumers whose `issuer` is the same *string* are refused when the
+     * container is built. Two different env references that resolve to one URL
+     * cannot be seen there — this is that case, and the dispatcher asks it of
+     * itself when it is constructed, which `jwt:config:check` is what runs.
      */
-    #[TestDox('two tenants expecting one issuer is refused when the dispatcher is built')]
+    #[TestDox('two tenants whose env vars resolve to one issuer are refused when the dispatcher is built')]
     public function testTwoTenantsOnOneIssuer(): void
     {
-        self::bootKernel(['medzuch_jwt' => self::configuration(issuerOfB: self::A)]);
+        self::withEnvironment(['TENANT_B_ISSUER' => self::A]);
+
+        self::bootKernel(['medzuch_jwt' => self::configuration(issuerOfB: '%env(TENANT_B_ISSUER)%')]);
 
         $this->expectException(UnexpectedValueException::class);
         $this->expectExceptionMessageMatches('/cannot choose between consumers "tenant_a" and "tenant_b"/');
 
         self::dispatcher();
+    }
+
+    /**
+     * An environment the kernel reads through `%env(...)%`, undone after the
+     * case: the two mistakes only a resolved value shows are the two this
+     * suite has to set one for.
+     *
+     * @param array<string, string> $variables
+     */
+    private static function withEnvironment(array $variables): void
+    {
+        foreach ($variables as $name => $value) {
+            $_ENV[$name] = $value;
+            putenv($name . '=' . $value);
+        }
+
+        self::$environment = array_keys($variables);
     }
 
     private static function tokenFrom(string $issuer, string $secret): string
@@ -255,14 +381,18 @@ final class IssuerDispatchTest extends WebTestCase
     /**
      * @param array<string, mixed> $outerHeader
      */
-    private static function sealed(string $signed, array $outerHeader): string
+    private static function sealed(string $signed, array $outerHeader, string $tenant = 'tenant_b'): string
     {
+        [$secret, $kid] = 'tenant_a' === $tenant
+            ? [self::SEALING, 'enc-a']
+            : [strrev(self::SEALING), 'enc-b'];
+
         return (string) NestedJwtBuilder::wrap(
             new CompactJws($signed),
             new A256Kw(),
             new A256Gcm(),
-            OctKey::fromBinary(self::SEALING, 'A256KW', 'enc-2026', KeyUse::Enc),
-            $outerHeader + ['kid' => 'enc-2026'],
+            OctKey::fromBinary($secret, 'A256KW', $kid, KeyUse::Enc),
+            $outerHeader + ['kid' => $kid],
         );
     }
 
@@ -311,28 +441,36 @@ final class IssuerDispatchTest extends WebTestCase
      *
      * @return array<string, mixed>
      */
-    private static function configuration(bool $sealed = false, ?string $issuerOfB = null): array
+    private static function configuration(bool $sealed = false, ?string $issuerOfB = null, ?string $sealedTenant = null): array
     {
-        $jwe = $sealed ? ['jwe' => [
-            'keys' => ['sealed'],
+        // A key per tenant, not one between them: a tenant that could decrypt
+        // another's envelope is not a tenant boundary, and it is what makes a
+        // mis-routed encrypted token fail at the envelope rather than inside.
+        $envelope = static fn(string $tenant): array => ['jwe' => [
+            'keys' => [$tenant],
             'allowed_key_management' => ['A256KW'],
             'allowed_content_encryption' => ['A256GCM'],
-        ]] : [];
+        ]];
+
+        $encrypts = static fn(string $tenant): bool => $sealed || $sealedTenant === $tenant;
 
         return [
             'keys' => [
                 'tenant_a' => ['hmac' => self::SECRET_A],
                 'tenant_b' => ['hmac' => self::SECRET_B],
             ],
-            'jwe_keys' => ['sealed' => ['secret' => self::SEALING, 'algorithm' => 'A256KW', 'kid' => 'enc-2026']],
+            'jwe_keys' => [
+                'tenant_a' => ['secret' => self::SEALING, 'algorithm' => 'A256KW', 'kid' => 'enc-a'],
+                'tenant_b' => ['secret' => strrev(self::SEALING), 'algorithm' => 'A256KW', 'kid' => 'enc-b'],
+            ],
             'consumers' => [
-                'tenant_a' => $jwe + [
+                'tenant_a' => ($encrypts('tenant_a') ? $envelope('tenant_a') : []) + [
                     'issuer' => self::A,
                     'audience' => self::AUDIENCE,
                     'keys' => ['tenant_a'],
                     'allowed_algorithms' => ['HS256'],
                 ],
-                'tenant_b' => $jwe + [
+                'tenant_b' => ($encrypts('tenant_b') ? $envelope('tenant_b') : []) + [
                     'issuer' => $issuerOfB ?? self::B,
                     'audience' => self::AUDIENCE,
                     'keys' => ['tenant_b'],

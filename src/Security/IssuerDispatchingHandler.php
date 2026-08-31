@@ -29,9 +29,12 @@ use UnexpectedValueException;
  *
  * **The allowlist is the configured consumers and nothing else.** An issuer no
  * listed consumer expects is refused as `wrong_issuer` before a key is
- * fetched, and so is a token whose issuer cannot be read at all. There is no
- * default route: a fallback consumer would be the one everything unrecognised
- * ends up at, which is the opposite of what a tenant boundary is for.
+ * fetched, and so is a token that names none. There is no default route: a
+ * fallback consumer would be the one everything unrecognised ends up at, which
+ * is the opposite of what a tenant boundary is for. A string that is not a
+ * token at all is `malformed`, the answer it would have got from a consumer
+ * named directly — routing is a question about tenants, and a broken bearer
+ * string is not an answer to it.
  *
  * **An encrypted token routes on the issuer replicated in its outer header**
  * (RFC 7519 §5.3), because a JWE has nothing else to read without a key — and
@@ -74,6 +77,14 @@ final class IssuerDispatchingHandler implements AccessTokenHandlerInterface
             // Not a container-build check, because an issuer is routinely an
             // env reference and has no value until here. `jwt:config:check`
             // builds every dispatcher, which is where a deploy finds out.
+            if ('' === $issuer) {
+                throw new UnexpectedValueException(sprintf(
+                    'Dispatcher "%s" routes to consumer "%s", whose issuer is empty. An `iss` of "" is not a tenant, and a token would have to claim one to arrive here — check the environment variable behind it.',
+                    $name,
+                    $consumer,
+                ));
+            }
+
             if (isset($routes[$issuer])) {
                 throw new UnexpectedValueException(sprintf(
                     'Dispatcher "%s" cannot choose between consumers "%s" and "%s": both expect issuer "%s", and the token names one issuer.',
@@ -94,8 +105,15 @@ final class IssuerDispatchingHandler implements AccessTokenHandlerInterface
     {
         $issuer = self::issuerOf($accessToken);
 
+        if (false === $issuer) {
+            throw $this->refused(RejectionReason::Malformed, 'This is not a token, so there is no issuer to route it by.');
+        }
+
         if (null === $issuer || !isset($this->routes[$issuer])) {
-            throw $this->refused();
+            throw $this->refused(
+                RejectionReason::WrongIssuer,
+                sprintf('No consumer behind dispatcher "%s" expects this token\'s issuer.', $this->name),
+            );
         }
 
         $consumer = $this->consumers->get($this->routes[$issuer]);
@@ -108,18 +126,26 @@ final class IssuerDispatchingHandler implements AccessTokenHandlerInterface
     }
 
     /**
-     * The issuer a token names, read without verifying anything, or null where
-     * there is nothing to read.
+     * The issuer a token names, read without verifying anything.
      *
-     * A signed token carries it as a claim; an encrypted one carries it only if
-     * the sender replicated it into the outer header. Tried in that order for
-     * the reason {@see TraceableAccessTokenHandler} tries it in that order: a
-     * three-segment string is the ordinary case, and asking the JWE serializer
-     * about one would only ever be answered with a refusal.
+     * Three answers, because a dispatcher owes its caller two different
+     * refusals: the issuer, `null` for a token that reads but names nobody
+     * this could route by, and `false` for a string that is not a token at
+     * all. Folding the last two together would put a client shipping broken
+     * bearer strings in the same bucket as a tenant nobody configured, and
+     * those are read by different people.
+     *
+     * A signed token carries the issuer as a claim; an encrypted one carries
+     * it only if the sender replicated it into the outer header. Tried in that
+     * order for the reason {@see TraceableAccessTokenHandler} tries it in that
+     * order: a three-segment string is the ordinary case, and asking the JWE
+     * serializer about one would only ever be answered with a refusal.
      */
-    private static function issuerOf(string $token): ?string
+    private static function issuerOf(string $token): string|false|null
     {
         try {
+            // A non-string `iss` throws here, and lands where a JWE would:
+            // what it names cannot be a route either way.
             return JwtParser::parse($token)->unverifiedClaims->issuer();
         } catch (JwtException) {
         }
@@ -127,7 +153,7 @@ final class IssuerDispatchingHandler implements AccessTokenHandlerInterface
         try {
             $header = JweCompactSerializer::deserialize($token)->header;
         } catch (JwtException) {
-            return null;
+            return false;
         }
 
         $issuer = $header['iss'] ?? null;
@@ -140,22 +166,16 @@ final class IssuerDispatchingHandler implements AccessTokenHandlerInterface
      * announce it: a token that routes nowhere never reaches a consumer, and a
      * refusal no listener hears is one nobody can count.
      *
-     * The reason is `wrong_issuer` whether the issuer was unknown or unreadable
-     * — both are the same fact about the same question, which is whether this
-     * dispatcher has a consumer for this token.
+     * The message names no issuer. It reaches a log and an exception page, and
+     * neither is a place to echo a string an unauthenticated caller chose;
+     * what the token said is in the profiler panel, which reads the token
+     * itself.
      */
-    private function refused(): RejectedTokenException
+    private function refused(RejectionReason $reason, string $message): RejectedTokenException
     {
-        // The issuer the token named is not in it: the message reaches a log
-        // and an exception page, and neither is a place to echo a string an
-        // unauthenticated caller chose. What it was is in the profiler panel,
-        // which reads the token itself.
-        $failure = new RejectedTokenException(
-            RejectionReason::WrongIssuer,
-            sprintf('No consumer behind dispatcher "%s" expects this token\'s issuer.', $this->name),
-        );
+        $failure = new RejectedTokenException($reason, $message);
 
-        $this->events?->dispatch(new JwtRejectedEvent($this->name, RejectionReason::WrongIssuer, $failure));
+        $this->events?->dispatch(new JwtRejectedEvent($this->name, $reason, $failure));
 
         return $failure;
     }
