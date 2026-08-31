@@ -131,6 +131,10 @@ A successful login now answers with RFC 6750 fields, under `Cache-Control: no-st
 { "access_token": "eyJ0eXAiOiJhdCtqd3QiLCJhbGciOiJIUzI1NiJ9...", "token_type": "Bearer", "expires_in": 900 }
 ```
 
+That `access_token` is whatever the issuer mints. An issuer with a `jwe` block seals what it
+signs, so the same field then carries a five-segment JWE rather than the three-segment JWS above
+— the handler passes it through either way, and RFC 6750 says nothing about its shape.
+
 **The handler mints from the identity and nothing else.** It calls `issue()` with the user
 identifier, so the token carries what configuration decided — audience, TTL,
 `issuers.<name>.claims` — plus whatever your claim providers and `JwtIssuingEvent` listeners add.
@@ -1264,7 +1268,8 @@ are refused at build for the reason a signing pair is: nothing could say which o
 
 RFC 7519 §5.3 lets a sender copy a claim into the outer header — `iss`, usually, so an
 intermediary can route without holding a key — and requires the copy to agree with the token
-inside. This consumer enforces that, and a disagreement is refused as `malformed`.
+inside. This consumer enforces that, and a disagreement is refused as `malformed`. The sending
+half is `replicated_claims`, below.
 
 **The comparison is exact.** An outer `"aud": "https://api.test"` beside an inner
 `aud: ["https://api.test"]` is a disagreement here, because the producer chose the inner shape
@@ -1288,11 +1293,6 @@ that token is read (RFC 8725 §3.1).
 
 ### What is not here yet
 
-**Encrypted tokens are read, not minted.** The issuer side — sign, then encrypt — is I8 on the
-roadmap; until it lands the sender is somebody else's code or the library's `NestedJwtBuilder`
-called directly. `TestTokenFactory` can seal what it mints, so a firewall configured this way is
-testable today; see "Testing an application that uses this".
-
 **Only shared secrets.** `ECDH-ES`, which encrypts to somebody's public EC key, needs a registry
 of asymmetric encryption keys and a way to publish this application's own — a larger thing than a
 name in a list. RSA key encryption is not coming: the library implements none, deliberately.
@@ -1305,8 +1305,132 @@ types with the case kept after the prefix (medzuch/jwt-php#62), so the mixed-cas
 refused as `malformed` until that is fixed. Nothing here works around it: a second implementation
 of media-type comparison is a worse problem than the one it solves.
 
-**Encrypted ID tokens and encrypted security events** are not configurable: `jwe` belongs to
-`consumers`, and the OIDC and SET registrations verify signatures only.
+**Encrypted ID tokens and encrypted security events** are not configurable. `jwe` belongs to
+`consumers` and to `issuers` — the section below is the issuing half — and the OIDC and SET
+registrations sign and verify only.
+
+## Minting an encrypted token
+
+The other half: an issuer that signs and then encrypts what it signed (RFC 7519 §11.2 asks for
+that order, and it is the only one the bundle can express). An application that is both ends
+writes both blocks, and what comes out of one goes into the other:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default:
+            hmac: '%env(JWT_SECRET)%'
+
+    jwe_keys:
+        payload_2026:
+            secret: '%env(base64:JWT_JWE_SECRET)%'
+            algorithm: A256KW
+            kid: 'enc-2026'
+
+    issuers:
+        default:
+            issuer: '%env(APP_URL)%'
+            key: default
+            client_id: 'internal'
+            audience: '%env(APP_URL)%'
+            jwe:
+                key: payload_2026
+                key_management: A256KW
+                content_encryption: A256GCM
+
+    consumers:
+        api:
+            issuer: '%env(APP_URL)%'
+            audience: '%env(APP_URL)%'
+            keys: [default]
+            allowed_algorithms: [HS256]
+            jwe:
+                keys: [payload_2026]
+                allowed_key_management: [A256KW]
+                allowed_content_encryption: [A256GCM]
+```
+
+`$issuer->issue('alice')` now hands back a five-segment JWE instead of a three-segment JWS.
+Nothing above that changed: the claims are the ones the four sources decided, `expiresIn` is the
+lifetime the token was minted with, and `jti` names the token *inside* — which is what makes
+revoking one still work, because that is the `jti` a consumer sees after opening the envelope.
+The events fire as they did, on the claims rather than on the ciphertext.
+
+**One of each, not a list.** A consumer takes `keys`, `allowed_key_management` and
+`allowed_content_encryption` because a receiver has to accept everything its senders might still
+be using. A sender picks one key and one algorithm of each kind and uses them. Rotation is that
+asymmetry in practice: the receiving side's list grows first, and this side's `key` changes
+afterwards.
+
+The key has to be made of what the algorithm needs, and the container refuses to build otherwise
+— `A256KW` with a key bound to `A192KW`, or `dir` with a key that is a content key for a
+different `enc`. Encrypting with `dir` means the configured key *is* the content key:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default:
+            hmac: '%env(JWT_SECRET)%'
+
+    jwe_keys:
+        content_2026:
+            secret: '%env(base64:JWT_CEK)%'
+            algorithm: A256GCM
+            kid: 'enc-2026'
+
+    issuers:
+        default:
+            issuer: '%env(APP_URL)%'
+            key: default
+            client_id: 'internal'
+            audience: '%env(APP_URL)%'
+            jwe:
+                key: content_2026
+                key_management: dir
+                content_encryption: A256GCM
+```
+
+### Replicating a claim for the intermediary
+
+`replicated_claims` copies claims into the outer header, where something that holds no key can
+read them — a gateway routing on `iss`, most often:
+
+```yaml
+medzuch_jwt:
+    keys:
+        default:
+            hmac: '%env(JWT_SECRET)%'
+
+    jwe_keys:
+        payload_2026:
+            secret: '%env(base64:JWT_JWE_SECRET)%'
+            algorithm: A256KW
+            kid: 'enc-2026'
+
+    issuers:
+        default:
+            issuer: '%env(APP_URL)%'
+            key: default
+            client_id: 'internal'
+            audience: '%env(APP_URL)%'
+            jwe:
+                key: payload_2026
+                key_management: A256KW
+                content_encryption: A256GCM
+                replicated_claims: [iss]
+```
+
+The value written is read back out of the token that was just signed, so it is the claim exactly
+— including its shape, which is the part that is easy to get wrong by hand. A receiver compares
+the two and must reject a token where they disagree (§5.3), and this bundle's consumer does.
+
+A claim the token does not carry is not written: §5.3 governs a claim that was *repeated*, and a
+header member with nothing behind it would be an unauthenticated value nobody compares to
+anything. A name that is a registered JOSE header parameter — `alg`, `kid`, `typ`, `cty` and the
+rest — is refused at build, because in the outer header those mean something else entirely.
+
+**Every replicated claim is a claim you decided not to encrypt.** That is the trade the section
+exists for, and the reason the default is to replicate nothing.
 
 ## How old a token may be
 
@@ -2136,6 +2260,12 @@ looking like rejected tokens at runtime:
   allowed `alg` no configured key can be used with, a key bound to something the consumer does
   not allow, two keys a token cannot tell apart, or a `dir` key with no `kid` — which no
   recipient could ever select
+- an issuer that could never seal one: a `jwe_keys` name that does not exist, or a key that is
+  not made of what the algorithm it names needs — a key that wraps with `A256KW` cannot wrap
+  with `A192KW`, and a `dir` key is a content key for one `enc` and no other
+- a `replicated_claims` entry named after a registered JOSE header parameter — in the outer
+  header `alg`, `kid`, `typ` and `cty` mean something else, and a receiver skips them rather
+  than comparing them to a claim
 - a JWK Set publishing a shared secret, a key with no public half, or a key that does not exist
 - a static claim named `iss`, `sub`, `aud`, `exp`, `nbf`, `iat` or `jti` — those are set from
   configuration or by the profile

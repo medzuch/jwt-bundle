@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Medzuch\JwtBundle\Issuer;
 
 use DateInterval;
+use Medzuch\Jwt\Profile\AccessTokenBuilder;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Event\JwtIssuedEvent;
 use Medzuch\JwtBundle\Event\JwtIssuingEvent;
@@ -24,6 +25,10 @@ use Psr\EventDispatcher\EventDispatcherInterface;
  * The builder is filled before any of those sources run and the assembled map
  * is applied on top of it, so nothing here guards the registered claims: the
  * library refuses them in `withClaim()`, whoever sends them.
+ *
+ * Where the issuer has a {@see TokenEnvelope}, what it returns is that token
+ * sealed in a JWE (I8). Everything above happens first and happens the same
+ * way: encryption is what the token travels in, not part of what it says.
  */
 final class AccessTokenIssuer
 {
@@ -41,6 +46,7 @@ final class AccessTokenIssuer
         private readonly array $staticClaims = [],
         private readonly iterable $providers = [],
         private readonly ?EventDispatcherInterface $dispatcher = null,
+        private readonly ?TokenEnvelope $envelope = null,
     ) {}
 
     /**
@@ -82,11 +88,25 @@ final class AccessTokenIssuer
             $builder = $builder->withClaim($claim, $value);
         }
 
-        $token = new IssuedToken((string) $builder->build(), $lifetime, $jti);
+        $token = new IssuedToken($this->serialize($builder), $lifetime, $jti);
 
         $this->dispatcher?->dispatch(new JwtIssuedEvent($issuance, $assembled));
 
         return $token;
+    }
+
+    /**
+     * A signed token, or that token sealed in a JWE where the issuer was given
+     * a `jwe` block (I8). Sealing is the last thing that happens to it and
+     * changes nothing above: the claims, the `jti` the caller may revoke on,
+     * and the lifetime reported back are the token's own, and the envelope is
+     * the wrapper it travels in.
+     */
+    private function serialize(AccessTokenBuilder $builder): string
+    {
+        $signed = $builder->build();
+
+        return null === $this->envelope ? (string) $signed : $this->envelope->seal($signed);
     }
 
     /**

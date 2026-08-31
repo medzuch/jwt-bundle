@@ -59,8 +59,13 @@ final class NestedTokenVerifier implements TokenVerifierInterface
      * with itself. Registered names are a fixed list in published RFCs rather
      * than a policy either side could change, which is what makes restating
      * them here safe.
+     *
+     * Public because the issuing half reads it too: a claim configured for
+     * replication (I8) that is one of these names would be written into the
+     * outer header as protocol metadata and skipped by the very check it was
+     * written for, so the configuration refuses it.
      */
-    private const JOSE_HEADER_PARAMETERS = [
+    public const JOSE_HEADER_PARAMETERS = [
         'alg', 'enc', 'zip',
         'jku', 'jwk', 'kid', 'x5u', 'x5c', 'x5t', 'x5t#S256',
         'typ', 'cty', 'crit',

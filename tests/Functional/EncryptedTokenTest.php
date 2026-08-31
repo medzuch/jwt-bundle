@@ -53,10 +53,11 @@ use Symfony\Component\HttpKernel\KernelInterface;
  * an unencrypted one, so an expired token in a perfectly good envelope is
  * still expired.
  *
- * Nothing here mints an encrypted token through the bundle, because nothing in
- * the bundle does yet: I8 is the other half, and until it lands the tokens are
- * built with the library directly — which is also how a third party's would
- * arrive.
+ * Nothing here mints an encrypted token through the bundle, deliberately: the
+ * tokens are built with the library directly, which is how a third party's
+ * arrive and the only way to seal one to a key or an algorithm this consumer
+ * was never configured for. The pair where both halves are this bundle's is
+ * {@see EncryptedIssuanceTest} (I8).
  */
 #[CoversClass(NestedTokenVerifier::class)]
 final class EncryptedTokenTest extends WebTestCase

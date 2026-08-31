@@ -283,6 +283,36 @@ final class TokenCommandsTest extends KernelTestCase
         self::assertStringContainsString('refuses this token: expired', $display);
     }
 
+    /**
+     * The two commands against a configuration where both halves are this
+     * application's (I8): what `jwt:token:create` mints is sealed, and
+     * `jwt:token:inspect` describes the envelope and then asks the consumer,
+     * which holds the key and accepts what is inside.
+     */
+    #[TestDox('a token the create command seals is one the inspect command gets a verdict on')]
+    public function testCreatedEncryptedTokenIsAccepted(): void
+    {
+        $configuration = self::sealedConfiguration([
+            'key' => 'sealed',
+            'key_management' => 'A256KW',
+            'content_encryption' => 'A256GCM',
+        ]);
+
+        $created = self::console('jwt:token:create', ['subject' => 'alice', '--raw' => true], null, $configuration);
+        self::assertSame(Command::SUCCESS, $created->getStatusCode(), $created->getDisplay());
+
+        $token = trim($created->getDisplay());
+        self::assertSame(5, substr_count($token, '.') + 1, 'a JWE is five dot-separated segments');
+
+        $inspect = self::console('jwt:token:inspect', ['token' => $token], null, $configuration);
+        $display = $inspect->getDisplay();
+
+        self::assertSame(Command::SUCCESS, $inspect->getStatusCode(), $display);
+        self::assertStringContainsString('Header (encrypted token)', $display);
+        self::assertStringContainsString('Consumer "api" accepts this token', $display);
+        self::assertStringContainsString('alice', $display);
+    }
+
     private static function sealed(string $signed): string
     {
         return (string) NestedJwtBuilder::wrap(
@@ -295,9 +325,12 @@ final class TokenCommandsTest extends KernelTestCase
     }
 
     /**
+     * @param array<string, mixed>|null $issuerJwe seals what the issuer mints (I8);
+     *                                             null leaves it minting signed tokens
+     *
      * @return array<string, mixed>
      */
-    private static function sealedConfiguration(): array
+    private static function sealedConfiguration(?array $issuerJwe = null): array
     {
         $configuration = self::configuration();
         $configuration['jwe_keys'] = ['sealed' => ['secret' => self::SEALING, 'algorithm' => 'A256KW', 'kid' => 'enc-2026']];
@@ -306,6 +339,10 @@ final class TokenCommandsTest extends KernelTestCase
             'allowed_key_management' => ['A256KW'],
             'allowed_content_encryption' => ['A256GCM'],
         ];
+
+        if (null !== $issuerJwe) {
+            $configuration['issuers']['default']['jwe'] = $issuerJwe;
+        }
 
         return $configuration;
     }

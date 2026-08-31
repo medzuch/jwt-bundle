@@ -667,4 +667,75 @@ final class ConfigurationGuard
             }
         }
     }
+
+    /**
+     * Whether an issuer's `jwe` block describes a token it could actually
+     * seal (I8).
+     *
+     * One key and one algorithm of each kind, so there is one question rather
+     * than {@see assertCanDecrypt()}'s four: is the key this issuer names made
+     * of what the algorithm it names needs? A wrapping key is bound to the
+     * `alg` it wraps with; a `dir` key *is* the Content Encryption Key and is
+     * bound to the `enc` it is a key for. Getting that wrong builds a green
+     * container and throws on the first token minted, which is a 500 on a
+     * token endpoint rather than a failed deploy.
+     *
+     * @param array{key: string, key_management: string, content_encryption: string, replicated_claims: list<string>} $jwe
+     * @param array<string, array{secret: string, algorithm: string, kid: string|null}>                               $keys
+     */
+    public static function assertCanEncrypt(string $context, array $jwe, array $keys): void
+    {
+        if (!isset($keys[$jwe['key']])) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s encrypts with key "%s", which is not defined under medzuch_jwt.jwe_keys. Defined: %s.',
+                $context,
+                $jwe['key'],
+                [] === $keys ? 'none' : '"' . implode('", "', array_keys($keys)) . '"',
+            ));
+        }
+
+        $bound = $keys[$jwe['key']]['algorithm'];
+        $needed = KeyManagementAlgorithms::DIRECT === $jwe['key_management']
+            ? $jwe['content_encryption']
+            : $jwe['key_management'];
+
+        if ($bound === $needed) {
+            return;
+        }
+
+        $direct = KeyManagementAlgorithms::DIRECT === $jwe['key_management'];
+
+        throw new InvalidConfigurationException(sprintf(
+            '%s encrypts with %s and JWE key "%s", which is bound to %s. %s',
+            $context,
+            $direct ? sprintf('"dir" and %s', $jwe['content_encryption']) : $jwe['key_management'],
+            $jwe['key'],
+            $bound,
+            self::adviseOnTheKey($direct, $needed, $bound),
+        ));
+    }
+
+    /**
+     * What to do about a key that is not made of what the algorithm needs.
+     *
+     * Two settings can be wrong, so the sentence offers both ways out: name a
+     * key the algorithm can use, or use the algorithm the key is for. The
+     * second half is the one that has to know what kind of name `$bound` is —
+     * a key bound to a content-encryption algorithm cannot wrap anything and
+     * one bound to a key-management algorithm cannot encrypt content, so
+     * advising either across that line would send an operator to a value the
+     * option does not accept. Crossing it also means changing both settings
+     * rather than one, and the sentence says so.
+     */
+    private static function adviseOnTheKey(bool $direct, string $needed, string $bound): string
+    {
+        $boundIsContentKey = in_array($bound, ContentEncryptionAlgorithms::names(), true);
+
+        return match (true) {
+            $direct && $boundIsContentKey => sprintf('A "dir" key is the Content Encryption Key itself, so it has to be a key for %s — name a key bound to it, or encrypt the content with %s.', $needed, $bound),
+            $direct => sprintf('A "dir" key is the Content Encryption Key itself, and this one wraps keys instead — name a key bound to %s, or wrap with it by setting key_management to %s.', $needed, $bound),
+            $boundIsContentKey => sprintf('A key that wraps is bound to the algorithm it wraps with, and this one is a Content Encryption Key — name a key bound to %s, or use it directly with key_management "dir" and content_encryption %s.', $needed, $bound),
+            default => sprintf('A key that wraps is bound to the algorithm it wraps with — name a key bound to %s, or wrap with %s.', $needed, $bound),
+        };
+    }
 }
