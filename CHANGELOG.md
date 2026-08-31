@@ -13,10 +13,12 @@ a class or method signature would be.
 
 ## [1.1.0] — 2026-08-31
 
-Eight standards-track rows from Phase 5, and one refusal that came out of
-building the last of them. Everything here is additive and inert until
-configured: an application running 1.0.0 upgrades by changing the constraint
-and reading nothing, and `UPGRADE.md` says so in more detail.
+Eight standards-track rows from Phase 5, C15's optional identity beside them,
+and one refusal that came out of building the last of them. Everything here is
+additive and inert until configured: an application running 1.0.0 upgrades by
+changing the constraint and rewriting no configuration. Two things changed
+behaviour it could already have been relying on, and `UPGRADE.md` is where they
+are.
 
 What the release is *about* is that both halves of three pairs now live in one
 package. A consumer could read an encrypted token (C12) and now an issuer seals
@@ -274,17 +276,6 @@ behind one firewall (C11).
   `JwksResolutionException` a `jwks_uri` failure is, so locally configured keys
   still cover an outage.
 
-### Fixed
-
-- **`IdTokenVerifier` refuses a token typed `at+jwt`.** OIDC asks for no `typ`
-  on an ID token, so nothing in the profile stopped an access token from
-  verifying as one wherever its `aud` happened to equal the registration's
-  `client_id` — a credential minted for an API, presented at a login callback,
-  logging somebody in. Reachable in one deployment only now that the same
-  application can mint both (I6), and refused before anything else is checked.
-  No provider labels an ID token as an access token, which is what makes the
-  label worth reading.
-
 ### Changed
 
 - **CI now tests the edges of the window the package promises**, which the
@@ -295,6 +286,17 @@ behind one firewall (C11).
   an application installs it, rather than whatever 6.4 patch was newest on the
   day. `composer.json` is unchanged: the supported window is the same
   `^6.4 || ^7.4 || ^8.0` DEC-2 set.
+
+### Fixed
+
+- **`IdTokenVerifier` refuses a token typed `at+jwt`.** OIDC asks for no `typ`
+  on an ID token, so nothing in the profile stopped an access token from
+  verifying as one wherever its `aud` happened to equal the registration's
+  `client_id` — a credential minted for an API, presented at a login callback,
+  logging somebody in. Reachable in one deployment only now that the same
+  application can mint both (I6), and refused before anything else is checked.
+  No provider labels an ID token as an access token, which is what makes the
+  label worth reading.
 
 ## [1.0.0] — 2026-08-25
 

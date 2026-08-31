@@ -13,10 +13,10 @@ rewrite.
 
 ## 1.0.0 → 1.1.0
 
-**Nothing in your configuration has to change**, and every section this release adds is absent
-until you write it: `jwe_keys`, `dispatchers`, `id_token_issuers`, `metadata`, `security_events`,
-`consumers.*.jwe`, `issuers.*.jwe` and `remote_jwks.*.discovery`. Two things are worth knowing
-anyway.
+**Almost nothing in your configuration has to change**, and every section this release adds is
+absent until you write it: `jwe_keys`, `dispatchers`, `id_token_issuers`, `metadata`,
+`security_events`, `consumers.*.jwe`, `issuers.*.jwe` and `remote_jwks.*.discovery`. Three things
+are worth knowing anyway, and only the third asks anything of a file you have already written.
 
 **An access token is no longer accepted as an ID token.** `IdTokenVerifier::verify()` refuses a
 token whose header says `typ: at+jwt` before it checks anything else. OIDC asks for no `typ` on
@@ -25,6 +25,14 @@ happened to equal the registration's `client_id` — a credential minted for an 
 a login callback, logging somebody in. No provider labels an ID token as an access token, so
 this refuses nothing a real relying party was accepting; if your identity provider does label
 them that way, it is the provider that has to change.
+
+**`secevent+jwt` is now a reserved `token_type`.** 1.0 refused two spellings on a consumer —
+`at+jwt` and `JWT` — because each names a profile the bundle verifies rather than a type of your
+own. C8 added the third: a Security Event Token is configured under `security_events`, not on a
+firewall. A 1.0 configuration that named `consumers.*.token_type: secevent+jwt` therefore stops
+booting, with a message saying where SETs belong. Nobody should have written it — that is what
+the refusal is for — but it is the one new *value* that can turn a configuration that booted into
+one that does not.
 
 **`log_levels` gained two categories**, `decrypted` and `decryption_failed`. They are read only
 where a consumer configures `jwe`, and each keeps the library's default until you set it, so an
