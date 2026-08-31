@@ -132,6 +132,27 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertStringContainsString('exactly 32 bytes', $tester->getDisplay());
     }
 
+    /**
+     * The one dispatcher question the container cannot answer: two tenants
+     * expecting the same issuer. An `issuer` is `%env(...)%` in almost every
+     * real configuration and has no value until something builds the service,
+     * so this row is that something — and where a deploy finds out instead of
+     * a request being routed to whichever tenant was listed first.
+     */
+    #[TestDox('two tenants expecting one issuer is a row in the report, not a routed token')]
+    public function testDispatcherWithAmbiguousRoutes(): void
+    {
+        $configuration = self::configuration();
+        $configuration['consumers']['other'] = $configuration['consumers']['api'];
+        $configuration['dispatchers'] = ['tenants' => ['consumers' => ['api', 'other']]];
+
+        $tester = self::check(configuration: $configuration);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('dispatcher "tenants"', $tester->getDisplay());
+        self::assertStringContainsString('cannot choose between consumers', $tester->getDisplay());
+    }
+
     #[TestDox('an issuer that cannot be reached fails the check, and --skip-remote leaves it alone')]
     public function testRemoteSetIsReached(): void
     {

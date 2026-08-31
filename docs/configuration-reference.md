@@ -289,6 +289,22 @@ medzuch_jwt:
                     # Roles every verified token gets, whatever it claims. Empty unless set: a baseline like ROLE_USER is granted only if you ask for it, and nothing invents one.
                     defaults:             []
 
+    # Named dispatchers: one firewall serving several issuers, where the token says which. Each names consumers configured above, and a token is handed to the one expecting the issuer it claims — then verified by that consumer from the beginning, its own `iss` check included. Reading an issuer before anything is verified is safe because choosing a judge grants nothing; being believed still takes that consumer's keys.
+    dispatchers:
+
+        # Prototype
+        name:
+
+            # Names from the `consumers` section. Their `issuer` values are the routing table and the whole allowlist: a token naming anything else is refused as `wrong_issuer` before a key is fetched, and there is no fallback consumer — one would be where everything unrecognised ends up, which is the opposite of a tenant boundary. An encrypted token routes on the `iss` replicated in its outer header (RFC 7519 §5.3), which is the case that section exists for.
+            consumers:            [] # Required
+
+                # Examples:
+                # - tenant_a
+                # - tenant_b
+
+            # Protection space named in the `WWW-Authenticate` header of this dispatcher's entry point and scope denials (RFC 6750 §3). Null uses the dispatcher's name. The realm belongs here rather than to the consumers behind it: a challenge goes out when there is no valid token, which is before anything could say which tenant the caller meant.
+            realm:                null # Example: api
+
     # Named token extractors. Reference them from a firewall's `access_token.token_extractors`, beside Symfony's own security.access_token_extractor.header, .query_string and .request_body.
     token_extractors:
 

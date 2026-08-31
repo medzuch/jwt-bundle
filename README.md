@@ -1120,6 +1120,109 @@ posture is assembled from the layer below them. The refusal still reaches `JwtRe
 the profiler as `malformed`; it is the log line that is missing, and a listener on that event is
 where to put one back.
 
+## Several issuers behind one firewall
+
+One API, several tenants — or several identity providers, or a partner alongside your own
+issuer. Each mints tokens with its own keys, its own `iss`, and possibly its own idea of what a
+user is. A consumer answers to exactly one issuer, which is what makes it safe; a dispatcher puts
+several of them behind one firewall and lets the token say which one judges it:
+
+```yaml
+medzuch_jwt:
+    keys:
+        acme: { hmac: '%env(ACME_SECRET)%' }
+        globex: { hmac: '%env(GLOBEX_SECRET)%' }
+
+    consumers:
+        acme:
+            issuer: '%env(ACME_ISSUER)%'
+            audience: '%env(APP_URL)%'
+            keys: [acme]
+            allowed_algorithms: [HS256]
+        globex:
+            issuer: '%env(GLOBEX_ISSUER)%'
+            audience: '%env(APP_URL)%'
+            keys: [globex]
+            allowed_algorithms: [HS256]
+
+    dispatchers:
+        api:
+            consumers: [acme, globex]
+            realm: api
+```
+
+```yaml
+# config/packages/security.yaml
+security:
+    firewalls:
+        api:
+            pattern: ^/api
+            stateless: true
+            entry_point: medzuch_jwt.entry_point.api
+            access_token:
+                token_handler: medzuch_jwt.dispatcher.api
+```
+
+**The routing table is the consumers themselves.** Each already declares the `iss` it expects,
+and that value is what a token is matched against — there is nowhere to write it twice and so
+nowhere for two copies to disagree. It also means a per-tenant issuer can stay an environment
+variable, which a key in a YAML map could not be.
+
+### Why reading an unverified `iss` is safe
+
+The dispatcher parses the token far enough to find `iss` and no further. Nothing is verified at
+that point, and nothing needs to be: **choosing a judge grants nothing.** The consumer that name
+selects then asks every question it would have asked anyway — the signature, its own `iss`, the
+audience, the expiry, the profile — against its own keys.
+
+So a caller who relabels a token to reach another tenant's consumer has bought the right to be
+refused by that tenant's keys, which is the consumer they would have faced by sending the token
+to that firewall directly. It is a switchboard, not a doorman.
+
+**The allowlist is the listed consumers and nothing else.** An issuer none of them expects is
+refused as `wrong_issuer` before a key is fetched, and so is a token whose issuer cannot be read
+at all. There is no fallback consumer, and there will not be one: a fallback is where everything
+unrecognised ends up, which is the opposite of what a tenant boundary is for.
+
+### What belongs to the dispatcher, and what does not
+
+The `WWW-Authenticate` realm is the dispatcher's, and so are `medzuch_jwt.entry_point.<name>` and
+`medzuch_jwt.access_denied.<name>` under its name. A challenge goes out when there is no valid
+token — before anything could say which tenant the caller meant — so it cannot belong to one of
+the consumers behind it.
+
+Everything else stays the consumer's. `JwtVerifiedEvent` names the tenant that accepted the
+token, the log line is that consumer's, and a denylist is per consumer, as it was. The profiler
+panel names the dispatcher, because it names whatever the firewall called; the `iss` among the
+row's claims says which tenant took it from there.
+
+A dispatcher's name cannot be a consumer's: both are things a firewall points at, and one name
+cannot answer for two. The consumers arrive through a service locator, so a request builds the
+one it routed to — a dispatcher in front of twenty tenants does not open twenty denylists to
+answer one token.
+
+### Encrypted tokens, and the one check the container cannot make
+
+An encrypted token has no readable claims, so it routes on the `iss` its sender replicated into
+the outer header (RFC 7519 §5.3) — which is exactly the case that section exists for, and what
+`issuers.<name>.replicated_claims` writes. A JWE replicating nothing has no issuer here and is
+refused; a tenant sending one has to be asked to replicate it.
+
+Two consumers expecting the *same* issuer would make the route ambiguous, and that is not
+refused when the container is built: an `issuer` is usually `%env(...)%` and has no value then.
+The dispatcher asks it of itself when it is built instead, so `jwt:config:check` is where a
+deploy finds out:
+
+```
+$ php bin/console jwt:config:check
+ [FAIL] dispatcher "api": Dispatcher "api" cannot choose between consumers "acme" and "globex":
+        both expect issuer "https://idp.example.com", and the token names one issuer.
+```
+
+Routing on anything other than the token — a host, a subdomain, a tenant header — is the
+application's own handler, and a short one: `AccessTokenHandlerInterface` has a single method,
+and the consumers are services you can inject by name.
+
 ## Reading an encrypted token
 
 A signed token hides nothing. Anyone who holds one can read every claim in it — that is what
@@ -2248,6 +2351,8 @@ Configuration errors fail when the container is built, naming the key at fault, 
 looking like rejected tokens at runtime:
 
 - a consumer or issuer naming a key that does not exist
+- a dispatcher routing to a consumer that does not exist, naming one twice, or taking the name of
+  a configured consumer — both are handlers a firewall points at, and one id cannot be two
 - an allowed algorithm with no key behind it — a token using it could never be verified
 - two keys in one consumer's set that a token cannot tell apart: sharing a `kid`, or sharing an
   algorithm with no `kid`

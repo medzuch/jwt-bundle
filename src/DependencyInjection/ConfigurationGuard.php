@@ -738,4 +738,55 @@ final class ConfigurationGuard
             default => sprintf('A key that wraps is bound to the algorithm it wraps with — name a key bound to %s, or wrap with %s.', $needed, $bound),
         };
     }
+
+    /**
+     * Whether a dispatcher describes a firewall that could route anything
+     * (C11).
+     *
+     * Three questions, none of which the tree can ask: every consumer named
+     * has to exist, none may be named twice — a route cannot be a rotation —
+     * and the dispatcher's own name must not be a consumer's, because both
+     * are things a firewall names and one id cannot be two handlers.
+     *
+     * What it cannot ask here is whether two of those consumers expect the
+     * same issuer, which is the mistake that leaves a token routed to
+     * whichever was listed first. An `issuer` is routinely `%env(...)%` and has
+     * no value while the container is built, so the dispatcher asks it of
+     * itself when it is constructed, and `jwt:config:check` builds every one.
+     *
+     * @param array{consumers: list<string>, realm: string|null} $dispatcher
+     * @param array<string, array<string, mixed>> $consumers
+     */
+    public static function assertCanDispatch(string $name, array $dispatcher, array $consumers): void
+    {
+        $context = sprintf('Dispatcher "%s"', $name);
+
+        if (isset($consumers[$name])) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s has the name of a configured consumer. Both are handlers a firewall names, and one of them would have to answer to the other\'s service id.',
+                $context,
+            ));
+        }
+
+        foreach ($dispatcher['consumers'] as $consumer) {
+            if (!isset($consumers[$consumer])) {
+                throw new InvalidConfigurationException(sprintf(
+                    '%s routes to consumer "%s", which is not defined under medzuch_jwt.consumers. Defined: %s.',
+                    $context,
+                    $consumer,
+                    [] === $consumers ? 'none' : '"' . implode('", "', array_keys($consumers)) . '"',
+                ));
+            }
+        }
+
+        $duplicates = array_keys(array_filter(array_count_values($dispatcher['consumers']), static fn(int $count): bool => $count > 1));
+
+        if ([] !== $duplicates) {
+            throw new InvalidConfigurationException(sprintf(
+                '%s names consumer "%s" more than once. A consumer is reached by the issuer it expects, so naming it twice cannot mean two routes.',
+                $context,
+                implode('", "', $duplicates),
+            ));
+        }
+    }
 }

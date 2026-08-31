@@ -45,6 +45,7 @@ final class ConfigurationTree
         self::configureRemoteJwks($children);
         self::configureIssuers($children);
         self::configureConsumers($children);
+        self::configureDispatchers($children);
         self::configureTokenExtractors($children);
         self::configureIdTokens($children);
         self::configureSecurityEvents($children);
@@ -668,6 +669,65 @@ final class ConfigurationTree
         $jwe->end();
     }
 
+    /**
+     * One firewall in front of several consumers, choosing between them by the
+     * issuer the arriving token names (C11).
+     *
+     * The routing table is the consumers themselves: each already declares the
+     * `iss` it expects, and repeating that value here would be a second place
+     * to write it and a first place for the two to disagree. It also keeps the
+     * table working where the issuer is an env reference, which a per-tenant
+     * URL usually is — a key in a YAML map could not be one.
+     */
+    /**
+     * The protection space a 401 from this firewall names, wherever a firewall
+     * can be pointed at something: a consumer, and a dispatcher standing in
+     * front of several. One declaration because the validation is the whole
+     * point of the node, and two copies of a rule about quoting are two rules.
+     */
+    private static function declareRealm(NodeBuilder $node, string $info): void
+    {
+        $node->scalarNode('realm')
+            ->defaultNull()
+            ->cannotBeEmpty()
+            ->info($info)
+            ->example('api')
+            ->validate()
+                // A quote would close the quoted-string it is interpolated
+                // into and let the rest read as further auth-params; a control
+                // character is not allowed in one at all (RFC 9110 §5.6.4), and
+                // a newline costs the whole header — PHP refuses to emit a
+                // header value carrying one, so the 401 goes out with nothing
+                // saying how to authenticate. Escaped or stripped on the way
+                // out as well, but a realm nobody can read is a configuration
+                // mistake worth naming here.
+                ->ifTrue(static fn(mixed $value): bool => is_string($value) && (false !== strpbrk($value, "\"\\") || 1 === preg_match(Challenge::CONTROL, $value)))
+                ->thenInvalid('A realm cannot contain a quote, a backslash or a control character: it is interpolated into a quoted-string in WWW-Authenticate (RFC 9110 §5.6.4). Got %s')
+            ->end()
+            ->end();
+    }
+
+    private static function configureDispatchers(NodeBuilder $children): void
+    {
+        $dispatcher = $children->arrayNode('dispatchers')
+            ->info('Named dispatchers: one firewall serving several issuers, where the token says which. Each names consumers configured above, and a token is handed to the one expecting the issuer it claims — then verified by that consumer from the beginning, its own `iss` check included. Reading an issuer before anything is verified is safe because choosing a judge grants nothing; being believed still takes that consumer\'s keys.')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $consumers = $dispatcher->arrayNode('consumers');
+        $consumers->info('Names from the `consumers` section. Their `issuer` values are the routing table and the whole allowlist: a token naming anything else is refused as `wrong_issuer` before a key is fetched, and there is no fallback consumer — one would be where everything unrecognised ends up, which is the opposite of a tenant boundary. An encrypted token routes on the `iss` replicated in its outer header (RFC 7519 §5.3), which is the case that section exists for.');
+        $consumers->scalarPrototype()->cannotBeEmpty()->end();
+        $consumers->isRequired();
+        $consumers->requiresAtLeastOneElement();
+        $consumers->example(['tenant_a', 'tenant_b']);
+        self::rejectMaps($consumers, 'dispatchers.*.consumers');
+
+        self::declareRealm($dispatcher, 'Protection space named in the `WWW-Authenticate` header of this dispatcher\'s entry point and scope denials (RFC 6750 §3). Null uses the dispatcher\'s name. The realm belongs here rather than to the consumers behind it: a challenge goes out when there is no valid token, which is before anything could say which tenant the caller meant.');
+
+        $dispatcher->end();
+    }
+
     private static function configureJwks(NodeBuilder $children): void
     {
         $jwks = $children->arrayNode('jwks')
@@ -818,24 +878,7 @@ final class ConfigurationTree
 
         $jwe->end();
 
-        $consumer->scalarNode('realm')
-            ->defaultNull()
-            ->cannotBeEmpty()
-            ->info('Protection space named in the `WWW-Authenticate` header of this consumer\'s entry point and scope denials (RFC 6750 §3). Null uses the consumer\'s name. Symfony has its own `access_token.realm` for the header it sends itself; keep the two equal. A literal, not an env reference: the value is validated, which is what stops a quote or a newline from costing the header, and Symfony refuses to validate a placeholder.')
-            ->example('api')
-            ->validate()
-                // A quote would close the quoted-string it is interpolated
-                // into and let the rest read as further auth-params; a control
-                // character is not allowed in one at all (RFC 9110 §5.6.4), and
-                // a newline costs the whole header — PHP refuses to emit a
-                // header value carrying one, so the 401 goes out with nothing
-                // saying how to authenticate. Escaped or stripped on the way
-                // out as well, but a realm nobody can read is a configuration
-                // mistake worth naming here.
-                ->ifTrue(static fn(mixed $value): bool => is_string($value) && (false !== strpbrk($value, "\"\\") || 1 === preg_match(Challenge::CONTROL, $value)))
-                ->thenInvalid('A realm cannot contain a quote, a backslash or a control character: it is interpolated into a quoted-string in WWW-Authenticate (RFC 9110 §5.6.4). Got %s')
-            ->end()
-            ->end();
+        self::declareRealm($consumer, 'Protection space named in the `WWW-Authenticate` header of this consumer\'s entry point and scope denials (RFC 6750 §3). Null uses the consumer\'s name. Symfony has its own `access_token.realm` for the header it sends itself; keep the two equal. A literal, not an env reference: the value is validated, which is what stops a quote or a newline from costing the header, and Symfony refuses to validate a placeholder.');
 
         $consumer->integerNode('leeway')
             ->defaultValue(0)

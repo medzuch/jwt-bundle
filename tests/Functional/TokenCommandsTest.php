@@ -347,6 +347,28 @@ final class TokenCommandsTest extends KernelTestCase
         return $configuration;
     }
 
+    /**
+     * A dispatcher answers `--consumer` like any other name a firewall could
+     * point at (C11): the verdict it gives is the verdict of the consumer it
+     * routed to, which is what somebody debugging a tenant wants to see.
+     */
+    #[TestDox('inspect asks a dispatcher, and gets the routed consumer\'s verdict')]
+    public function testInspectAsksADispatcher(): void
+    {
+        $configuration = self::configuration();
+        $configuration['dispatchers'] = ['tenants' => ['consumers' => ['api']]];
+
+        $accepted = self::console('jwt:token:inspect', ['token' => self::tokenNaming('user-42'), '--consumer' => 'tenants'], null, $configuration);
+
+        self::assertSame(Command::SUCCESS, $accepted->getStatusCode(), $accepted->getDisplay());
+        self::assertStringContainsString('Consumer "tenants" accepts this token', $accepted->getDisplay());
+
+        $elsewhere = self::console('jwt:token:inspect', ['token' => self::tokenFromElsewhere(), '--consumer' => 'tenants'], null, $configuration);
+
+        self::assertSame(Command::FAILURE, $elsewhere->getStatusCode());
+        self::assertStringContainsString('refuses this token: wrong_issuer', $elsewhere->getDisplay());
+    }
+
     #[TestDox('with several consumers configured, inspect refuses to pick one')]
     public function testSeveralConsumersNeedNaming(): void
     {
@@ -530,6 +552,21 @@ final class TokenCommandsTest extends KernelTestCase
             ->audience(self::AUDIENCE)
             ->clientId('test-client')
             ->withClaim('note', '<info>not a verdict</info>')
+            ->expiresIn(new DateInterval('PT5M'))
+            ->build();
+    }
+
+    /**
+     * A token an issuer this application never configured minted, which is
+     * what a dispatcher has no route for.
+     */
+    private static function tokenFromElsewhere(): string
+    {
+        return (string) AccessTokenProfile::issuer('https://elsewhere.test', new Hs256(), HmacKey::fromBinary(self::SECRET, 'HS256'))
+            ->issue()
+            ->subject('user-42')
+            ->audience(self::AUDIENCE)
+            ->clientId('test-client')
             ->expiresIn(new DateInterval('PT5M'))
             ->build();
     }

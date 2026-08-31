@@ -549,6 +549,58 @@ final class ConfigurationValidationTest extends KernelTestCase
     }
 
     /**
+     * @param array<string, mixed> $dispatchers
+     */
+    #[DataProvider('undispatchableConfigurations')]
+    #[TestDox('$defect fails at container build')]
+    public function testDispatchThatCouldNeverRoute(string $defect, array $dispatchers, string $expected): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessageMatches($expected);
+
+        self::bootKernel(['medzuch_jwt' => [
+            'keys' => ['default' => ['hmac' => self::SECRET]],
+            'consumers' => ['api' => self::consumer()],
+            'dispatchers' => $dispatchers,
+        ]]);
+    }
+
+    /**
+     * What the tree cannot ask about a dispatcher (C11). Whether two of its
+     * consumers expect the same issuer is not here: an `issuer` is routinely
+     * `%env(...)%` and has no value at build, so the dispatcher asks that of
+     * itself when it is constructed and `jwt:config:check` builds every one.
+     *
+     * @return iterable<string, array{string, array<string, mixed>, string}>
+     */
+    public static function undispatchableConfigurations(): iterable
+    {
+        yield 'unknown consumer' => [
+            'a dispatcher routing to a consumer that does not exist',
+            ['tenants' => ['consumers' => ['typo']]],
+            '/routes to consumer "typo", which is not defined under medzuch_jwt.consumers/',
+        ];
+
+        yield 'name of a consumer' => [
+            'a dispatcher named after a configured consumer',
+            ['api' => ['consumers' => ['api']]],
+            '/has the name of a configured consumer/',
+        ];
+
+        yield 'consumer named twice' => [
+            'a dispatcher naming one consumer twice',
+            ['tenants' => ['consumers' => ['api', 'api']]],
+            '/names consumer "api" more than once/',
+        ];
+
+        yield 'realm with a quote' => [
+            'a dispatcher whose realm would close the quoted-string it goes into',
+            ['tenants' => ['consumers' => ['api'], 'realm' => 'api", error="insufficient_scope']],
+            '/quote, a backslash or a control character/',
+        ];
+    }
+
+    /**
      * @param array<string, mixed> $jwe
      * @param array<string, mixed> $jweKeys
      */

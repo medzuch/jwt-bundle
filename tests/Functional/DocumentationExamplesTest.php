@@ -459,6 +459,18 @@ final class DocumentationExamplesTest extends KernelTestCase
             }
         }
 
+        // A dispatcher promises the same two, under its own name, plus the
+        // handler a firewall points at (C11).
+        $dispatchers = $configuration['dispatchers'] ?? [];
+
+        if (is_array($dispatchers)) {
+            foreach (array_keys($dispatchers) as $dispatcher) {
+                $ids[] = sprintf('medzuch_jwt.dispatcher.%s', $dispatcher);
+                $ids[] = sprintf('medzuch_jwt.entry_point.%s', $dispatcher);
+                $ids[] = sprintf('medzuch_jwt.access_denied.%s', $dispatcher);
+            }
+        }
+
         $extractors = $configuration['token_extractors'] ?? [];
 
         if (is_array($extractors)) {
