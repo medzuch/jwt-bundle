@@ -42,13 +42,7 @@ use UnexpectedValueException;
 #[CoversClass(IssuerDispatchingHandler::class)]
 final class IssuerDispatchTest extends WebTestCase
 {
-    // Aliased rather than inherited: a `tearDown()` on the class wins over the
-    // trait's silently, and the handler FrameworkBundle installs would have
-    // stayed up — which PHPUnit reports as a risky test on the Symfony floor
-    // and not on the current line.
-    use RestoresExceptionHandler {
-        tearDown as private restoreExceptionHandler;
-    }
+    use RestoresExceptionHandler;
 
     /** @var list<string> environment variables a case set, and this has to unset */
     private static array $environment = [];
@@ -72,6 +66,11 @@ final class IssuerDispatchTest extends WebTestCase
 
         self::$environment = [];
 
+        parent::tearDown();
+
+        // Called by hand: this `tearDown()` overrides the trait's, silently,
+        // and without it the handler FrameworkBundle installs stays up — which
+        // the current Symfony does not report and the 6.4 floor does.
         $this->restoreExceptionHandler();
     }
 
