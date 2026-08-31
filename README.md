@@ -1949,6 +1949,76 @@ token names more than one audience, `exp`/`iat`, the claims OIDC requires, and t
 you pass one. **`at_hash` is not** — binding an ID token to an access token needs support the
 library does not have yet, and this bundle does not reimplement crypto its library is missing.
 
+## Issuing ID tokens (OIDC provider)
+
+The other end of the same pair: an application that *is* the identity provider, minting the ID
+token a relying party will verify.
+
+```yaml
+medzuch_jwt:
+    keys:
+        signing:
+            pem_private: '%kernel.project_dir%/config/jwt/op.pem'
+            algorithm: RS256
+            kid: op-2026
+        published:                                          # the same key's public half,
+            pem_public: '%kernel.project_dir%/config/jwt/op.pub'   # which relying parties fetch
+            algorithm: RS256
+            kid: op-2026
+
+    id_token_issuers:
+        op:
+            issuer: '%env(APP_URL)%'
+            key: signing
+            ttl: 300
+
+    jwks:
+        keys: [published]
+```
+
+```php
+use Medzuch\JwtBundle\Oidc\IdTokenIssuer;
+
+public function token(Request $request, IdTokenIssuer $op): Response
+{
+    $idToken = $op->issue($authorizationRequest->clientId)
+        ->subject($user->getId())
+        ->nonce($authorizationRequest->nonce)          // echo back what the client sent
+        ->authTime($session->authenticatedAt)
+        ->withClaim('email', $user->email)             // whatever the granted scopes allow
+        ->build();
+
+    // …alongside the access token, in the token-endpoint response
+}
+```
+
+**It hands back a builder, not a token.** What varies between two ID tokens is `nonce`,
+`auth_time`, `acr`, `amr`, `azp` and whatever profile claims the scopes granted, and the
+library's `IdTokenBuilder` has a typed setter for each. An argument list would either be long or
+would push those through an untyped claims map, and `SecurityEventIssuer` is here for the same
+reason. An access token is the opposite case — one shape, minted the same way each time — and
+`AccessTokenIssuer::issue()` returns a token accordingly.
+
+**The client id belongs to the request.** A provider mints for whichever relying party asked, so
+`issue()` takes it. `client_id` in the configuration is a default for an application that serves
+exactly one client and should not repeat its name at every call; without either, `issue()` throws
+rather than minting a token no relying party may accept (OIDC Core §3.1.3.7).
+
+**Sign with an asymmetric key and publish it.** A relying party verifies with the public half it
+fetched from your JWK Set, which is what [`jwks`](#publishing-a-jwk-set) serves. A shared secret
+would have to be handed to every client, and a client that can verify with it can mint with it —
+identities for anyone, signed by you.
+
+**An ID token is not an access token**, and this bundle's own consumers refuse one: they verify
+the RFC 9068 profile, whose `typ` is `at+jwt`, and an ID token is refused on the header before a
+claim is read. If your provider also issues access tokens, that is
+[`issuers`](#issuing-tokens--an-authorization-server), minting a different token from the same
+key.
+
+`ttl` is 300 seconds by default rather than the 900 an access token gets: an ID token is read
+once, at the end of the flow that produced it. A caller wanting a different lifetime for one
+token calls `expiresIn()` on the builder, which is the last word.
+
 ## Sending and receiving security events
 
 A Security Event Token (RFC 8417) says that something happened to somebody — an account was
@@ -2369,7 +2439,8 @@ looking like rejected tokens at runtime:
 - a key given the wrong kind of material for its algorithm — a secret for `RS256`, a PEM for
   `HS256` or for `EdDSA`, more than one kind at once, or none
 - a consumer verifying with a private-only key, or an issuer signing with a public-only one —
-  a security-event stream is held to the same rule, and named as a stream when it breaks it
+  a security-event stream and an ID-token issuer are held to the same rule, and each named for
+  what it is when it breaks it
 - a security-event consumer with nothing to verify with: no `keys` and no `remote_jwks`
 - a consumer that could never open an encrypted token: a `jwe_keys` name that does not exist, an
   allowed `alg` no configured key can be used with, a key bound to something the consumer does

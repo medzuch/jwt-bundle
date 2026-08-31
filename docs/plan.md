@@ -245,7 +245,7 @@ default and adds no runtime cost when unconfigured.
 | I3 | `TokenClaimProviderInterface` autoconfigured services — apps contribute claims (tenant, email, entitlements) without subclassing the issuer. Handed a `TokenIssuance`, so a provider can serve one issuer of several; refused the claims the issuer decides itself, since a provider runs for tokens it was never asked about | DI tags | T2 |
 | I4 | `JwtIssuingEvent` (mutable claims, dispatched last so it sees the whole set) + `JwtIssuedEvent` (audit hook, carrying the `jti` and never the token) | EventDispatcher | T2 |
 | I5 | Login integration: an authentication success handler that returns `{ "access_token": ..., "token_type": "Bearer", "expires_in": ... }`, pluggable into `json_login`/`form_login` | Symfony + I1 | T1 |
-| I6 | `IdTokenIssuer` for apps acting as an OIDC provider | `IdTokenProfile::issuer()` | T3 |
+| I6 | `IdTokenIssuer` for apps acting as an OIDC provider. **Landed in Phase 5** as `id_token_issuers`, a section of its own because `id_tokens` is the relying-party half and already public configuration. Hands back the library's builder, as I7 does and for the same reason — `nonce`, `auth_time`, `acr`, `amr` and the profile claims are what vary — and takes the relying party's `client_id` per call, since a provider mints for whoever asked | `IdTokenProfile::issuer()` | T3 |
 | I7 | Security Event Token issuer (emit RISC/CAEP events to relying parties). **Landed in Phase 5** as `security_events.issuers`. Hands back the library's builder rather than an argument list, since what varies between two SETs is the events; delivery (RFC 8935 push, RFC 8936 poll) stays the application's | `SetProfile::issuer()` | T3 |
 | I8 | Encrypted/nested issuance (sign-then-encrypt). **Landed in Phase 5** as `issuers.<name>.jwe`, one key and one algorithm of each kind where the reading side takes lists — a receiver accepts what its senders still use, a sender picks. `replicated_claims` copies a claim into the outer header for an intermediary that holds no key (RFC 7519 §5.3), read back out of the signed token so the two cannot drift | `NestedJwtBuilder` | T3 |
 | I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered | bundle | T3 (see §8) |
@@ -430,6 +430,12 @@ medzuch_jwt:
       client_id: '%env(OIDC_CLIENT_ID)%'
       remote_jwks: partner_idp
       allowed_algorithms: [RS256]
+
+  id_token_issuers:                  # …and this application as the provider (I6)
+    op:
+      issuer: '%env(APP_URL)%'
+      key: rsa_2026
+      ttl: 300
 
   jwks:                              # the application routes to the controller itself (DEC-6)
     keys: [rsa_2026, rsa_2025]       # public halves only

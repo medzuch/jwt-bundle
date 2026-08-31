@@ -13,6 +13,31 @@ a class or method signature would be.
 
 ### Added
 
+- **This application can issue ID tokens** (I6), under a new `id_token_issuers`
+  section and `medzuch_jwt.id_token_issuer.<name>`. It closes the OIDC pair with
+  C6: what `id_tokens` verifies from somebody else's provider, this mints as
+  one.
+
+  **`issue()` hands back the library's `IdTokenBuilder`**, the way
+  `SecurityEventIssuer` does. What varies between two ID tokens is `nonce`,
+  `auth_time`, `acr`, `amr`, `azp` and whatever profile claims the granted
+  scopes allow, and the builder has a typed setter for each; an argument list
+  would either be long or would push those through an untyped claims map. An
+  access token is the opposite case, and `AccessTokenIssuer::issue()` still
+  returns a token.
+
+  **The client id belongs to the request**, since a provider mints for whichever
+  relying party asked: `issue()` takes it, and `client_id` in the configuration
+  is a default for an application serving exactly one client. With neither,
+  `issue()` throws rather than minting a token no relying party may accept.
+
+  `ttl` defaults to 300 seconds rather than an access token's 900 — an ID token
+  is read once, at the end of the flow that produced it — and a caller wanting
+  another lifetime calls `expiresIn()` on the builder. A section of its own
+  rather than a block inside `id_tokens`: that one is a relying-party
+  registration, and reshaping it into issuers and consumers would break
+  configuration applications have already written.
+
 - **Several issuers behind one firewall** (C11), under a new `dispatchers`
   section and `medzuch_jwt.dispatcher.<name>`. A dispatcher reads the issuer an
   arriving token names and hands it to the consumer expecting that issuer; a

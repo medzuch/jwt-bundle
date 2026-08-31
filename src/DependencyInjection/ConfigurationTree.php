@@ -48,6 +48,7 @@ final class ConfigurationTree
         self::configureDispatchers($children);
         self::configureTokenExtractors($children);
         self::configureIdTokens($children);
+        self::configureIdTokenIssuers($children);
         self::configureSecurityEvents($children);
         self::configureJwks($children);
         self::configureMetadata($children);
@@ -441,6 +442,59 @@ final class ConfigurationTree
             ->max(ValidatorBuilder::LEEWAY_CEILING_SECONDS)
             ->info('Clock-skew tolerance in seconds for exp/nbf/iat. The ceiling is the library\'s.')
             ->end();
+    }
+
+    /**
+     * The other end of the OIDC pair (I6): an application acting as the
+     * provider, minting the ID tokens `id_tokens` verifies elsewhere.
+     *
+     * A section of its own rather than a block inside `id_tokens`, because
+     * that one is a relying-party registration — somebody else's provider,
+     * somebody else's keys — and the two would read as modes of one thing.
+     * Restructuring `id_tokens` into issuers and consumers, as
+     * `security_events` is shaped, is what this would otherwise have been; it
+     * is not available, because `id_tokens.<name>` is configuration an
+     * application has already written and moving it would break it.
+     *
+     * `client_id` is not required here. A provider mints for whichever relying
+     * party asked, so the audience belongs to the request; naming one is for
+     * the application that serves a single client and should not repeat it at
+     * every call.
+     */
+    private static function configureIdTokenIssuers(NodeBuilder $children): void
+    {
+        $issuer = $children->arrayNode('id_token_issuers')
+            ->info('Named OIDC provider identities: this application minting ID tokens for relying parties. The mirror of `id_tokens`, which verifies somebody else\'s. Each signs with one key, as one `iss`.')
+            ->useAttributeAsKey('name')
+            ->arrayPrototype()
+            ->children();
+
+        $issuer->scalarNode('issuer')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('The `iss` every ID token from here carries, and what a relying party pins. The same identifier this application publishes as `metadata.issuer` where it publishes one (RFC 8414).')
+            ->example('%env(APP_URL)%')
+            ->end();
+
+        $issuer->scalarNode('key')
+            ->isRequired()
+            ->cannotBeEmpty()
+            ->info('Name from the `keys` section, whose private half signs. Relying parties fetch the public half, so this is normally an asymmetric key published under `jwks` — a shared secret would have to be given to every client, and then every client could mint identities.')
+            ->example('signing')
+            ->end();
+
+        $issuer->integerNode('ttl')
+            ->defaultValue(300)
+            ->min(1)
+            ->info('Lifetime in seconds. Shorter than an access token\'s by default: an ID token is read once, at the end of the flow that produced it, and is not a credential to be presented afterwards (OIDC Core §2).')
+            ->end();
+
+        self::declareOptionalName(
+            $issuer,
+            'client_id',
+            'Default `aud`: the relying party an ID token is for. Optional, and null is the ordinary answer for a provider serving several clients — `issue()` takes the client id per token, and only falls back to this. Naming one is for the application with a single relying party.',
+            '%env(OIDC_CLIENT_ID)%',
+        );
     }
 
     /**
