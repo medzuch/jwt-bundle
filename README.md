@@ -12,14 +12,17 @@ Works for any of these roles, in any combination:
 - **OIDC relying party** — verify a third-party IdP's tokens via cached, rotation-aware JWKS.
 - **Service-to-service** — machine tokens between your own services.
 
-> **Status: 1.0.** Issuing and verifying work end to end — mint a token on login, verify it on
+> **Status: 1.1.** Issuing and verifying work end to end — mint a token on login, verify it on
 > a firewall, be authenticated — with HMAC, RSA, EC and Ed25519 keys from PEM or JWK sources,
 > key rotation, a JWK Set endpoint and a key-generation command. Federation works too: keys
-> fetched from an issuer's `jwks_uri`, with local fallback, and ID tokens verified for an OIDC
-> relying party. The surface is now covered by a policy rather than by good intentions —
+> fetched from an issuer's `jwks_uri` or discovered from its identifier, with local fallback.
+> Since 1.1 both halves of three pairs live here: encrypted tokens are read *and* minted,
+> Security Event Tokens are received *and* transmitted, and ID tokens are verified *and*
+> issued — beside a document this application publishes about itself and one firewall serving
+> several tenants. The surface is covered by a policy rather than by good intentions —
 > [`BACKWARD-COMPATIBILITY.md`](BACKWARD-COMPATIBILITY.md) says what will and will not break,
 > and the suite holds the package to it. See [`docs/plan.md`](docs/plan.md) for the full design
-> and what comes after 1.0.
+> and what is still ahead.
 
 Requires PHP 8.3 / 8.4 and Symfony 6.4 LTS, 7.4 LTS or 8.x.
 
@@ -1098,9 +1101,11 @@ something to look up; a type of your own need not carry one, and a consumer that
 token cannot revoke it. Configuring both without `jti` in the list is refused at container build,
 rather than refusing every well-formed token at runtime with a message about the token.
 
-**Two spellings are refused for naming something other than what they look like.** `at+jwt` is
+**Three spellings are refused for naming something other than what they look like.** `at+jwt` is
 what the default posture verifies — naming it here would check *fewer* rules than leaving the key
-out, while reading like an explicit opt-in to RFC 9068 — and `JWT` is RFC 7519's generic type.
+out, while reading like an explicit opt-in to RFC 9068 — `JWT` is RFC 7519's generic type, and
+`secevent+jwt` is a Security Event Token, which is configured under
+[`security_events`](#sending-and-receiving-security-events) rather than on a firewall.
 A `token_type` must also be a literal rather than an `%env()%` reference, the same as
 `consumers.*.realm`: Symfony reads a placeholder as the empty string while validating, and a
 service wiring is not a deployment variable.

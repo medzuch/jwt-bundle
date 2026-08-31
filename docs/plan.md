@@ -11,7 +11,17 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** This is v1.0.0. Phases 0 through 4 of §7 are shipped: PEM and JWK
+> **Status.** This is v1.1.0. Phase 5 shipped the standards-track rows whose
+> library half already existed: encrypted tokens read and minted (C12, I8),
+> Security Event Tokens received and transmitted (C8, I7), ID tokens issued
+> beside the verification 1.0 had (I6), a key set addressed by issuer identifier
+> (K7), this application's own metadata document (K8), several tenants behind
+> one firewall (C11), and C15's optional identity — documented and pinned rather
+> than written, since Symfony's own authenticator already declines a request
+> carrying no token. Still open in the phase: DPoP and mTLS binding, token
+> exchange, introspection, D6's Flex recipe and I9's refresh-token contract.
+>
+> Phases 0 through 4 of §7 shipped in v1.0.0: PEM and JWK
 > key sources, named keys and rotation, the JWKS publisher, `jwt:key:generate`;
 > federation — remote JWK Sets with local fallback (K5, K6), ID-token
 > verification (C6) and the audience policy (C14); and Phase 4's DX and
@@ -25,9 +35,10 @@
 > **The T1+T2 set is complete**, which is §7's own test for 1.0 — "the T1+T2 set,
 > documented, with a BC policy". The BC policy is written and enforced by the
 > suite; the last two capability rows were C7 and C10's max-age half, neither of
-> which had been assigned to a phase, and both landed in Phase 4. What remains is
-> Phase 5+: the T3 rows, off by default and additive, on the far side of a
-> promise that a 1.x release will not move what is already there.
+> which had been assigned to a phase, and both landed in Phase 4. Phase 5+ is
+> the T3 rows, off by default and additive, on the far side of a promise that a
+> 1.x release will not move what is already there — which is how v1.1.0 could
+> add seven of them and stay a minor.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -260,7 +271,7 @@ default and adds no runtime cost when unconfigured.
 | K4 | JWKS publisher exposing public keys only, with cache headers and an `ETag`; the application routes to it (DEC-6). Publishing a symmetric key is refused at container build | `JwkSet::toArray()` + controller | T2 |
 | K5 | Remote JWKS consumption (`jwks_uri`) with PSR-18 client + PSR-16 cache, HTTPS-only, bounded body, throttled refresh-on-miss. Named at the top level, so two consumers of one issuer share a cache entry and a refresh window | `RemoteJwksResolver` (already implemented in the library) | T2 |
 | K6 | Composite resolution: remote JWKS with local fallback so an IdP outage doesn't break verification of still-valid keys. Local first, so the common path is not a round trip | `CompositeResolver` | T2 |
-| K7 | OIDC discovery: fetch `jwks_uri` (and issuer metadata) from `/.well-known/openid-configuration` instead of hard-coding it. **Landed in Phase 5** as `remote_jwks.<name>.discovery`; the rest of the T3 rows below are still open | bundle + PSR-18 | T3 |
+| K7 | OIDC discovery: fetch `jwks_uri` (and issuer metadata) from `/.well-known/openid-configuration` instead of hard-coding it. **Landed in Phase 5** as `remote_jwks.<name>.discovery`, and first of the phase — it needed nothing from the library | bundle + PSR-18 | T3 |
 | K8 | Publish an issuer discovery document for apps acting as an OP/AS (RFC 8414). **Landed in Phase 5** as `metadata`, closing the pair with K7. Only `issuer` and `jwks_uri` are filled in — the two members a JWT bundle knows — and the rest arrives from `extra`, because everything else describes the authorization server §8 keeps out. A document that would not survive being read back — a missing or malformed `response_types_supported`, a plaintext identifier, an issuer carrying a query — is refused before it is served, and the identifiers are checked again when the service is built, since that is the only moment a `%env(...)%` has a value | bundle controller | T3 |
 | K9 | Key material never appears in the profiler, logs, exception messages, or `debug:container` parameter dumps | bundle hardening | T1 |
 
@@ -661,10 +672,15 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   phase ran long enough that stamping an interim minor would have promised
   nothing the BC policy did not already say better.)*
 - **Phase 5+ — Standards-track (post-1.0).** §3.6, together with the T3 rows
-  that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1, landed)
-  and D6's Flex recipe (§3.5, still open): DPoP, mTLS binding, token exchange,
-  introspection fallback, JWE/nested tokens, SET issue/consume, discovery
-  documents.
+  that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1) and
+  D6's Flex recipe (§3.5): DPoP, mTLS binding, token exchange, introspection
+  fallback, JWE/nested tokens, SET issue/consume, discovery documents.
+  *(Shipped in v1.1.0: C8/I7, K7, K8, C12, I8, C11, I6 — every pair whose
+  library half already existed — and C15, which turned out to be firewall
+  configuration rather than code. Still open: DPoP, mTLS binding, token exchange
+  and introspection, all of which begin as library work; D6, whose recipe has to
+  be submitted to `symfony/recipes-contrib` rather than landing here; and I9,
+  which §8 keeps to a contract rather than an implementation.)*
   *(K7 landed first, and the order is worth recording: what the library already
   carries decides what is a bundle-sized change. JWE and SET are whole
   implementations in `medzuch/jwt-php` already, so C12/I8 and C8/I7 are wiring;

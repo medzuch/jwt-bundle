@@ -11,6 +11,23 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-08-31
+
+Eight standards-track rows from Phase 5, C15's optional identity beside them,
+and one refusal that came out of building the last of them. Everything here is
+additive and inert until configured: an application running 1.0.0 upgrades by
+changing the constraint and rewriting no configuration. Two things changed
+behaviour it could already have been relying on, and `UPGRADE.md` is where they
+are.
+
+What the release is *about* is that both halves of three pairs now live in one
+package. A consumer could read an encrypted token (C12) and now an issuer seals
+one (I8); a receiver could take Security Event Tokens (C8) and a transmitter
+mints them (I7); a relying party could verify ID tokens (C6) and a provider
+issues them (I6). Beside those, an application can address a key set by issuer
+identifier (K7), publish its own metadata document (K8), and put several tenants
+behind one firewall (C11).
+
 ### Added
 
 - **This application can issue ID tokens** (I6), under a new `id_token_issuers`
@@ -259,17 +276,6 @@ a class or method signature would be.
   `JwksResolutionException` a `jwks_uri` failure is, so locally configured keys
   still cover an outage.
 
-### Fixed
-
-- **`IdTokenVerifier` refuses a token typed `at+jwt`.** OIDC asks for no `typ`
-  on an ID token, so nothing in the profile stopped an access token from
-  verifying as one wherever its `aud` happened to equal the registration's
-  `client_id` — a credential minted for an API, presented at a login callback,
-  logging somebody in. Reachable in one deployment only now that the same
-  application can mint both (I6), and refused before anything else is checked.
-  No provider labels an ID token as an access token, which is what makes the
-  label worth reading.
-
 ### Changed
 
 - **CI now tests the edges of the window the package promises**, which the
@@ -280,6 +286,17 @@ a class or method signature would be.
   an application installs it, rather than whatever 6.4 patch was newest on the
   day. `composer.json` is unchanged: the supported window is the same
   `^6.4 || ^7.4 || ^8.0` DEC-2 set.
+
+### Fixed
+
+- **`IdTokenVerifier` refuses a token typed `at+jwt`.** OIDC asks for no `typ`
+  on an ID token, so nothing in the profile stopped an access token from
+  verifying as one wherever its `aud` happened to equal the registration's
+  `client_id` — a credential minted for an API, presented at a login callback,
+  logging somebody in. Reachable in one deployment only now that the same
+  application can mint both (I6), and refused before anything else is checked.
+  No provider labels an ID token as an access token, which is what makes the
+  label worth reading.
 
 ## [1.0.0] — 2026-08-25
 
@@ -981,7 +998,8 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/medzuch/jwt-bundle/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v1.0.0
 [0.3.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.3.0
 [0.2.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.2.0
