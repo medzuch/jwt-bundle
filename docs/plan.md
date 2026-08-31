@@ -11,14 +11,15 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** This is v1.1.0. Phase 5 shipped the standards-track rows whose
-> library half already existed: encrypted tokens read and minted (C12, I8),
-> Security Event Tokens received and transmitted (C8, I7), ID tokens issued
-> beside the verification 1.0 had (I6), a key set addressed by issuer identifier
-> (K7), this application's own metadata document (K8), several tenants behind
-> one firewall (C11), and C15's optional identity — documented and pinned rather
-> than written, since Symfony's own authenticator already declines a request
-> carrying no token. Still open in the phase: DPoP and mTLS binding, token
+> **Status.** This is v1.1.0. Phase 5 shipped every row whose work was
+> bundle-sized: the pairs whose library half already existed — encrypted tokens
+> read and minted (C12, I8), Security Event Tokens received and transmitted
+> (C8, I7), ID tokens issued beside the verification 1.0 had (I6) — and the rows
+> that needed nothing from the library at all: a key set addressed by issuer
+> identifier (K7), this application's own metadata document (K8), several
+> tenants behind one firewall (C11), and C15's optional identity, which turned
+> out to be firewall configuration rather than code, since Symfony's own
+> authenticator already declines a request carrying no token. Still open in the phase: DPoP and mTLS binding, token
 > exchange, introspection, D6's Flex recipe and I9's refresh-token contract.
 >
 > Phases 0 through 4 of §7 shipped in v1.0.0: PEM and JWK
