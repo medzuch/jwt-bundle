@@ -661,10 +661,14 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   phase ran long enough that stamping an interim minor would have promised
   nothing the BC policy did not already say better.)*
 - **Phase 5+ — Standards-track (post-1.0).** §3.6, together with the T3 rows
-  that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1, landed)
-  and D6's Flex recipe (§3.5, still open): DPoP, mTLS binding, token exchange,
-  introspection fallback, JWE/nested tokens, SET issue/consume, discovery
-  documents.
+  that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1) and
+  D6's Flex recipe (§3.5): DPoP, mTLS binding, token exchange, introspection
+  fallback, JWE/nested tokens, SET issue/consume, discovery documents.
+  *(Shipped in v1.1.0: C8/I7, K7, K8, C12, I8, C11, I6 — every pair whose
+  library half already existed. What is left of the phase is D6, which lives in
+  `symfony/recipes-contrib` rather than here, and I9, whose §8 entry is why it
+  is a contract and not an implementation. DPoP, mTLS binding, token exchange
+  and introspection begin as library work.)*
   *(K7 landed first, and the order is worth recording: what the library already
   carries decides what is a bundle-sized change. JWE and SET are whole
   implementations in `medzuch/jwt-php` already, so C12/I8 and C8/I7 are wiring;

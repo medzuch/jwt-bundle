@@ -11,6 +11,21 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-08-31
+
+Eight standards-track rows from Phase 5, and one refusal that came out of
+building the last of them. Everything here is additive and inert until
+configured: an application running 1.0.0 upgrades by changing the constraint
+and reading nothing, and `UPGRADE.md` says so in more detail.
+
+What the release is *about* is that both halves of three pairs now live in one
+package. A consumer could read an encrypted token (C12) and now an issuer seals
+one (I8); a receiver could take Security Event Tokens (C8) and a transmitter
+mints them (I7); a relying party could verify ID tokens (C6) and a provider
+issues them (I6). Beside those, an application can address a key set by issuer
+identifier (K7), publish its own metadata document (K8), and put several tenants
+behind one firewall (C11).
+
 ### Added
 
 - **This application can issue ID tokens** (I6), under a new `id_token_issuers`
@@ -981,7 +996,8 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/medzuch/jwt-bundle/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v1.0.0
 [0.3.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.3.0
 [0.2.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.2.0

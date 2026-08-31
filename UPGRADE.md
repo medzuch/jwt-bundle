@@ -11,6 +11,34 @@ has been additive, with new sections inert until configured, so what the notes b
 behaviour an application already running could notice rather than configuration it must
 rewrite.
 
+## 1.0.0 → 1.1.0
+
+**Nothing in your configuration has to change**, and every section this release adds is absent
+until you write it: `jwe_keys`, `dispatchers`, `id_token_issuers`, `metadata`, `security_events`,
+`consumers.*.jwe`, `issuers.*.jwe` and `remote_jwks.*.discovery`. Two things are worth knowing
+anyway.
+
+**An access token is no longer accepted as an ID token.** `IdTokenVerifier::verify()` refuses a
+token whose header says `typ: at+jwt` before it checks anything else. OIDC asks for no `typ` on
+an ID token, so nothing had stopped an access token from verifying as one wherever its `aud`
+happened to equal the registration's `client_id` — a credential minted for an API, presented at
+a login callback, logging somebody in. No provider labels an ID token as an access token, so
+this refuses nothing a real relying party was accepting; if your identity provider does label
+them that way, it is the provider that has to change.
+
+**`log_levels` gained two categories**, `decrypted` and `decryption_failed`. They are read only
+where a consumer configures `jwe`, and each keeps the library's default until you set it, so an
+existing `log_levels` block means what it meant.
+
+Everything else is a new section you have not written yet. The README has a walkthrough for
+each: [encrypted tokens](README.md#reading-an-encrypted-token) and
+[minting them](README.md#minting-an-encrypted-token),
+[several issuers behind one firewall](README.md#several-issuers-behind-one-firewall),
+[issuing ID tokens](README.md#issuing-id-tokens-oidc-provider),
+[publishing your own metadata](README.md#publishing-your-own-metadata),
+[discovering an issuer's keys](README.md#discovering-an-issuers-keys) and
+[security events](README.md#sending-and-receiving-security-events).
+
 ## 0.3.0 → 1.0.0
 
 **Nothing in your configuration has to change**, and every option this release adds is absent
