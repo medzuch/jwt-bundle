@@ -16,8 +16,8 @@ rewrite.
 **Almost nothing in your configuration has to change**, and every section this release adds is
 absent until you write it: `jwe_keys`, `dispatchers`, `id_token_issuers`, `metadata`,
 `security_events`, `consumers.*.jwe`, `issuers.*.jwe` and `remote_jwks.*.discovery`. Three things
-are worth knowing anyway, and the middle one is the only one that can ask anything of a file you
-have already written.
+are worth knowing anyway, and only the `secevent+jwt` one can ask anything of a file you have
+already written.
 
 **An access token is no longer accepted as an ID token.** `IdTokenVerifier::verify()` refuses a
 token whose header says `typ: at+jwt` before it checks anything else. OIDC asks for no `typ` on

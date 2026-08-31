@@ -11,16 +11,17 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** This is v1.1.0. Phase 5 shipped every row whose work was
-> bundle-sized: the pairs whose library half already existed — encrypted tokens
-> read and minted (C12, I8), Security Event Tokens received and transmitted
-> (C8, I7), ID tokens issued beside the verification 1.0 had (I6) — and the rows
-> that needed nothing from the library at all: a key set addressed by issuer
-> identifier (K7), this application's own metadata document (K8), several
-> tenants behind one firewall (C11), and C15's optional identity, which turned
-> out to be firewall configuration rather than code, since Symfony's own
-> authenticator already declines a request carrying no token. Still open in the phase: DPoP and mTLS binding, token
-> exchange, introspection, D6's Flex recipe and I9's refresh-token contract.
+> **Status.** This is v1.1.0. Phase 5 shipped the pairs whose library half
+> already existed — encrypted tokens read and minted (C12, I8), Security Event
+> Tokens received and transmitted (C8, I7), ID tokens issued beside the
+> verification 1.0 had (I6) — and the rows that needed nothing from the library
+> at all: a key set addressed by issuer identifier (K7), this application's own
+> metadata document (K8) and several tenants behind one firewall (C11). C15
+> needed no code anywhere: Symfony's own authenticator already declines a
+> request carrying no token, so optional identity is firewall configuration,
+> documented and pinned by the suite. Still open in the phase: DPoP and mTLS
+> binding, token exchange, introspection, D6's Flex recipe and I9's
+> refresh-token contract.
 >
 > Phases 0 through 4 of §7 shipped in v1.0.0: PEM and JWK
 > key sources, named keys and rotation, the JWKS publisher, `jwt:key:generate`;
@@ -39,7 +40,7 @@
 > which had been assigned to a phase, and both landed in Phase 4. Phase 5+ is
 > the T3 rows, off by default and additive, on the far side of a promise that a
 > 1.x release will not move what is already there — which is how v1.1.0 could
-> add seven of them and stay a minor.
+> add eight of them, and C15 beside them, and stay a minor.
 >
 > **v0.5 change.** The design decisions are made: v0.4's five open questions are
 > now §9's five recorded decisions, each with its reasoning and what would
@@ -676,12 +677,13 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1) and
   D6's Flex recipe (§3.5): DPoP, mTLS binding, token exchange, introspection
   fallback, JWE/nested tokens, SET issue/consume, discovery documents.
-  *(Shipped in v1.1.0: C8/I7, K7, K8, C12, I8, C11, I6 — every pair whose
-  library half already existed — and C15, which turned out to be firewall
-  configuration rather than code. Still open: DPoP, mTLS binding, token exchange
-  and introspection, all of which begin as library work; D6, whose recipe has to
-  be submitted to `symfony/recipes-contrib` rather than landing here; and I9,
-  which §8 keeps to a contract rather than an implementation.)*
+  *(Shipped in v1.1.0: the pairs whose library half already existed — C8/I7,
+  C12/I8, I6 — and the rows that needed nothing from it: K7, K8, C11, and C15,
+  which turned out to be firewall configuration rather than code. Still open:
+  DPoP, mTLS binding, token exchange and introspection, all of which begin as
+  library work; D6, whose recipe has to be submitted to
+  `symfony/recipes-contrib` rather than landing here; and I9, which §8 keeps to
+  a contract rather than an implementation.)*
   *(K7 landed first, and the order is worth recording: what the library already
   carries decides what is a bundle-sized change. JWE and SET are whole
   implementations in `medzuch/jwt-php` already, so C12/I8 and C8/I7 are wiring;
