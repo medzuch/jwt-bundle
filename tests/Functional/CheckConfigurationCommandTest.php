@@ -229,6 +229,29 @@ final class CheckConfigurationCommandTest extends KernelTestCase
         self::assertStringContainsString('private material', $tester->getDisplay());
     }
 
+    /**
+     * The three named things that sign, each of which the command has to know
+     * about separately: an access-token issuer, a security-event stream, and
+     * an ID token provider. A row that stops being built is a deploy gate that
+     * stops covering a key, and nothing else would notice.
+     */
+    #[TestDox('every kind of issuer is a row, so a dropped loop is not a silent gap')]
+    public function testEveryIssuerKindIsBuilt(): void
+    {
+        $configuration = self::configuration();
+        $configuration['id_token_issuers'] = ['op' => ['issuer' => 'https://issuer.test', 'key' => 'default']];
+        $configuration['security_events'] = ['issuers' => ['risc' => ['issuer' => 'https://issuer.test', 'key' => 'default']]];
+
+        $tester = self::check(configuration: $configuration);
+
+        $display = $tester->getDisplay();
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $display);
+        self::assertStringContainsString('issuer "default"', $display);
+        self::assertStringContainsString('ID token issuer "op"', $display);
+        self::assertStringContainsString('security event stream "risc"', $display);
+    }
+
     #[TestDox('an ID-token verifier is checked like everything else')]
     public function testIdTokenRegistrationIsChecked(): void
     {

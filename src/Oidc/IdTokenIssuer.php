@@ -22,9 +22,24 @@ use Medzuch\Jwt\Profile\IdTokenProfile;
  * {@see \Medzuch\JwtBundle\Issuer\AccessTokenIssuer} returns a token
  * accordingly.
  *
- * The profile supplies `iss` and `iat`; this adds the audience and the
- * lifetime; the caller adds the subject, whatever the flow produced, and calls
- * `build()`.
+ * The profile supplies `iss` and `iat`; this adds the subject, the audience
+ * and the lifetime; the caller adds whatever the flow produced and calls
+ * `build()`. Those three are arguments rather than the caller's to chain
+ * because OIDC Core §2 makes `sub`, `aud` and `exp` mandatory: they do not vary
+ * in the way `nonce` and `acr` do, and a token missing one is a token every
+ * relying party refuses — including this bundle's own.
+ *
+ * **Issuance is not announced.** {@see \Medzuch\JwtBundle\Event\JwtIssuingEvent}
+ * and {@see \Medzuch\JwtBundle\Event\JwtIssuedEvent} are not dispatched here,
+ * and an application auditing on the second will not see identity issuance. The
+ * reason is not the one {@see \Medzuch\JwtBundle\SecurityEvent\SecurityEventIssuer}
+ * gives — an ID token issuance has exactly the shape a
+ * {@see \Medzuch\JwtBundle\Issuer\TokenIssuance} carries — but that handing back
+ * a builder means there is no moment at which this sees the finished claim set:
+ * the token is assembled after the last line of code here has run. Auditing what
+ * an OP issued therefore belongs to the caller, which holds the built token, or
+ * to an event of its own; it is deliberately not the access-token one dispatched
+ * over a value that was never assembled.
  *
  * **An ID token is not a credential.** It says who signed in and how, to the
  * client that asked — OIDC Core §2. It is not a bearer token for an API, and
@@ -47,34 +62,40 @@ final class IdTokenIssuer
     ) {}
 
     /**
-     * A builder with the identity, the audience and the lifetime applied.
+     * A builder with the subject, the audience and the lifetime applied.
      *
      * ```php
-     * $idToken = $issuer->issue('client-42')
-     *     ->subject($user->getId())
+     * $idToken = $issuer->issue($user->getId(), 'client-42')
      *     ->nonce($request->nonce)
      *     ->authTime($session->authenticatedAt)
      *     ->withClaim('email', $user->email)
      *     ->build();
      * ```
      *
+     * @param string  $subject  who authenticated, as this provider identifies them —
+     *                          the `sub` a relying party will store
      * @param ?string $clientId the relying party this token is for, which for a
      *                          provider with several is the one the authorization
      *                          request named. Null uses the configured default
      *
-     * @throws InvalidArgumentException where neither names a client, since an ID
-     *                                  token with no audience is one no relying party may accept
-     *                                  (OIDC Core §3.1.3.7)
+     * @throws InvalidArgumentException where the subject is blank, or where neither
+     *                                  argument nor configuration names a client: an ID token missing
+     *                                  either is one no relying party may accept (OIDC Core §2)
      */
-    public function issue(?string $clientId = null): IdTokenBuilder
+    public function issue(string $subject, ?string $clientId = null): IdTokenBuilder
     {
-        $audience = $clientId ?? $this->clientId;
+        if ('' === trim($subject)) {
+            throw new InvalidArgumentException('An ID token has to say who authenticated. Pass the subject to issue(): OIDC Core §2 makes `sub` required, and a relying party refuses a token without one.');
+        }
 
-        if (null === $audience || '' === $audience) {
+        $audience = trim($clientId ?? $this->clientId ?? '');
+
+        if ('' === $audience) {
             throw new InvalidArgumentException('An ID token has to name the relying party it is for. Pass the client id to issue(), or configure one under medzuch_jwt.id_token_issuers.<name>.client_id for an application that serves a single client.');
         }
 
         return $this->profile->issue()
+            ->subject($subject)
             ->audience($audience)
             ->expiresIn(new DateInterval(sprintf('PT%dS', $this->ttl)));
     }

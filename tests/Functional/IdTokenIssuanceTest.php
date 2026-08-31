@@ -7,7 +7,11 @@ namespace Medzuch\JwtBundle\Tests\Functional;
 use DateInterval;
 use DateTimeImmutable;
 use InvalidArgumentException;
+use Medzuch\Jwt\Algorithm\Signing\Rs256;
+use Medzuch\Jwt\Exception\InvalidHeaderException;
 use Medzuch\Jwt\Jwt\JwtParser;
+use Medzuch\Jwt\Key\RsaPrivateKey;
+use Medzuch\Jwt\Profile\AccessTokenProfile;
 use Medzuch\JwtBundle\Oidc\IdTokenIssuer;
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
@@ -31,6 +35,7 @@ use Symfony\Component\HttpKernel\KernelInterface;
  * profile, checked by the code that would check somebody else's.
  */
 #[CoversClass(IdTokenIssuer::class)]
+#[CoversClass(IdTokenVerifier::class)]
 final class IdTokenIssuanceTest extends KernelTestCase
 {
     use GeneratesKeypairs;
@@ -55,7 +60,7 @@ final class IdTokenIssuanceTest extends KernelTestCase
     {
         self::bootKernel();
 
-        $idToken = (string) self::issuer()->issue()->subject('user-42')->build();
+        $idToken = (string) self::issuer()->issue('user-42')->build();
 
         $claims = self::verifier()->verify($idToken);
 
@@ -75,8 +80,7 @@ final class IdTokenIssuanceTest extends KernelTestCase
     {
         self::bootKernel();
 
-        $idToken = (string) self::issuer()->issue()
-            ->subject('user-42')
+        $idToken = (string) self::issuer()->issue('user-42')
             ->nonce('n-0S6_WzA2Mj')
             ->authTime(new DateTimeImmutable('-2 minutes'))
             ->acr('urn:mace:incommon:iap:silver')
@@ -95,10 +99,9 @@ final class IdTokenIssuanceTest extends KernelTestCase
     {
         self::bootKernel();
 
-        self::assertSame(300, self::lifetimeOf((string) self::issuer()->issue()->subject('user-42')->build()));
+        self::assertSame(300, self::lifetimeOf((string) self::issuer()->issue('user-42')->build()));
 
-        $shorter = (string) self::issuer()->issue()
-            ->subject('user-42')
+        $shorter = (string) self::issuer()->issue('user-42')
             ->expiresIn(new DateInterval('PT60S'))
             ->build();
 
@@ -115,7 +118,7 @@ final class IdTokenIssuanceTest extends KernelTestCase
     {
         self::bootKernel();
 
-        $idToken = (string) self::issuer()->issue('client-99')->subject('user-42')->build();
+        $idToken = (string) self::issuer()->issue('user-42', 'client-99')->build();
 
         self::assertSame('client-99', JwtParser::parse($idToken)->unverifiedClaims->get('aud'));
 
@@ -133,7 +136,66 @@ final class IdTokenIssuanceTest extends KernelTestCase
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessageMatches('/has to name the relying party it is for/');
 
-        self::issuer()->issue();
+        self::issuer()->issue('user-42');
+    }
+
+    /**
+     * `sub`, `aud` and `exp` are required of every ID token by the same
+     * paragraph (OIDC Core §2), so all three are arguments here rather than
+     * claims the caller might forget to chain. A token missing one is minted
+     * happily by any builder and refused by every honest relying party, which
+     * is the worst place to find out.
+     */
+    #[TestDox('a subject nobody named is refused rather than minted')]
+    public function testWithoutASubject(): void
+    {
+        self::bootKernel();
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/has to say who authenticated/');
+
+        self::issuer()->issue('   ');
+    }
+
+    #[TestDox('a client id that is blank once trimmed is not an audience')]
+    public function testBlankClientId(): void
+    {
+        self::bootKernel();
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/has to name the relying party/');
+
+        self::issuer()->issue('user-42', '  ');
+    }
+
+    /**
+     * The other direction of the confusion below, and the one only I6 makes
+     * reachable in a single deployment: OIDC asks for no `typ` on an ID token,
+     * so the profile checks none — and an access token minted here, whose
+     * `aud` happens to be a relying party's client id, would otherwise verify
+     * as proof that somebody authenticated.
+     */
+    #[TestDox('an access token from the same application is not an ID token either')]
+    public function testAnAccessTokenIsNotAnIdToken(): void
+    {
+        self::bootKernel();
+
+        $accessToken = (string) AccessTokenProfile::issuer(
+            self::ISSUER,
+            new Rs256(),
+            RsaPrivateKey::fromPem(self::keypair('op')['private'], 'RS256', 'op-2026'),
+        )
+            ->issue()
+            ->subject('user-42')
+            ->audience(self::CLIENT)
+            ->clientId(self::CLIENT)
+            ->expiresIn(new DateInterval('PT5M'))
+            ->build();
+
+        $this->expectException(InvalidHeaderException::class);
+        $this->expectExceptionMessageMatches('/This is an access token/');
+
+        self::verifier()->verify($accessToken);
     }
 
     /**
@@ -147,7 +209,7 @@ final class IdTokenIssuanceTest extends KernelTestCase
     {
         self::bootKernel();
 
-        $idToken = (string) self::issuer()->issue()->subject('user-42')->build();
+        $idToken = (string) self::issuer()->issue('user-42')->build();
 
         $handler = self::getContainer()->get('medzuch_jwt.handler.api');
         self::assertInstanceOf(AccessTokenHandler::class, $handler);

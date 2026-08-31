@@ -204,7 +204,10 @@ medzuch_jwt:
 
 **An OIDC relying party** verifies a provider's ID tokens where they arrive — the login callback
 — rather than on a firewall, and is configured differently enough to have its own section:
-[Verifying an ID token](#verifying-an-id-token-oidc-relying-party).
+[Verifying an ID token](#verifying-an-id-token-oidc-relying-party). **An OIDC provider** is the
+other end of that: [Issuing ID tokens](#issuing-id-tokens-oidc-provider) mints what a relying
+party verifies. Running the rest of an authorization server — consent, grants, PKCE — is not this
+package's job, and [§8 of `docs/plan.md`](docs/plan.md) says why.
 
 **A security event transmitter or receiver** mints and accepts RFC 8417 SETs — RISC and CAEP
 events — which travel between an identity provider and the applications that trust it, outside
@@ -1740,8 +1743,11 @@ carries an `ETag` over the document, so `cache_max_age: 0` means revalidate rath
 `/.well-known/openid-configuration`; the two differ in what the document carries, not in how it
 is served, so route the same controller wherever your readers look — and put what that spelling
 needs in `extra`. OIDC Discovery additionally requires `authorization_endpoint`,
-`subject_types_supported` and `id_token_signing_alg_values_supported`; this bundle knows none of
-the three, so an OIDC document needs them named there.
+`subject_types_supported` and `id_token_signing_alg_values_supported`; this bundle fills in none
+of the three, so an OIDC document needs them named there. The third is knowable where
+`id_token_issuers` is configured — it is that key's `algorithm` — and is still not filled in:
+`metadata` carries `issuer` and `jwks_uri` and leaves the rest to `extra`, because the rest
+describes an authorization server this package deliberately does not run.
 
 **Two things the paths do not share.** An issuer identifier *with a path* — a Keycloak realm,
 say — is read at `identifier + /.well-known/openid-configuration` by OIDC Discovery, while
@@ -1981,8 +1987,7 @@ use Medzuch\JwtBundle\Oidc\IdTokenIssuer;
 
 public function token(Request $request, IdTokenIssuer $op): Response
 {
-    $idToken = $op->issue($authorizationRequest->clientId)
-        ->subject($user->getId())
+    $idToken = $op->issue($user->getId(), $authorizationRequest->clientId)
         ->nonce($authorizationRequest->nonce)          // echo back what the client sent
         ->authTime($session->authenticatedAt)
         ->withClaim('email', $user->email)             // whatever the granted scopes allow
@@ -1991,6 +1996,10 @@ public function token(Request $request, IdTokenIssuer $op): Response
     // …alongside the access token, in the token-endpoint response
 }
 ```
+
+`sub`, `aud` and the lifetime are arguments rather than claims to chain: OIDC Core §2 makes all
+three required, so a token missing one is minted happily by any builder and refused by every
+honest relying party. The rest is what varies.
 
 **It hands back a builder, not a token.** What varies between two ID tokens is `nonce`,
 `auth_time`, `acr`, `amr`, `azp` and whatever profile claims the scopes granted, and the
@@ -2014,6 +2023,26 @@ the RFC 9068 profile, whose `typ` is `at+jwt`, and an ID token is refused on the
 claim is read. If your provider also issues access tokens, that is
 [`issuers`](#issuing-tokens--an-authorization-server), minting a different token from the same
 key.
+
+**The other direction is refused too, and it is the one a single deployment makes reachable.**
+OIDC asks for no `typ` on an ID token, so nothing in the profile would stop an *access* token
+from verifying as one wherever its `aud` happened to equal a relying party's `client_id` — and
+that means a credential minted for an API, presented at a login callback, logging somebody in.
+`IdTokenVerifier` refuses a token whose header says `at+jwt` before it checks anything else. No
+provider labels an ID token as an access token, which is what makes the label worth reading.
+
+**Issuance is not announced.** `JwtIssuingEvent` and `JwtIssuedEvent` are not dispatched here, so
+an application auditing on the second records access tokens and not identities. That follows from
+handing back a builder: the token is assembled after this bundle's last line has run, so there is
+no point at which it sees the finished claim set. Audit from the caller, which holds the built
+token. Claim providers are access-token machinery for the same reason and do not run.
+
+**`at_hash` and `c_hash` are not produced**, the counterpart of `at_hash` not being checked on the
+verifying side: binding an ID token to the access token or code issued beside it (OIDC Core
+§3.1.3.6) needs support the library does not have, and this bundle does not reimplement crypto its
+library is missing. A strict relying party is entitled to refuse a pair that omits them.
+**Encrypted ID tokens** (OIDC Core §10.2) are not configurable either: `jwe` belongs to `issuers`
+and `consumers`.
 
 `ttl` is 300 seconds by default rather than the 900 an access token gets: an ID token is read
 once, at the end of the flow that produced it. A caller wanting a different lifetime for one

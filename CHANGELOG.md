@@ -18,8 +18,8 @@ a class or method signature would be.
   C6: what `id_tokens` verifies from somebody else's provider, this mints as
   one.
 
-  **`issue()` hands back the library's `IdTokenBuilder`**, the way
-  `SecurityEventIssuer` does. What varies between two ID tokens is `nonce`,
+  **`issue(subject, clientId)` hands back the library's `IdTokenBuilder`**, the
+  way `SecurityEventIssuer` does. What varies between two ID tokens is `nonce`,
   `auth_time`, `acr`, `amr`, `azp` and whatever profile claims the granted
   scopes allow, and the builder has a typed setter for each; an argument list
   would either be long or would push those through an untyped claims map. An
@@ -30,6 +30,20 @@ a class or method signature would be.
   relying party asked: `issue()` takes it, and `client_id` in the configuration
   is a default for an application serving exactly one client. With neither,
   `issue()` throws rather than minting a token no relying party may accept.
+
+  The three claims OIDC Core §2 makes mandatory — `sub`, `aud`, `exp` — are
+  arguments and configuration rather than claims to chain, because a token
+  missing one is minted happily by any builder and refused by every honest
+  relying party.
+
+  **Issuance is not announced.** `JwtIssuingEvent` and `JwtIssuedEvent` are not
+  dispatched, and claim providers do not run: handing back a builder means the
+  token is assembled after this bundle's last line, so there is no moment at
+  which it sees the finished claim set. An application auditing on the second
+  event records access tokens and not identities, and should audit from the
+  caller, which holds the built token. `at_hash`/`c_hash` are not produced
+  either — the counterpart of `at_hash` not being checked, and the same library
+  gap.
 
   `ttl` defaults to 300 seconds rather than an access token's 900 — an ID token
   is read once, at the end of the flow that produced it — and a caller wanting
@@ -244,6 +258,17 @@ a class or method signature would be.
   `min_refresh` and `max_body_bytes`, and a discovery failure is the same
   `JwksResolutionException` a `jwks_uri` failure is, so locally configured keys
   still cover an outage.
+
+### Fixed
+
+- **`IdTokenVerifier` refuses a token typed `at+jwt`.** OIDC asks for no `typ`
+  on an ID token, so nothing in the profile stopped an access token from
+  verifying as one wherever its `aud` happened to equal the registration's
+  `client_id` — a credential minted for an API, presented at a login callback,
+  logging somebody in. Reachable in one deployment only now that the same
+  application can mint both (I6), and refused before anything else is checked.
+  No provider labels an ID token as an access token, which is what makes the
+  label worth reading.
 
 ### Changed
 

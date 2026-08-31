@@ -160,7 +160,7 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
   `setClaim()` and `removeClaim()` are how a listener contributes, so their signatures are as
   fixed as any interface method.
 - **A service is obtained, not constructed.** `AccessTokenIssuer`, `IdTokenVerifier`,
-  `SecurityEventIssuer` and `SecurityEventVerifier` have
+  `IdTokenIssuer`, `SecurityEventIssuer` and `SecurityEventVerifier` have
   public constructors because PHP has no package-private, and what is promised is the id and the
   methods, not the constructor's arguments. `IssuedToken` and `TokenIssuance` are the other way
   round — you receive them from us, and a test fixture that builds one is building the same thing
@@ -211,7 +211,7 @@ New names may be added. These three do not move.
 Some of what this package hands you belongs to the library underneath it: a `ClaimsSet` from
 `JwtVerifiedEvent::$claims`, `JwtUser::claims()`, `IdTokenVerifier::verify()` and
 `SecurityEventVerifier::verify()`; the `SetBuilder` that `SecurityEventIssuer::issue()` hands
-back; the
+back and the `IdTokenBuilder` that `IdTokenIssuer::issue()` does; the
 `PrivateKey` and `PublicKey` a key service answers; the algorithms and keys `TestTokenFactory`
 takes; the `JwtException` hierarchy `RejectionReason::of()` reads.
 
