@@ -20,7 +20,7 @@
         }
     ],
     "require": {
-        "medzuch/jwt-php": "^1.2",
+        "medzuch/jwt-php": "^1.2.1",
         "php": "~8.3.0 || ~8.4.0",
         "psr/clock": "^1.0",
         "psr/event-dispatcher": "^1.0",
