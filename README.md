@@ -1288,6 +1288,12 @@ the confidentiality away for the cost of deleting two segments. Moving an existi
 encryption means the senders go first — mint encrypted tokens, let the old ones expire, then add
 the block.
 
+**The envelope has to say what it carries.** RFC 7519 §5.2 asks the outer header for `cty: JWT`,
+and a JWE without it is refused as `malformed` before a key is touched. Any spelling of that
+media type will do — `JWT`, `jwt`, `application/jwt`, `application/JWT` — because RFC 7515 §4.1.9
+makes both the `application/` prefix and the case insignificant, and the comparison is the
+library's own.
+
 ### The two keys are two keys
 
 `keys` sign and verify; `jwe_keys` encrypt and decrypt. They are separate sections because they
@@ -1420,11 +1426,6 @@ name in a list. RSA key encryption is not coming: the library implements none, d
 
 **Only the compact serialization.** The JSON serializations carry several recipients and
 unprotected headers, which a bearer credential in an `Authorization` header has no use for.
-
-**Write `cty` as `JWT` or `application/jwt`, not `application/JWT`.** The library compares media
-types with the case kept after the prefix (medzuch/jwt-php#62), so the mixed-case long form is
-refused as `malformed` until that is fixed. Nothing here works around it: a second implementation
-of media-type comparison is a worse problem than the one it solves.
 
 **Encrypted ID tokens and encrypted security events** are not configurable. `jwe` belongs to
 `consumers` and to `issuers` — the section below is the issuing half — and the OIDC and SET

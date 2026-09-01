@@ -272,23 +272,34 @@ final class EncryptedTokenTest extends WebTestCase
     }
 
     /**
-     * RFC 7515 §4.1.9 makes the `application/` prefix optional on the wire, so
-     * the prefixed spelling of the same media type is the same answer. The
-     * comparison is the library's own, which is why the mixed-case prefixed
-     * form is not asserted here: `MediaType::equivalent()` lowercases the
-     * whole value on one branch and only the prefix on the other, so
-     * `application/JWT` and `JWT` come out unequal — medzuch/jwt-php#62. This
-     * asserts the spelling that behaves; a second implementation of media-type
-     * comparison in this bundle would be the wrong fix.
+     * RFC 7515 §4.1.9 makes both the `application/` prefix and the case
+     * insignificant, so every spelling below names the media type RFC 7519
+     * §5.2 asks for. The comparison is the library's own — a second
+     * implementation of it in this bundle would be the wrong fix, which is
+     * why the two prefixed-and-uppercased rows waited for
+     * medzuch/jwt-php#62 rather than being worked around here.
      */
-    #[TestDox('"application/jwt" says the same thing as "JWT"')]
-    public function testContentTypeIsComparedAsAMediaType(): void
+    #[DataProvider('contentTypeSpellings')]
+    #[TestDox('"$cty" says the same thing as "JWT"')]
+    public function testContentTypeIsComparedAsAMediaType(string $cty): void
     {
         self::bootKernel();
 
-        $token = self::encrypted(self::signed(), ['kid' => self::KID, 'cty' => 'application/jwt']);
+        $token = self::encrypted(self::signed(), ['kid' => self::KID, 'cty' => $cty]);
 
         self::assertSame('user-42', self::handler()->getUserBadgeFrom($token)->getUserIdentifier());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function contentTypeSpellings(): iterable
+    {
+        yield 'the bare form RFC 7519 §5.2 writes' => ['JWT'];
+        yield 'lowercased' => ['jwt'];
+        yield 'the long form' => ['application/jwt'];
+        yield 'the long form, subtype uppercased' => ['application/JWT'];
+        yield 'the long form, all uppercase' => ['APPLICATION/JWT'];
     }
 
     /**

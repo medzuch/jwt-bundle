@@ -798,14 +798,17 @@ moving part: a service that always answered "not revoked" would be a lookup per
 request buying nothing, and would appear in `debug:container` as revocation an
 application never asked for.
 
-**DEC-4 — Upstream gaps: closed. The bundle requires `medzuch/jwt-php ^1.2`.** All
+**DEC-4 — Upstream gaps: closed. The bundle requires `medzuch/jwt-php ^1.2.1`.** All
 four blockers v0.4 recorded were fixed upstream, backward compatibly, in 1.1.0:
 leeway on all three profile consumers, `string|non-empty-list<string>`
 audiences on `AccessTokenProfile::consumer()`, `?string $passphrase` on
 `RsaPrivateKey::fromPem()` and `EcPrivateKey::fromPem()`, and
 `"php": "~8.3.0 || ~8.4.0"`. 1.2.0 added the `expectAudience()`/`expectIssuer()`
-shape backstop that §4 now normalises for. The library is on Packagist, so it
-is an ordinary dependency rather than a VCS repository.
+shape backstop that §4 now normalises for, and 1.2.1 fixed
+`MediaType::equivalent()`, which decides both the `cty` of an encrypted token
+(C12) and the `typ` an ID token must not carry (I6) — the floor names that
+patch because both checks were wrong without it. The library is on Packagist,
+so it is an ordinary dependency rather than a VCS repository.
 
 *Reversed for `max_token_age` (C10), which this decision sent upstream and
 Phase 4 built here.* The reasoning was that comparing `iat` against a clock is
@@ -886,7 +889,7 @@ but an explicit exchange, and the reasoning above is what it has to beat.
 
 ---
 
-*Library API touchpoints (verified against `medzuch/jwt-php` v1.2.0 `src/`):*
+*Library API touchpoints (verified against `medzuch/jwt-php` v1.2.1 `src/`):*
 *`AccessTokenProfile::issuer()/consumer()` (audience list, leeway), `IdTokenProfile`,*
 *`SetProfile`,*
 *`ProfileConsumer::parse(string): ClaimsSet` (throws `JwtException`),*

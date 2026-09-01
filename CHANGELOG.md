@@ -11,6 +11,30 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+### Changed
+
+- **The floor is `medzuch/jwt-php ^1.2.1`**, raised from `^1.2` so the fix
+  below is a dependency rather than a hope. An application on 1.2.0 gets the
+  patch on its next `composer update`, and nothing in an application that
+  already runs 1.1.0 has to change.
+
+### Fixed
+
+- **A `cty` written `application/JWT` opens an encrypted token, and an access
+  token written `application/AT+JWT` no longer passes for an ID token.** Both
+  checks compare media types with `MediaType::equivalent()`, which until
+  `medzuch/jwt-php` 1.2.1 folded the case on one branch and kept it on the
+  other: a spelling RFC 7515 §4.1.9 makes equivalent came out unequal. The
+  consequences ran in both directions. A sender writing the long form of the
+  nested-JWT marker RFC 7519 §5.2 asks for was refused as `malformed` (C12),
+  and — the one with teeth — an RFC 9068 access token declaring the long form
+  RFC 9068 §4 registers walked past `IdTokenVerifier`'s guard against token
+  confusion (I6) and verified as proof that somebody had authenticated.
+  Reported upstream as
+  [medzuch/jwt-php#62](https://github.com/medzuch/jwt-php/issues/62) and fixed
+  there; nothing here worked around it, because a second implementation of
+  media-type comparison in this bundle would have been the worse problem.
+
 ## [1.1.0] — 2026-08-31
 
 Eight standards-track rows from Phase 5, C15's optional identity beside them,

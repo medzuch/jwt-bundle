@@ -199,6 +199,39 @@ final class IdTokenIssuanceTest extends KernelTestCase
     }
 
     /**
+     * The same refusal, with `typ` written the way RFC 9068 §4 registers the
+     * type rather than the way a header usually carries it. RFC 7515 §4.1.9
+     * makes the `application/` prefix and the case insignificant, so this is
+     * the same declaration — and a guard that compared strings instead of
+     * media types would let exactly this one past.
+     */
+    #[TestDox('an access token declaring the registered long form of at+jwt is refused too')]
+    public function testAnAccessTokenWithTheLongFormTypeIsNotAnIdToken(): void
+    {
+        self::bootKernel();
+
+        $accessToken = (string) AccessTokenProfile::issuer(
+            self::ISSUER,
+            new Rs256(),
+            RsaPrivateKey::fromPem(self::keypair('op')['private'], 'RS256', 'op-2026'),
+        )
+            ->issue()
+            ->subject('user-42')
+            ->audience(self::CLIENT)
+            ->clientId(self::CLIENT)
+            ->expiresIn(new DateInterval('PT5M'))
+            ->withHeader('typ', 'application/AT+JWT')
+            ->build();
+
+        self::assertSame('application/AT+JWT', JwtParser::parse($accessToken)->header->type());
+
+        $this->expectException(InvalidHeaderException::class);
+        $this->expectExceptionMessageMatches('/This is an access token/');
+
+        self::verifier()->verify($accessToken);
+    }
+
+    /**
      * An ID token says who signed in, to the client that asked. It is not a
      * bearer credential, and a consumer of this bundle will not take one: the
      * RFC 9068 profile it verifies expects `at+jwt`, and an ID token is not
