@@ -84,7 +84,7 @@ jobs:
         #
         # `dependencies: lowest` is the floor as an application actually
         # installs it — Symfony 6.4.0 rather than the newest 6.4 patch, and
-        # jwt-php 1.2.0 rather than the newest 1.x. Without it "we support 6.4"
+        # jwt-php 1.2.1 rather than the newest 1.x. Without it "we support 6.4"
         # means "we support whatever 6.4 patch was newest on the day CI ran".
         include:
           - { php: '8.3', symfony: '6.4.*' }

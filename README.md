@@ -1288,11 +1288,14 @@ the confidentiality away for the cost of deleting two segments. Moving an existi
 encryption means the senders go first — mint encrypted tokens, let the old ones expire, then add
 the block.
 
-**The envelope has to say what it carries.** RFC 7519 §5.2 asks the outer header for `cty: JWT`,
-and a JWE without it is refused as `malformed` before a key is touched. Any spelling of that
-media type will do — `JWT`, `jwt`, `application/jwt`, `application/JWT` — because RFC 7515 §4.1.9
-makes both the `application/` prefix and the case insignificant, and the comparison is the
-library's own.
+**The envelope has to say what it carries.** RFC 7519 §5.2 asks the outer header for `cty: JWT`.
+The check runs once the envelope is open, not before: until the AEAD tag verifies, that header is
+something an attacker could have written, and a token refused for its `cty` when the real problem
+was the key would name the wrong fault. So a JWE that opens and then declares nothing, or declares
+something else, is `malformed`; one that never opens is `decryption_failed` or `unknown_key`. Any
+spelling of the media type will do — `JWT`, `jwt`, `application/jwt`, `application/JWT` — because
+RFC 7515 §4.1.9 makes both the `application/` prefix and the case insignificant, and the
+comparison is the library's own.
 
 ### The two keys are two keys
 
@@ -2034,8 +2037,13 @@ key.
 OIDC asks for no `typ` on an ID token, so nothing in the profile would stop an *access* token
 from verifying as one wherever its `aud` happened to equal a relying party's `client_id` — and
 that means a credential minted for an API, presented at a login callback, logging somebody in.
-`IdTokenVerifier` refuses a token whose header says `at+jwt` before it checks anything else. No
-provider labels an ID token as an access token, which is what makes the label worth reading.
+`IdTokenVerifier` refuses a token whose header says `at+jwt` — in that spelling or any RFC 7515
+§4.1.9 equivalent of it, `application/AT+JWT` included — before it checks anything else. A
+security event token (`secevent+jwt`) is refused there too: it carries a `sub`, and a provider's
+own SET pipeline may well give it an `aud` and an `exp`, which is the whole of what an ID token
+consumer asks for. RFC 8417 §4 is called "Preventing Confusion between SETs and Other JWTs" and
+names this exact pair. No provider labels an ID token as either, which is what makes the label
+worth reading.
 
 **Issuance is not announced.** `JwtIssuingEvent` and `JwtIssuedEvent` are not dispatched here, so
 an application auditing on the second records access tokens and not identities. That follows from

@@ -30,18 +30,38 @@ use Psr\Log\LoggerInterface;
  * consumer could only ever check a value fixed at deploy — which is not a
  * nonce. What does not change is what the container holds.
  *
- * **A token typed `at+jwt` is refused before anything else.** OIDC asks for no
- * `typ` on an ID token, so the profile underneath checks none — which means an
- * access token would verify here whenever its `aud` happened to equal this
- * registration's `client_id`, and it says so on its own header. That is the
- * confusion in the direction the rest of this class guards the other way: a
- * credential minted for an API, presented at a login callback, would log
- * somebody in. It costs one header comparison, and no provider mints an ID
- * token labelled as an access token (RFC 8725 §3.11 asks producers to type
- * explicitly, which is what makes the label trustworthy where it appears).
+ * **A token that says it is something else is refused before anything else.**
+ * OIDC asks for no `typ` on an ID token, so the profile underneath checks none
+ * — which means an access token would verify here whenever its `aud` happened
+ * to equal this registration's `client_id`, and it says so on its own header.
+ * That is the confusion in the direction the rest of this class guards the
+ * other way: a credential minted for an API, presented at a login callback,
+ * would log somebody in. A security event token is the same shape of mistake
+ * and RFC 8417 §4 names it, so `secevent+jwt` is refused beside `at+jwt`. It
+ * costs one header comparison per type, and no provider mints an ID token
+ * labelled as either (RFC 8725 §3.11 asks producers to type explicitly, which
+ * is what makes the label trustworthy where it appears).
+ *
+ * The comparison is `MediaType::equivalent()`, so every spelling RFC 7515
+ * §4.1.9 makes equivalent is refused too — `application/AT+JWT` says `at+jwt`,
+ * and a guard comparing strings would have taken it.
  */
 final class IdTokenVerifier
 {
+    /**
+     * The media types that say a token was minted for something else, and the
+     * refusal each one earns. An ID token carries no `typ` of its own that
+     * this could check for instead — OIDC asks for none — so the check is the
+     * other way round: a token that names another profile is not this one,
+     * whatever its claims would have satisfied.
+     *
+     * @var array<string, string>
+     */
+    private const NOT_AN_ID_TOKEN = [
+        'at+jwt' => 'This is an access token (`typ: at+jwt`), not an ID token. An access token authorises a call to an API; an ID token says who authenticated to the client that asked for it, and accepting one for the other logs somebody in with a credential minted for something else.',
+        'secevent+jwt' => 'This is a security event token (`typ: secevent+jwt`), not an ID token. A SET reports something that happened to a subject — an account disabled, a session revoked — and RFC 8417 §4 is about keeping the two apart; accepting one here would log somebody in with a notification about them.',
+    ];
+
     /**
      * @param non-empty-list<SigningAlgorithm> $allowedAlgorithms
      */
@@ -63,12 +83,13 @@ final class IdTokenVerifier
      *                           has no replay defence (OIDC Core §3.1.3.7).
      *
      * @throws JwtException when the token is not a valid ID token for this registration:
-     *                      an explicit `at+jwt` type, or signature, issuer, audience, `azp`,
-     *                      `nonce`, expiry or a missing required claim
+     *                      a `typ` naming another profile (`at+jwt`, `secevent+jwt`), or
+     *                      signature, issuer, audience, `azp`, `nonce`, expiry or a missing
+     *                      required claim
      */
     public function verify(string $idToken, ?string $nonce = null): ClaimsSet
     {
-        self::assertNotAnAccessToken($idToken);
+        self::assertNotAnotherProfilesToken($idToken);
 
         return IdTokenProfile::consumer(
             $this->issuer,
@@ -92,7 +113,7 @@ final class IdTokenVerifier
      *
      * @throws InvalidHeaderException
      */
-    private static function assertNotAnAccessToken(string $idToken): void
+    private static function assertNotAnotherProfilesToken(string $idToken): void
     {
         try {
             $type = JwtParser::parse($idToken)->header->type();
@@ -100,11 +121,17 @@ final class IdTokenVerifier
             return;
         }
 
-        // RFC 7515 §4.1.9 again: the `application/` prefix is optional and the
-        // comparison is case-insensitive, so the library's own normaliser
-        // decides rather than a string compare here.
-        if (null !== $type && MediaType::equivalent($type, 'at+jwt')) {
-            throw new InvalidHeaderException('This is an access token (`typ: at+jwt`), not an ID token. An access token authorises a call to an API; an ID token says who authenticated to the client that asked for it, and accepting one for the other logs somebody in with a credential minted for something else.');
+        if (null === $type) {
+            return;
+        }
+
+        foreach (self::NOT_AN_ID_TOKEN as $declared => $refusal) {
+            // RFC 7515 §4.1.9 again: the `application/` prefix is optional and
+            // the comparison is case-insensitive, so the library's own
+            // normaliser decides rather than a string compare here.
+            if (MediaType::equivalent($type, $declared)) {
+                throw new InvalidHeaderException($refusal);
+            }
         }
     }
 }

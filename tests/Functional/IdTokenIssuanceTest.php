@@ -9,6 +9,7 @@ use DateTimeImmutable;
 use InvalidArgumentException;
 use Medzuch\Jwt\Algorithm\Signing\Rs256;
 use Medzuch\Jwt\Exception\InvalidHeaderException;
+use Medzuch\Jwt\Jwt\JwtBuilder;
 use Medzuch\Jwt\Jwt\JwtParser;
 use Medzuch\Jwt\Key\RsaPrivateKey;
 use Medzuch\Jwt\Profile\AccessTokenProfile;
@@ -19,6 +20,7 @@ use Medzuch\JwtBundle\Security\RejectedTokenException;
 use Medzuch\JwtBundle\Security\RejectionReason;
 use Medzuch\JwtBundle\Tests\Functional\App\TestKernel;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestDox;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
@@ -199,14 +201,17 @@ final class IdTokenIssuanceTest extends KernelTestCase
     }
 
     /**
-     * The same refusal, with `typ` written the way RFC 9068 §4 registers the
-     * type rather than the way a header usually carries it. RFC 7515 §4.1.9
-     * makes the `application/` prefix and the case insignificant, so this is
-     * the same declaration — and a guard that compared strings instead of
-     * media types would let exactly this one past.
+     * The same refusal, with `typ` written every way RFC 7515 §4.1.9 allows
+     * the type RFC 9068 §4 registers to be written. The comparison is
+     * `MediaType::equivalent()`, so all of these are the one declaration —
+     * and a guard comparing strings would have taken the last three, which is
+     * what `medzuch/jwt-php` 1.2.0 effectively did.
+     *
+     * @param non-empty-string $typ
      */
-    #[TestDox('an access token declaring the registered long form of at+jwt is refused too')]
-    public function testAnAccessTokenWithTheLongFormTypeIsNotAnIdToken(): void
+    #[DataProvider('accessTokenTypeSpellings')]
+    #[TestDox('an access token declaring "$typ" is refused too')]
+    public function testAnAccessTokenIsRefusedInEverySpelling(string $typ): void
     {
         self::bootKernel();
 
@@ -220,15 +225,65 @@ final class IdTokenIssuanceTest extends KernelTestCase
             ->audience(self::CLIENT)
             ->clientId(self::CLIENT)
             ->expiresIn(new DateInterval('PT5M'))
-            ->withHeader('typ', 'application/AT+JWT')
+            ->withHeader('typ', $typ)
             ->build();
 
-        self::assertSame('application/AT+JWT', JwtParser::parse($accessToken)->header->type());
+        // Proves `withHeader()` replaced the profile's own `typ`, so a green
+        // row cannot be the bare `at+jwt` sneaking through.
+        self::assertSame($typ, JwtParser::parse($accessToken)->header->type());
 
         $this->expectException(InvalidHeaderException::class);
         $this->expectExceptionMessageMatches('/This is an access token/');
 
         self::verifier()->verify($accessToken);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function accessTokenTypeSpellings(): iterable
+    {
+        yield 'the bare form, uppercased' => ['AT+JWT'];
+        yield 'the long form RFC 9068 §4 registers' => ['application/at+jwt'];
+        yield 'the long form, subtype uppercased' => ['application/AT+JWT'];
+        yield 'the long form, all uppercase' => ['APPLICATION/AT+JWT'];
+        yield 'the long form, mixed case either side' => ['Application/At+Jwt'];
+    }
+
+    /**
+     * The third profile in this bundle, and the same confusion: RFC 8417 §4 is
+     * called "Preventing Confusion between SETs and Other JWTs" and names the
+     * ID token as the thing a SET might be mistaken for.
+     *
+     * Built by hand rather than through `SetProfile`, because that builder has
+     * no `exp` and refuses one through `withClaim()` — this bundle's own
+     * transmitter (I7) therefore cannot mint the token below. A provider whose
+     * SET pipeline is not this library can, and it is that token this guard is
+     * for: `sub`, `aud` and `exp` are all an `IdTokenProfile` consumer asks
+     * for, so before the guard covered `secevent+jwt` it verified as proof
+     * that somebody had authenticated.
+     */
+    #[TestDox('a security event token is not an ID token either')]
+    public function testASecurityEventTokenIsNotAnIdToken(): void
+    {
+        self::bootKernel();
+
+        $set = (string) JwtBuilder::create()
+            ->issuer(self::ISSUER)
+            ->subject('user-42')
+            ->audience(self::CLIENT)
+            ->issuedAtNow()
+            ->expiresIn(new DateInterval('PT5M'))
+            ->jwtId('evt-1')
+            ->type('secevent+jwt')
+            ->withClaim('events', ['https://schemas.openid.net/secevent/risc/event-type/account-disabled' => []])
+            ->signWith(new Rs256(), RsaPrivateKey::fromPem(self::keypair('op')['private'], 'RS256', 'op-2026'))
+            ->build();
+
+        $this->expectException(InvalidHeaderException::class);
+        $this->expectExceptionMessageMatches('/This is a security event token/');
+
+        self::verifier()->verify($set);
     }
 
     /**
