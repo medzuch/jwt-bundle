@@ -45,6 +45,7 @@ is the promise; the class behind it is not:
 | `medzuch_jwt.token_extractor.<extractor>` | `Symfony\Component\Security\Http\AccessToken\AccessTokenExtractorInterface` | a firewall's `access_token.token_extractors` |
 | `medzuch_jwt.key.<key>.signing` | `Medzuch\Jwt\Key\PrivateKey` | your code, for a key you configured |
 | `medzuch_jwt.key.<key>.verification` | `Medzuch\Jwt\Key\PublicKey` | your code, for a key you configured |
+| `medzuch_jwt.refresh_token_generator` | `Medzuch\JwtBundle\Refresh\RefreshTokenGenerator` | your code, to mint the opaque half of a session |
 | `medzuch_jwt.jwks_controller` | `callable` | a route's `controller:` |
 | `medzuch_jwt.metadata_controller` | `callable` | a route's `controller:` |
 
@@ -136,6 +137,10 @@ Only these, and each only in the way its row says:
 | `Security\User\JwtUserFactoryInterface` | — | — | — | **yes** |
 | `Security\User\ProvidesScopes` | type-hint it | `scopes()` | — | **yes** |
 | `Revocation\TokenDenylistInterface` | inject it | `revoke()`, `isRevoked()` | — | **yes** |
+| `Refresh\RefreshTokenGenerator` | inject it | `generate()` | no | — |
+| `Refresh\RefreshToken` | receive it | read `value`, `hash`, `expiresAt`; `hashOf()` | no | — |
+| `Refresh\RefreshTokenRecord` | build it, receive it | yes | no | — |
+| `Refresh\RefreshTokenStoreInterface` | type-hint it | `store()`, `consume()`, `revokeAllFor()` | — | **yes** |
 | `Oidc\IdTokenVerifier` | inject it | yes | no | — |
 | `Oidc\IdTokenIssuer` | inject it | yes | no | — |
 | `SecurityEvent\SecurityEventIssuer` | inject it | yes | no | — |
@@ -148,8 +153,11 @@ Every class in this package is `final`, so "extend it: no" is enforced rather th
 suite keeps it that way. What the table adds is the distinction `final` cannot make:
 
 - **An interface you implement** is the strictest promise here. Adding a method to
-  `TokenClaimProviderInterface`, `JwtUserFactoryInterface`, `ProvidesScopes` or
-  `TokenDenylistInterface` breaks every implementation, so it happens in a major release only.
+  `TokenClaimProviderInterface`, `JwtUserFactoryInterface`, `ProvidesScopes`,
+  `TokenDenylistInterface` or `RefreshTokenStoreInterface` breaks every implementation, so it
+  happens in a major release only. `RefreshTokenStoreInterface` is the one nothing in this
+  package calls — your code implements it and your code calls it — which makes the promise no
+  weaker: an interface published as a shape is only worth having if the shape holds still.
   Two of them are called as well as implemented: `medzuch_jwt.denylist.<consumer>` is promised
   as somewhere to revoke a token, which is `revoke()` and `isRevoked()`, and a user's `scopes()`
   is what the voter reads and what your own code reads beside it. An id promised to resolve to a

@@ -11,6 +11,40 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+### Added
+
+- **A refresh-token contract** (I9), under a new `Refresh\` namespace:
+  `RefreshTokenStoreInterface` for your code to implement,
+  `RefreshTokenGenerator` behind `medzuch_jwt.refresh_token_generator` to mint
+  the opaque half of a session, and the `RefreshToken` / `RefreshTokenRecord`
+  pair the two hand each other. Nothing in this bundle calls the interface —
+  it is a shape so that two Symfony applications doing this spell it the same
+  way.
+
+  **Storage stays outside the package**, as §8.1 of `docs/plan.md` has said
+  since v0.4: no entity, no migration, no default implementation. Rotation,
+  device records and "log out everywhere" are questions over an application's
+  own schema. What a bundle can usefully own is the vocabulary.
+
+  **`consume()` spends a token and reports a previous spend in one call.** A
+  `find()` followed by a `delete()` has a window in it, and that window is
+  where a token gets used twice; an implementation does it as one conditional
+  write. A token the store never issued answers `null`, while one it issued
+  and already spent comes back with `alreadyUsed: true` — different events,
+  and the second is the one OAuth 2.1 §6.1 asks an application to react to by
+  ending the whole family, which is what `revokeAllFor()` is for.
+
+  **The token is opaque and stored as a SHA-256.** `RefreshToken` carries the
+  value for the client and the hash for the store, and `RefreshToken::hashOf()`
+  is the single home of the rule so a generator and a store cannot disagree
+  about it. A fast hash rather than `password_hash()` on purpose: the input is
+  256 bits from `random_bytes()`, so there is nothing to guess, and a slow hash
+  on every refresh is a lever pointed at your own login flow.
+
+  No configuration section, deliberately. The lifetime is an argument to
+  `generate()` because it belongs to the flow rather than the deployment, and a
+  `refresh_tokens:` key would advertise persistence this package does not have.
+
 ## [1.1.1] — 2026-09-01
 
 A security patch, and the whole of it is one comparison. `IdTokenVerifier`

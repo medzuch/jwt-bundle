@@ -15,6 +15,8 @@
 > refuses a token minted for something else was reading its header through a
 > media-type comparison `medzuch/jwt-php` 1.2.0 got wrong, so the floor is now
 > `^1.2.1` and the guard covers Security Event Tokens beside access tokens.
+> Phase 5 also closed I9, the refresh-token contract, which is a shape rather
+> than an implementation — §8.1 keeps the storage out permanently.
 > Phase 5 shipped the pairs whose library half
 > already existed — encrypted tokens read and minted (C12, I8), Security Event
 > Tokens received and transmitted (C8, I7), ID tokens issued beside the
@@ -24,8 +26,7 @@
 > needed no code anywhere: Symfony's own authenticator already declines a
 > request carrying no token, so optional identity is firewall configuration,
 > documented and pinned by the suite. Still open in the phase: DPoP and mTLS
-> binding, token exchange, introspection, D6's Flex recipe and I9's
-> refresh-token contract.
+> binding, token exchange, introspection and D6's Flex recipe.
 >
 > Phases 0 through 4 of §7 shipped in v1.0.0: PEM and JWK
 > key sources, named keys and rotation, the JWKS publisher, `jwt:key:generate`;
@@ -265,7 +266,7 @@ default and adds no runtime cost when unconfigured.
 | I6 | `IdTokenIssuer` for apps acting as an OIDC provider. **Landed in Phase 5** as `id_token_issuers`, a section of its own because `id_tokens` is the relying-party half and already public configuration. Hands back the library's builder, as I7 does and for the same reason — `nonce`, `auth_time`, `acr`, `amr` and the profile claims are what vary — while `sub` and the relying party's `client_id` are arguments, since OIDC Core §2 requires both and neither varies in that way. It also closed a confusion only one deployment holding both ends can reach: `IdTokenVerifier` now refuses a token typed `at+jwt` — in any spelling RFC 7515 §4.1.9 makes equivalent, which took the `medzuch/jwt-php` 1.2.1 floor to be true — or `secevent+jwt`, the pair RFC 8417 §4 is named after. No issuance events, no claim providers, no `at_hash` | `IdTokenProfile::issuer()` | T3 |
 | I7 | Security Event Token issuer (emit RISC/CAEP events to relying parties). **Landed in Phase 5** as `security_events.issuers`. Hands back the library's builder rather than an argument list, since what varies between two SETs is the events; delivery (RFC 8935 push, RFC 8936 poll) stays the application's | `SetProfile::issuer()` | T3 |
 | I8 | Encrypted/nested issuance (sign-then-encrypt). **Landed in Phase 5** as `issuers.<name>.jwe`, one key and one algorithm of each kind where the reading side takes lists — a receiver accepts what its senders still use, a sender picks. `replicated_claims` copies a claim into the outer header for an intermediary that holds no key (RFC 7519 §5.3), read back out of the signed token so the two cannot drift | `NestedJwtBuilder` | T3 |
-| I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered | bundle | T3 (see §8) |
+| I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered. **Landed in Phase 5** as `Refresh\RefreshTokenStoreInterface`, `RefreshToken`, `RefreshTokenRecord` and `medzuch_jwt.refresh_token_generator`. `consume()` spends a token and reports a previous spend in one call, because a `find()` and a `delete()` have a window between them and that window is where a token is used twice; a record that comes back `alreadyUsed` is what OAuth 2.1 §6.1 asks an application to react to. No configuration section: the lifetime belongs to the flow that mints the token, and a `refresh_tokens` key would advertise persistence this package does not have | bundle | T3 (see §8) |
 
 ### 3.3 Key management
 
@@ -683,11 +684,11 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   fallback, JWE/nested tokens, SET issue/consume, discovery documents.
   *(Shipped in v1.1.0: the pairs whose library half already existed — C8/I7,
   C12/I8, I6 — and the rows that needed nothing from it: K7, K8, C11, and C15,
-  which turned out to be firewall configuration rather than code. Still open:
-  DPoP, mTLS binding, token exchange and introspection, all of which begin as
-  library work; D6, whose recipe has to be submitted to
-  `symfony/recipes-contrib` rather than landing here; and I9, which §8 keeps to
-  a contract rather than an implementation.)*
+  which turned out to be firewall configuration rather than code. I9 followed,
+  as the contract §8.1 always meant it to be rather than as storage. Still
+  open: DPoP, mTLS binding, token exchange and introspection, all of which
+  begin as library work; and D6, whose recipe has to be submitted to
+  `symfony/recipes-contrib` rather than landing here.)*
   *(K7 landed first, and the order is worth recording: what the library already
   carries decides what is a bundle-sized change. JWE and SET are whole
   implementations in `medzuch/jwt-php` already, so C12/I8 and C8/I7 are wiring;
@@ -711,6 +712,10 @@ below changes:
    app's own session/device model — that is business logic over the app's
    database, not JOSE. The bundle may ship a *contract* (I9) so app code has a
    shape to implement, but no schema, no entity, no default persistence.
+   *(Shipped in Phase 5: `RefreshTokenStoreInterface` and the generator that
+   fills it. The line held — the only executable code is `random_bytes()`, a
+   SHA-256 and a lifetime check, and the one implementation in this repository
+   is a test double.)*
 2. **A user entity, user provider, or login form.** Symfony already provides
    these; the bundle consumes them.
 3. **An OAuth 2.0 authorization-server implementation.** Consent screens,

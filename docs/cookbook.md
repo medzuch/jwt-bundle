@@ -128,7 +128,9 @@ from a central authorization server means obtaining one from that server, and fe
 and refreshing it is your code today: the helpers for it — a client-credentials grant, an
 outbound `HttpClient` decorator carrying a cached machine token — are §3.6 of
 [`docs/plan.md`](plan.md), post-1.0. *Running* that authorization server is a permanent
-non-goal (§8).
+non-goal (§8). Refreshing a *user's* session is the neighbouring case and has a shape here:
+[the refresh-token contract](../README.md#the-refresh-token-and-where-it-stops-being-ours),
+which names the operations without owning the storage.
 
 ## One API, tokens from two issuers
 

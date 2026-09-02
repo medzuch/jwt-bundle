@@ -2193,6 +2193,88 @@ an expiry would be this application claiming an event stops having happened.
 Delivering the token is yours — push over HTTPS (RFC 8935) or a poll endpoint (RFC 8936) —
 along with retries. The bundle mints and verifies; it does not own your transport.
 
+## The refresh token, and where it stops being ours
+
+An access token is short-lived on purpose, so something has to mint the next one without asking
+the user to sign in again. That something is a refresh token, and it is the one part of a session
+this bundle deliberately does not keep for you: rotation, device records, "log out everywhere"
+and the row a support engineer deletes are questions asked across processes, over your schema,
+against your own idea of what a session is. Section 8 of [`docs/plan.md`](docs/plan.md) puts
+storage outside the package permanently.
+
+What is here is the shape, so that two applications doing this spell it the same way: an
+interface to implement, and the generator that fills it.
+
+```php
+use Medzuch\JwtBundle\Refresh\RefreshTokenGenerator;
+use Medzuch\JwtBundle\Refresh\RefreshTokenStoreInterface;
+
+public function __construct(
+    private RefreshTokenGenerator $tokens,     // ours
+    private RefreshTokenStoreInterface $store, // yours
+    private AccessTokenIssuer $issuer,
+) {}
+
+public function refresh(string $presented): Response
+{
+    $record = $this->store->consume($presented);
+
+    if (null === $record) {
+        // A string nobody was ever issued. Nothing to learn, nothing to do.
+        return new JsonResponse(['error' => 'invalid_grant'], 400);
+    }
+
+    if ($record->alreadyUsed) {
+        // Somebody is holding a copy — the client that already spent it, or
+        // whoever took it from them. You cannot tell which, so end the lot.
+        $this->store->revokeAllFor($record->subject);
+
+        return new JsonResponse(['error' => 'invalid_grant'], 400);
+    }
+
+    if (!$record->isUsable($this->clock)) {
+        return new JsonResponse(['error' => 'invalid_grant'], 400);
+    }
+
+    $next = $this->tokens->generate(new DateInterval('P30D'));
+    $this->store->store($next, $record->subject);
+
+    return new JsonResponse([
+        'access_token' => (string) $this->issuer->issue($record->subject),
+        'refresh_token' => $next->value,     // the client gets this, once
+        'token_type' => 'Bearer',
+    ]);
+}
+```
+
+**The token is opaque, not a JWT.** A refresh token goes back to the issuer that minted it and to
+nobody else, so it needs no signature to verify and no claims to read: it is a lookup key, and 32
+bytes from `random_bytes()` is a better one than a signed document that cannot be revoked without
+the same lookup anyway. `RefreshTokenGenerator` mints one and hands you both halves at once.
+
+**Store the hash, never the value.** `RefreshToken` carries `value` for the client and `hash` for
+you, and a leaked table of hashes is worth nothing to whoever leaked it. The hashing rule has one
+home — `RefreshToken::hashOf()` — so your `consume()` hashes what arrived exactly the way the
+generator hashed what it minted. It is SHA-256 rather than `password_hash()` deliberately: a
+password is guessable and a human chose it, while this is 256 bits of randomness, so the slow
+hash would buy nothing and would put a cost on your own login flow that somebody could lean on.
+
+**`consume()` is one call because the gap is the bug.** A `find()` followed by a `delete()` has a
+window in it, and that window is where a token gets spent twice. Implementations do it as one
+conditional write — `UPDATE ... WHERE hash = ? AND used_at IS NULL`, then look at the affected
+row count — and return what they found.
+
+**A spent token comes back, it does not vanish.** `consume()` answers `null` only for a token you
+never issued; one you did issue and already spent comes back with `alreadyUsed: true`. Those are
+different events: the first is noise, the second means two parties hold the same token and one of
+them should not. OAuth 2.1 §6.1 asks you to end the whole family when it happens, which is what
+`revokeAllFor()` is. Keeping spent rows until their own expiry is what makes the distinction
+possible — a store that deletes on use answers `null` twice and cannot tell you.
+
+There is no `refresh_tokens` section in the configuration and no entity in this package, because
+neither would be honest: the lifetime belongs to the flow that mints the token, and the schema
+belongs to you.
+
 ## From the console
 
 Five commands, and none of them a second implementation of anything: each asks the services your
@@ -2525,9 +2607,11 @@ so what it says is checked there: a document disagreeing with the configuration 
 
 ## What it deliberately does not do
 
-Refresh-token storage and rotation, user entities and login forms, OAuth 2.0 authorization-server
-machinery (consent, grants, PKCE), and session-based authentication are all outside this package.
-Section 8 of [`docs/plan.md`](docs/plan.md) explains why for each.
+Refresh-token *storage* and rotation policy — the contract for them is
+[above](#the-refresh-token-and-where-it-stops-being-ours), the schema and the persistence are
+yours — user entities and login forms, OAuth 2.0 authorization-server machinery (consent, grants,
+PKCE), and session-based authentication are all outside this package. Section 8 of
+[`docs/plan.md`](docs/plan.md) explains why for each.
 
 ## Documentation
 
