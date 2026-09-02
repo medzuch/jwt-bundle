@@ -11,6 +11,54 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-09-01
+
+A security patch, and the whole of it is one comparison. `IdTokenVerifier`
+refuses a token that says on its own header it was minted for something else —
+that guard shipped in 1.1.0, and it was reading the header through a
+media-type comparison that `medzuch/jwt-php` 1.2.0 got wrong. An access token
+written `application/AT+JWT` walked past it and verified as proof that
+somebody had authenticated. The floor now names the library patch that fixes
+the comparison, and the guard covers Security Event Tokens beside access
+tokens, which is the same confusion RFC 8417 §4 is named after.
+
+Nothing in a configuration file changes, and no option is added or removed.
+An application pinning `medzuch/jwt-php` to exactly 1.2.0 has to let that pin
+move; [`UPGRADE.md`](UPGRADE.md) is the rest.
+
+### Changed
+
+- **The floor is `medzuch/jwt-php ^1.2.1`**, raised from `^1.2` so the fix
+  below is a dependency rather than a hope. Nothing in an application's
+  configuration changes; an application that pins the library to exactly 1.2.0
+  has to let it move, which is the point.
+
+### Security
+
+- **An access token written `application/AT+JWT` no longer passes for an ID
+  token, and a `cty` written `application/JWT` opens an encrypted token.** Both
+  checks compare media types with `MediaType::equivalent()`, which until
+  `medzuch/jwt-php` 1.2.1 folded the case on one branch and kept it on the
+  other: a spelling RFC 7515 §4.1.9 makes equivalent came out unequal. The
+  consequences ran in both directions. A sender writing the long form of the
+  nested-JWT marker RFC 7519 §5.2 asks for was refused as `malformed` (C12),
+  and — the half that fails open — an RFC 9068 access token declaring the long
+  form RFC 9068 §4 registers walked past `IdTokenVerifier`'s guard against
+  token confusion (I6) and verified as proof that somebody had authenticated,
+  wherever its `aud` equalled the registration's `client_id`. Reported upstream
+  as [medzuch/jwt-php#62](https://github.com/medzuch/jwt-php/issues/62) and
+  fixed there; nothing here worked around it, because a second implementation
+  of media-type comparison in this bundle would have been the worse problem.
+
+- **A security event token is refused as an ID token too.** `IdTokenVerifier`
+  refused `at+jwt` and nothing else, and a `secevent+jwt` is the same shape of
+  mistake: it names a `sub`, and a provider's SET pipeline that also writes an
+  `aud` and an `exp` produces a token an `IdTokenProfile` consumer had no
+  remaining reason to refuse. RFC 8417 §4 — "Preventing Confusion between SETs
+  and Other JWTs" — names this pair. This bundle's own transmitter (I7) never
+  minted such a token, because the library's `SetBuilder` has no `exp` and
+  refuses one through `withClaim()`; the guard is for the ones that arrive.
+
 ## [1.1.0] — 2026-08-31
 
 Eight standards-track rows from Phase 5, C15's optional identity beside them,
@@ -998,7 +1046,8 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/medzuch/jwt-bundle/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/medzuch/jwt-bundle/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v1.0.0
 [0.3.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.3.0

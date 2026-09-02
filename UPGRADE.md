@@ -11,6 +11,31 @@ has been additive, with new sections inert until configured, so what the notes b
 behaviour an application already running could notice rather than configuration it must
 rewrite.
 
+## 1.1.0 → 1.1.1
+
+**Nothing in your configuration has to change**, and no option is added or removed. Three things
+are worth knowing: two are tokens a relying-party registration now refuses, and one is a spelling
+an encrypted consumer now accepts.
+
+**The `at+jwt` refusal covers every spelling of that type.** 1.1.0 taught `IdTokenVerifier` to
+refuse an access token presented as an ID token, and it compared the header with the library's
+media-type comparison — which, in `medzuch/jwt-php` 1.2.0, kept the case after an `application/`
+prefix. A token declaring `typ: application/AT+JWT`, the long form
+[RFC 9068 §4](https://www.rfc-editor.org/rfc/rfc9068.html#section-4) registers, therefore walked
+past that guard and verified. The floor is now `medzuch/jwt-php ^1.2.1`, where the comparison
+follows RFC 7515 §4.1.9, so every equivalent spelling is refused. If you pin the library to
+exactly 1.2.0, that pin has to move.
+
+**A `secevent+jwt` is refused there too.** A Security Event Token names a `sub`, and a provider
+whose SET pipeline also writes an `aud` and an `exp` produces a token that an ID token consumer
+had nothing left to refuse it for. If a relying-party registration of yours was somehow being
+handed SETs and reading identities out of them, that stops working — which is
+[RFC 8417 §4](https://www.rfc-editor.org/rfc/rfc8417.html#section-4) working as intended.
+
+**Encrypted consumers accept one more spelling rather than fewer.** The same library fix means a
+JWE whose outer header reads `cty: application/JWT` is now opened instead of refused as
+`malformed`. Nothing that was accepted before is refused now.
+
 ## 1.0.0 → 1.1.0
 
 **Almost nothing in your configuration has to change**, and every section this release adds is

@@ -255,7 +255,7 @@ there is at least one full minor cycle between the notice and the removal.
 
 PHP `~8.3.0 || ~8.4.0` and Symfony `^6.4 || ^7.4 || ^8.0`, which is DEC-2 in
 [`docs/plan.md`](docs/plan.md); `symfony/security-bundle` at `^6.4 || ^7.4 || ^8.0` is the hard
-requirement among them, and the library underneath is `medzuch/jwt-php` at `^1.2`.
+requirement among them, and the library underneath is `medzuch/jwt-php` at `^1.2.1`.
 
 **Raising a floor is a major release** — dropping a PHP or Symfony version an application still
 runs on is a break like any other, and so is moving to a new major of `medzuch/jwt-php`, whose

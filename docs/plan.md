@@ -11,7 +11,11 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** This is v1.1.0. Phase 5 shipped the pairs whose library half
+> **Status.** This is v1.1.1, a security patch over v1.1.0: the guard that
+> refuses a token minted for something else was reading its header through a
+> media-type comparison `medzuch/jwt-php` 1.2.0 got wrong, so the floor is now
+> `^1.2.1` and the guard covers Security Event Tokens beside access tokens.
+> Phase 5 shipped the pairs whose library half
 > already existed — encrypted tokens read and minted (C12, I8), Security Event
 > Tokens received and transmitted (C8, I7), ID tokens issued beside the
 > verification 1.0 had (I6) — and the rows that needed nothing from the library
@@ -258,7 +262,7 @@ default and adds no runtime cost when unconfigured.
 | I3 | `TokenClaimProviderInterface` autoconfigured services — apps contribute claims (tenant, email, entitlements) without subclassing the issuer. Handed a `TokenIssuance`, so a provider can serve one issuer of several; refused the claims the issuer decides itself, since a provider runs for tokens it was never asked about | DI tags | T2 |
 | I4 | `JwtIssuingEvent` (mutable claims, dispatched last so it sees the whole set) + `JwtIssuedEvent` (audit hook, carrying the `jti` and never the token) | EventDispatcher | T2 |
 | I5 | Login integration: an authentication success handler that returns `{ "access_token": ..., "token_type": "Bearer", "expires_in": ... }`, pluggable into `json_login`/`form_login` | Symfony + I1 | T1 |
-| I6 | `IdTokenIssuer` for apps acting as an OIDC provider. **Landed in Phase 5** as `id_token_issuers`, a section of its own because `id_tokens` is the relying-party half and already public configuration. Hands back the library's builder, as I7 does and for the same reason — `nonce`, `auth_time`, `acr`, `amr` and the profile claims are what vary — while `sub` and the relying party's `client_id` are arguments, since OIDC Core §2 requires both and neither varies in that way. It also closed a confusion only one deployment holding both ends can reach: `IdTokenVerifier` now refuses a token typed `at+jwt`. No issuance events, no claim providers, no `at_hash` | `IdTokenProfile::issuer()` | T3 |
+| I6 | `IdTokenIssuer` for apps acting as an OIDC provider. **Landed in Phase 5** as `id_token_issuers`, a section of its own because `id_tokens` is the relying-party half and already public configuration. Hands back the library's builder, as I7 does and for the same reason — `nonce`, `auth_time`, `acr`, `amr` and the profile claims are what vary — while `sub` and the relying party's `client_id` are arguments, since OIDC Core §2 requires both and neither varies in that way. It also closed a confusion only one deployment holding both ends can reach: `IdTokenVerifier` now refuses a token typed `at+jwt` — in any spelling RFC 7515 §4.1.9 makes equivalent, which took the `medzuch/jwt-php` 1.2.1 floor to be true — or `secevent+jwt`, the pair RFC 8417 §4 is named after. No issuance events, no claim providers, no `at_hash` | `IdTokenProfile::issuer()` | T3 |
 | I7 | Security Event Token issuer (emit RISC/CAEP events to relying parties). **Landed in Phase 5** as `security_events.issuers`. Hands back the library's builder rather than an argument list, since what varies between two SETs is the events; delivery (RFC 8935 push, RFC 8936 poll) stays the application's | `SetProfile::issuer()` | T3 |
 | I8 | Encrypted/nested issuance (sign-then-encrypt). **Landed in Phase 5** as `issuers.<name>.jwe`, one key and one algorithm of each kind where the reading side takes lists — a receiver accepts what its senders still use, a sender picks. `replicated_claims` copies a claim into the outer header for an intermediary that holds no key (RFC 7519 §5.3), read back out of the signed token so the two cannot drift | `NestedJwtBuilder` | T3 |
 | I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered | bundle | T3 (see §8) |
@@ -798,14 +802,17 @@ moving part: a service that always answered "not revoked" would be a lookup per
 request buying nothing, and would appear in `debug:container` as revocation an
 application never asked for.
 
-**DEC-4 — Upstream gaps: closed. The bundle requires `medzuch/jwt-php ^1.2`.** All
+**DEC-4 — Upstream gaps: closed. The bundle requires `medzuch/jwt-php ^1.2.1`.** All
 four blockers v0.4 recorded were fixed upstream, backward compatibly, in 1.1.0:
 leeway on all three profile consumers, `string|non-empty-list<string>`
 audiences on `AccessTokenProfile::consumer()`, `?string $passphrase` on
 `RsaPrivateKey::fromPem()` and `EcPrivateKey::fromPem()`, and
 `"php": "~8.3.0 || ~8.4.0"`. 1.2.0 added the `expectAudience()`/`expectIssuer()`
-shape backstop that §4 now normalises for. The library is on Packagist, so it
-is an ordinary dependency rather than a VCS repository.
+shape backstop that §4 now normalises for, and 1.2.1 fixed
+`MediaType::equivalent()`, which decides both the `cty` of an encrypted token
+(C12) and the `typ` an ID token must not carry (I6) — the floor names that
+patch because both checks were wrong without it. The library is on Packagist,
+so it is an ordinary dependency rather than a VCS repository.
 
 *Reversed for `max_token_age` (C10), which this decision sent upstream and
 Phase 4 built here.* The reasoning was that comparing `iat` against a clock is
@@ -886,7 +893,7 @@ but an explicit exchange, and the reasoning above is what it has to beat.
 
 ---
 
-*Library API touchpoints (verified against `medzuch/jwt-php` v1.2.0 `src/`):*
+*Library API touchpoints (verified against `medzuch/jwt-php` v1.2.1 `src/`):*
 *`AccessTokenProfile::issuer()/consumer()` (audience list, leeway), `IdTokenProfile`,*
 *`SetProfile`,*
 *`ProfileConsumer::parse(string): ClaimsSet` (throws `JwtException`),*
