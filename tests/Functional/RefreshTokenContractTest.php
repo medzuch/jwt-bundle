@@ -26,9 +26,11 @@ use Symfony\Component\HttpKernel\KernelInterface;
  * double is the assertion — if the rotation flow below cannot be written
  * against the interface as it stands, the interface is wrong.
  *
- * The flow the file walks through is the one OAuth 2.1 §6.1 asks for: mint,
- * store the hash, spend once, mint the next, and treat a second presentation
- * of a spent token as a reason to end every session the subject has.
+ * The flow the file walks through is the one RFC 9700 §4.14.2 describes: mint,
+ * store the hash, spend once, mint the next — and, when a spent token is
+ * presented again, revoke the lineage it came from, since the server "cannot
+ * determine which party submitted the invalid refresh token" and a retry after
+ * a lost response looks exactly like a theft.
  */
 #[CoversClass(RefreshTokenGenerator::class)]
 #[CoversClass(RefreshToken::class)]
@@ -140,8 +142,8 @@ final class RefreshTokenContractTest extends KernelTestCase
         self::assertNull($store->consume('a-string-nobody-ever-issued'));
     }
 
-    #[TestDox('reacting to a replay ends every session the subject has')]
-    public function testTheFamilyCanBeKilled(): void
+    #[TestDox('the wider hammer ends every session the subject has, and nobody else\'s')]
+    public function testEverySessionCanBeEnded(): void
     {
         $now = FrozenClock::at('2026-09-02T12:00:00+00:00');
         $generator = self::generator($now);
@@ -182,12 +184,117 @@ final class RefreshTokenContractTest extends KernelTestCase
         self::assertTrue($record->isExpired(FrozenClock::at('2026-09-02T13:00:00+00:00')));
     }
 
-    #[TestDox('an empty presentation is refused rather than hashed into a lookup')]
+    #[TestDox('an empty presentation is nothing to look up, not an exception to catch')]
     public function testEmptyPresentation(): void
     {
+        // A form field nobody filled in reaches `consume()` as '', and an
+        // application answering `invalid_grant` should not have to wrap the
+        // call in a try/catch to say so. The hashing rule still refuses it —
+        // that is where an empty string would otherwise become a digest.
+        self::assertNull((new InMemoryRefreshTokenStore())->consume(''));
+
         $this->expectException(InvalidArgumentException::class);
 
         RefreshToken::hashOf('');
+    }
+
+    #[TestDox('a retry after a successful refresh looks exactly like a replay')]
+    public function testARetryIsIndistinguishableFromTheft(): void
+    {
+        $now = FrozenClock::at('2026-09-02T12:00:00+00:00');
+        $generator = self::generator($now);
+        $store = new InMemoryRefreshTokenStore();
+
+        $first = $generator->generate(new DateInterval('P30D'));
+        $store->store($first, self::SUBJECT, 'grant-1');
+
+        // The refresh that succeeded: spent, and the next one issued.
+        $spent = $store->consume($first->value);
+        self::assertInstanceOf(RefreshTokenRecord::class, $spent);
+        self::assertTrue($spent->isUsable($now));
+        $store->store($generator->generate(new DateInterval('P30D')), self::SUBJECT, $spent->grant);
+
+        // The client never saw the response and sends the old value again.
+        $retry = $store->consume($first->value);
+
+        self::assertInstanceOf(RefreshTokenRecord::class, $retry);
+        self::assertTrue($retry->alreadyUsed);
+
+        // This is the point: the store cannot tell this from a stolen token,
+        // and neither can the caller. RFC 9700 §4.14.2 says so in as many
+        // words — the server "cannot determine which party submitted the
+        // invalid refresh token" — and revokes anyway. An application that
+        // wants retries to survive keeps a grace window of its own; the
+        // contract does not have one, and this test is where that is written
+        // down rather than discovered in production.
+        self::assertSame('grant-1', $retry->grant);
+    }
+
+    #[TestDox('an expired token that gets retried is not evidence of theft')]
+    public function testAnExpiredTokenIsNotAReplay(): void
+    {
+        $minted = FrozenClock::at('2026-09-02T12:00:00+00:00');
+        $later = new \DateTimeImmutable('2026-09-02T12:10:00+00:00');
+        $store = new InMemoryRefreshTokenStore();
+
+        $token = self::generator($minted)->generate(new DateInterval('PT300S'));
+        $store->store($token, self::SUBJECT, 'grant-1');
+
+        // Presented after it expired: refused, and the row is spent doing it.
+        $first = $store->consume($token->value);
+        self::assertInstanceOf(RefreshTokenRecord::class, $first);
+        self::assertFalse($first->alreadyUsed);
+        self::assertTrue($first->isExpired($later));
+
+        // The client retries the same dead token. It now reads as spent — so a
+        // caller that treats `alreadyUsed` as theft without looking at the
+        // expiry first would end every session over a token that had simply
+        // run out.
+        $retry = $store->consume($token->value);
+        self::assertInstanceOf(RefreshTokenRecord::class, $retry);
+        self::assertTrue($retry->alreadyUsed);
+        self::assertTrue($retry->isExpired($later));
+    }
+
+    #[TestDox('revoking one lineage leaves the subject\'s other sessions alone')]
+    public function testRevokingAGrant(): void
+    {
+        $now = FrozenClock::at('2026-09-02T12:00:00+00:00');
+        $generator = self::generator($now);
+        $store = new InMemoryRefreshTokenStore();
+
+        $phone = $generator->generate(new DateInterval('P30D'));
+        $store->store($phone, self::SUBJECT, 'grant-phone');
+        $store->store($generator->generate(new DateInterval('P30D')), self::SUBJECT, 'grant-laptop');
+
+        $store->consume($phone->value);
+        $replay = $store->consume($phone->value);
+
+        self::assertInstanceOf(RefreshTokenRecord::class, $replay);
+        self::assertTrue($replay->alreadyUsed);
+        self::assertSame('grant-phone', $replay->grant);
+
+        // What RFC 9700 §4.14.2 actually asks for: the compromised lineage,
+        // at the cost of that client authorizing again. The laptop keeps
+        // working, which `revokeAllFor()` would not have allowed.
+        self::assertNotNull($replay->grant);
+        $store->revokeGrant($replay->grant);
+
+        self::assertSame(1, $store->countFor(self::SUBJECT));
+    }
+
+    #[TestDox('storing the same token twice is refused rather than un-spending it')]
+    public function testAStoreTakesAFreshToken(): void
+    {
+        $store = new InMemoryRefreshTokenStore();
+        $token = self::generator(FrozenClock::at('2026-09-02T12:00:00+00:00'))->generate(new DateInterval('P30D'));
+
+        $store->store($token, self::SUBJECT);
+        $store->consume($token->value);
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $store->store($token, self::SUBJECT);
     }
 
     private static function generator(?FrozenClock $clock = null): RefreshTokenGenerator

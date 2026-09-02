@@ -29,15 +29,24 @@ a class or method signature would be.
   **`consume()` spends a token and reports a previous spend in one call.** A
   `find()` followed by a `delete()` has a window in it, and that window is
   where a token gets used twice; an implementation does it as one conditional
-  write. A token the store never issued answers `null`, while one it issued
-  and already spent comes back with `alreadyUsed: true` — different events,
-  and the second is the one OAuth 2.1 §6.1 asks an application to react to by
-  ending the whole family, which is what `revokeAllFor()` is for.
+  write. A token the store never issued answers `null` — as does an empty
+  presentation, so a missing request parameter is an `invalid_grant` rather
+  than an exception — while one it issued and already spent comes back with
+  `alreadyUsed: true`.
+
+  **Two revocations, because RFC 9700 §4.14.2 names two occasions.**
+  `revokeGrant()` ends one lineage, which is the reaction to a replay: the
+  server "cannot determine which party submitted the invalid refresh token",
+  so it revokes rather than investigating, at the cost of that client
+  authorizing again. `revokeAllFor()` is the wider hammer the same section
+  lists separately, for a password change or a logout everywhere. A retry
+  after a lost response is indistinguishable from a theft, and the README says
+  so rather than leaving it to be discovered.
 
   **The token is opaque and stored as a SHA-256.** `RefreshToken` carries the
-  value for the client and the hash for the store, and `RefreshToken::hashOf()`
-  is the single home of the rule so a generator and a store cannot disagree
-  about it. A fast hash rather than `password_hash()` on purpose: the input is
+  value for the client and derives the hash for the store from it, so the two
+  halves cannot be handed in disagreeing, and `RefreshToken::hashOf()` is the
+  single home of the rule. A fast hash rather than `password_hash()` on purpose: the input is
   256 bits from `random_bytes()`, so there is nothing to guess, and a slow hash
   on every refresh is a lever pointed at your own login flow.
 

@@ -2203,7 +2203,10 @@ against your own idea of what a session is. Section 8 of [`docs/plan.md`](docs/p
 storage outside the package permanently.
 
 What is here is the shape, so that two applications doing this spell it the same way: an
-interface to implement, and the generator that fills it.
+interface to implement, and the generator that fills it. The first refresh token is minted where
+the first access token is — in your login success handler, beside
+[`medzuch_jwt.login.<issuer>`](#issuing-tokens--an-authorization-server) — and what follows is
+the exchange after that.
 
 ```php
 use Medzuch\JwtBundle\Refresh\RefreshTokenGenerator;
@@ -2213,63 +2216,104 @@ public function __construct(
     private RefreshTokenGenerator $tokens,     // ours
     private RefreshTokenStoreInterface $store, // yours
     private AccessTokenIssuer $issuer,
+    private ClockInterface $clock,
 ) {}
 
 public function refresh(string $presented): Response
 {
     $record = $this->store->consume($presented);
 
+    // A string nobody was ever issued — or an empty form field, which is the
+    // same event. Nothing to learn, nothing to revoke.
     if (null === $record) {
-        // A string nobody was ever issued. Nothing to learn, nothing to do.
-        return new JsonResponse(['error' => 'invalid_grant'], 400);
+        return self::invalidGrant();
+    }
+
+    // Expiry first. A token that had already run out says nothing about theft,
+    // and `consume()` has just marked it used — so a client retrying that same
+    // dead token would look like a replay if this ran the other way round.
+    if ($record->isExpired($this->clock)) {
+        return self::invalidGrant();
     }
 
     if ($record->alreadyUsed) {
-        // Somebody is holding a copy — the client that already spent it, or
-        // whoever took it from them. You cannot tell which, so end the lot.
-        $this->store->revokeAllFor($record->subject);
+        // Somebody is holding a copy. RFC 9700 §4.14.2: the server "cannot
+        // determine which party submitted the invalid refresh token", so it
+        // revokes rather than investigating — the lineage, not the person.
+        if (null !== $record->grant) {
+            $this->store->revokeGrant($record->grant);
+        }
 
-        return new JsonResponse(['error' => 'invalid_grant'], 400);
-    }
-
-    if (!$record->isUsable($this->clock)) {
-        return new JsonResponse(['error' => 'invalid_grant'], 400);
+        return self::invalidGrant();
     }
 
     $next = $this->tokens->generate(new DateInterval('P30D'));
-    $this->store->store($next, $record->subject);
+    $this->store->store($next, $record->subject, $record->grant);
 
-    return new JsonResponse([
-        'access_token' => (string) $this->issuer->issue($record->subject),
+    $issued = $this->issuer->issue($record->subject);
+
+    $response = new JsonResponse([
+        'access_token' => $issued->value,
         'refresh_token' => $next->value,     // the client gets this, once
         'token_type' => 'Bearer',
+        'expires_in' => $issued->expiresIn,
     ]);
+    $response->headers->set('Cache-Control', 'no-store');
+
+    return $response;
 }
 ```
+
+**A retry looks exactly like a theft, and no contract can fix that.** The client whose response
+was lost sends the same token again; so does whoever stole it. RFC 9700 §4.14.2 is explicit that
+the server cannot tell them apart, and revokes anyway — the cost being that the honest client has
+to authorize again. If a flaky network logging somebody out is worse for you than a stolen token
+living a few seconds longer, keep a short grace window of your own: remember the token you just
+issued against the one it replaced, and answer a retry with the same pair. That is session policy,
+which is yours; the contract gives you the signal, not the policy.
+
+**Revoke the lineage, not the person.** `revokeGrant()` ends the tokens descending from one
+authorization — one browser, one device — which is what the replay reaction asks for.
+`revokeAllFor()` is the wider hammer, for a password change or a logout everywhere, which the same
+section lists as its own reason. Ending every session a subject has because one phone was
+compromised is a support ticket you did not need.
 
 **The token is opaque, not a JWT.** A refresh token goes back to the issuer that minted it and to
 nobody else, so it needs no signature to verify and no claims to read: it is a lookup key, and 32
 bytes from `random_bytes()` is a better one than a signed document that cannot be revoked without
 the same lookup anyway. `RefreshTokenGenerator` mints one and hands you both halves at once.
 
-**Store the hash, never the value.** `RefreshToken` carries `value` for the client and `hash` for
-you, and a leaked table of hashes is worth nothing to whoever leaked it. The hashing rule has one
-home — `RefreshToken::hashOf()` — so your `consume()` hashes what arrived exactly the way the
-generator hashed what it minted. It is SHA-256 rather than `password_hash()` deliberately: a
-password is guessable and a human chose it, while this is 256 bits of randomness, so the slow
-hash would buy nothing and would put a cost on your own login flow that somebody could lean on.
+**Store the hash, never the value.** `RefreshToken` carries `value` for the client and derives
+`hash` for you — the two cannot be handed in disagreeing, because the constructor computes the
+second from the first. A leaked table of hashes is worth nothing to whoever leaked it. The rule
+has one home, `RefreshToken::hashOf()`, so your `consume()` hashes what arrived exactly the way
+the generator hashed what it minted. It is SHA-256 rather than `password_hash()` deliberately: a
+password is guessable and a human chose it, while this is 256 bits of randomness, so the slow hash
+would buy nothing and would put a cost on your own login flow that somebody could lean on.
 
 **`consume()` is one call because the gap is the bug.** A `find()` followed by a `delete()` has a
 window in it, and that window is where a token gets spent twice. Implementations do it as one
 conditional write — `UPDATE ... WHERE hash = ? AND used_at IS NULL`, then look at the affected
-row count — and return what they found.
+row count — and return what they found. Keeping spent rows until their own expiry is what makes
+`alreadyUsed` answerable at all; a store that deletes on use answers `null` twice and cannot tell
+you anything. Pruning them after `expiresAt` is yours.
 
-**A spent token comes back, it does not vanish.** `consume()` answers `null` only for a token you
-never issued; one you did issue and already spent comes back with `alreadyUsed: true`. Those are
-different events: the first is noise, the second means two parties hold the same token and one of
-them should not. OAuth 2.1 §6.1 asks you to end the whole family when it happens, which is what
-`revokeAllFor()` is. Keeping spent rows until their own expiry is what makes the distinction
-possible — a store that deletes on use answers `null` twice and cannot tell you.
+**The interface is the protocol, not your session model.** Four operations, answering one
+question — is this string a live refresh token, and whose — plus the two revocations. Scopes to
+re-issue, the client a token is bound to, a device name, a last-used timestamp: those belong to
+your own store class, which implements this interface and carries whatever else your `refresh()`
+needs. Type-hint your class where you need them. RFC 9700 §4.14.2 requires a refresh token to be
+bound to the scope consented to, so a compliant authorization server keeps more than these four
+methods describe — what is standardised here is the part worth spelling the same way everywhere.
+
+Implementing the interface does not register it, unlike a claim provider: alias it if you want to
+inject the interface rather than the class.
+
+```yaml
+services:
+    App\Security\DoctrineRefreshTokenStore: ~
+    Medzuch\JwtBundle\Refresh\RefreshTokenStoreInterface: '@App\Security\DoctrineRefreshTokenStore'
+```
 
 There is no `refresh_tokens` section in the configuration and no entity in this package, because
 neither would be honest: the lifetime belongs to the flow that mints the token, and the schema

@@ -55,6 +55,6 @@ final class RefreshTokenGenerator
         // wrong form somewhere.
         $value = rtrim(strtr(base64_encode(random_bytes(self::BYTES)), '+/', '-_'), '=');
 
-        return new RefreshToken($value, RefreshToken::hashOf($value), $expiresAt);
+        return new RefreshToken($value, $expiresAt);
     }
 }

@@ -16,6 +16,11 @@ use InvalidArgumentException;
  * hashes, which buys an attacker nothing, and a store that persisted `$value`
  * would have thrown that away.
  *
+ * The hash is derived rather than passed, so the two halves cannot be handed
+ * in disagreeing: a token whose `hash` is not `hashOf($value)` would be stored
+ * under a key no presentation of it will ever produce, and would fail as
+ * "nobody was ever issued this" long after the mistake.
+ *
  * Not a JWT, deliberately. A refresh token is presented to the issuer that
  * minted it and to nobody else, so it needs no self-description, no signature
  * to verify and no claims to read: it is a lookup key, and 256 bits of
@@ -24,19 +29,18 @@ use InvalidArgumentException;
  */
 final class RefreshToken
 {
+    /** What a store persists in place of {@see $value}. */
+    public readonly string $hash;
+
     /**
      * @param string            $value     the opaque token, handed to the client and stored nowhere
-     * @param string            $hash      what a store persists in its place — {@see hashOf()} of `$value`
      * @param DateTimeImmutable $expiresAt when the token stops being accepted, whatever the store still holds
      */
     public function __construct(
         public readonly string $value,
-        public readonly string $hash,
         public readonly DateTimeImmutable $expiresAt,
     ) {
-        if ('' === $value || '' === $hash) {
-            throw new InvalidArgumentException('A refresh token needs both a value and a hash: one is handed to the client, the other is what a store keeps in its place.');
-        }
+        $this->hash = self::hashOf($value);
     }
 
     /**
@@ -53,9 +57,10 @@ final class RefreshToken
      * flow. What matters here is that the stored form is not the presented
      * form, and a fast hash over an unguessable input gives exactly that.
      *
-     * @throws InvalidArgumentException when `$presented` is empty: there is nothing to look up,
-     *                                  and hashing the empty string would produce a digest that
-     *                                  matches every other empty presentation
+     * @throws InvalidArgumentException when `$presented` is empty. Callers reading a token off a
+     *                                  request do not have to guard against that themselves:
+     *                                  {@see RefreshTokenStoreInterface::consume()} answers `null`
+     *                                  for an empty presentation rather than raising
      */
     public static function hashOf(string $presented): string
     {

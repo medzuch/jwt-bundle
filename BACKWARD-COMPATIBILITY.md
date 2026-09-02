@@ -140,7 +140,7 @@ Only these, and each only in the way its row says:
 | `Refresh\RefreshTokenGenerator` | inject it | `generate()` | no | — |
 | `Refresh\RefreshToken` | receive it | read `value`, `hash`, `expiresAt`; `hashOf()` | no | — |
 | `Refresh\RefreshTokenRecord` | build it, receive it | yes | no | — |
-| `Refresh\RefreshTokenStoreInterface` | type-hint it | `store()`, `consume()`, `revokeAllFor()` | — | **yes** |
+| `Refresh\RefreshTokenStoreInterface` | type-hint it | `store()`, `consume()`, `revokeGrant()`, `revokeAllFor()` | — | **yes** |
 | `Oidc\IdTokenVerifier` | inject it | yes | no | — |
 | `Oidc\IdTokenIssuer` | inject it | yes | no | — |
 | `SecurityEvent\SecurityEventIssuer` | inject it | yes | no | — |
@@ -157,7 +157,11 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
   `TokenDenylistInterface` or `RefreshTokenStoreInterface` breaks every implementation, so it
   happens in a major release only. `RefreshTokenStoreInterface` is the one nothing in this
   package calls — your code implements it and your code calls it — which makes the promise no
-  weaker: an interface published as a shape is only worth having if the shape holds still.
+  weaker: an interface published as a shape is only worth having if the shape holds still. Its
+  four operations answer whether a presented string is a live refresh token and whose, and give
+  you the two revocations; a session model with scopes, clients or devices lives on your own
+  implementing class, which is why growing this interface to carry those is not something a
+  minor release will do.
   Two of them are called as well as implemented: `medzuch_jwt.denylist.<consumer>` is promised
   as somewhere to revoke a token, which is `revoke()` and `isRevoked()`, and a user's `scopes()`
   is what the voter reads and what your own code reads beside it. An id promised to resolve to a
@@ -172,7 +176,11 @@ suite keeps it that way. What the table adds is the distinction `final` cannot m
   public constructors because PHP has no package-private, and what is promised is the id and the
   methods, not the constructor's arguments. `IssuedToken` and `TokenIssuance` are the other way
   round — you receive them from us, and a test fixture that builds one is building the same thing
-  we do, so their constructors are promised.
+  we do, so their constructors are promised. `RefreshTokenGenerator` is the one service whose
+  constructor is promised as well as its id — a PSR-20 clock, and nothing else — because a unit
+  test that wants a frozen one has no container to ask, and `RefreshToken` and
+  `RefreshTokenRecord` are promised for the same reason: your store builds records and your tests
+  build tokens.
 - **`RejectionReason` may gain cases, and no case changes its value.** It is a vocabulary for a
   dashboard, and a new kind of refusal has to be nameable, so `match` on it without a `default`
   and a new case is a fatal error — a good reason to write the `default`, and the reason this is
