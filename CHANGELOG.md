@@ -11,6 +11,21 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-09-01
+
+A security patch, and the whole of it is one comparison. `IdTokenVerifier`
+refuses a token that says on its own header it was minted for something else —
+that guard shipped in 1.1.0, and it was reading the header through a
+media-type comparison that `medzuch/jwt-php` 1.2.0 got wrong. An access token
+written `application/AT+JWT` walked past it and verified as proof that
+somebody had authenticated. The floor now names the library patch that fixes
+the comparison, and the guard covers Security Event Tokens beside access
+tokens, which is the same confusion RFC 8417 §4 is named after.
+
+Nothing in a configuration file changes, and no option is added or removed.
+An application pinning `medzuch/jwt-php` to exactly 1.2.0 has to let that pin
+move; [`UPGRADE.md`](UPGRADE.md) is the rest.
+
 ### Changed
 
 - **The floor is `medzuch/jwt-php ^1.2.1`**, raised from `^1.2` so the fix
@@ -1031,7 +1046,8 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/medzuch/jwt-bundle/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/medzuch/jwt-bundle/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v1.0.0
 [0.3.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v0.3.0
