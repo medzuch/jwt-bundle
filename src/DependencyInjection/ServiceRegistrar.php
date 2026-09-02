@@ -33,6 +33,7 @@ use Medzuch\JwtBundle\Oidc\DiscoveredJwksResolver;
 use Medzuch\JwtBundle\Oidc\IdTokenIssuer;
 use Medzuch\JwtBundle\Oidc\IdTokenVerifier;
 use Medzuch\JwtBundle\Oidc\MetadataController;
+use Medzuch\JwtBundle\Refresh\RefreshTokenGenerator;
 use Medzuch\JwtBundle\Revocation\CacheTokenDenylist;
 use Medzuch\JwtBundle\Revocation\TokenDenylistInterface;
 use Medzuch\JwtBundle\Security\AccessTokenHandler;
@@ -151,6 +152,7 @@ final class ServiceRegistrar
         $this->registerIdTokenIssuers($services, $builder, $keys, $config['id_token_issuers']);
         $this->registerSecurityEvents($services, $builder, $keys, $config['security_events'], $config['remote_jwks'], $config['logger'], $config['log_levels']);
         $this->registerMetadata($services, $builder, $config['metadata']);
+        self::registerRefreshTokens($services);
 
         ConsoleCommands::register(
             $services,
@@ -279,6 +281,29 @@ final class ServiceRegistrar
 
         $services->set('medzuch_jwt.scope_expression_provider', ScopeExpressionProvider::class)
             ->tag('security.expression_language_provider');
+    }
+
+    /**
+     * The opaque half of a session (I9).
+     *
+     * Registered unconditionally and with no configuration section, because
+     * there is nothing to configure: the generator takes a clock and hands
+     * back a token, and the store it belongs beside is an interface this
+     * bundle deliberately does not implement (§8.1 of `docs/plan.md`). A
+     * section here would suggest otherwise — that somewhere a `refresh_tokens`
+     * key turns on persistence this package does not have.
+     *
+     * Aliased by class so an application injects `RefreshTokenGenerator` and
+     * its own `RefreshTokenStoreInterface` side by side, neither of them a
+     * container lookup by string.
+     */
+    private static function registerRefreshTokens(ServicesConfigurator $services): void
+    {
+        $services->set('medzuch_jwt.refresh_token_generator', RefreshTokenGenerator::class)
+            ->args([service('medzuch_jwt.clock')])
+            ->public();
+
+        $services->alias(RefreshTokenGenerator::class, 'medzuch_jwt.refresh_token_generator');
     }
 
     /**
