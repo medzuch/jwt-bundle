@@ -11,7 +11,11 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** This is v1.1.0. Phase 5 shipped the pairs whose library half
+> **Status.** This is v1.1.1, a security patch over v1.1.0: the guard that
+> refuses a token minted for something else was reading its header through a
+> media-type comparison `medzuch/jwt-php` 1.2.0 got wrong, so the floor is now
+> `^1.2.1` and the guard covers Security Event Tokens beside access tokens.
+> Phase 5 shipped the pairs whose library half
 > already existed — encrypted tokens read and minted (C12, I8), Security Event
 > Tokens received and transmitted (C8, I7), ID tokens issued beside the
 > verification 1.0 had (I6) — and the rows that needed nothing from the library

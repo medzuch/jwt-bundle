@@ -11,7 +11,7 @@ has been additive, with new sections inert until configured, so what the notes b
 behaviour an application already running could notice rather than configuration it must
 rewrite.
 
-## 1.1.0 → Unreleased
+## 1.1.0 → 1.1.1
 
 **Nothing in your configuration has to change**, and no option is added or removed. Three things
 are worth knowing: two are tokens a relying-party registration now refuses, and one is a spelling
