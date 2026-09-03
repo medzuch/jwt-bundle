@@ -11,10 +11,14 @@
 > login), OIDC relying party (verify a third-party IdP's tokens via JWKS),
 > service-to-service caller, or all of the above in one process.
 >
-> **Status.** This is v1.1.1, a security patch over v1.1.0: the guard that
-> refuses a token minted for something else was reading its header through a
-> media-type comparison `medzuch/jwt-php` 1.2.0 got wrong, so the floor is now
-> `^1.2.1` and the guard covers Security Event Tokens beside access tokens.
+> **Status.** This is v1.2.0, which releases I9, the refresh-token contract: a
+> `Refresh\` namespace naming the four operations a session's other half needs
+> and a generator service to mint the opaque token, but no storage — §8.1 keeps
+> that out permanently, so what ships is a shape rather than an implementation.
+> v1.1.1 before it was a security patch: the guard that refuses a token minted
+> for something else was reading its header through a media-type comparison
+> `medzuch/jwt-php` 1.2.0 got wrong, so the floor is `^1.2.1` and the guard
+> covers Security Event Tokens beside access tokens.
 > Phase 5 shipped the pairs whose library half
 > already existed — encrypted tokens read and minted (C12, I8), Security Event
 > Tokens received and transmitted (C8, I7), ID tokens issued beside the
@@ -24,8 +28,8 @@
 > needed no code anywhere: Symfony's own authenticator already declines a
 > request carrying no token, so optional identity is firewall configuration,
 > documented and pinned by the suite. Still open in the phase: DPoP and mTLS
-> binding, token exchange, introspection, D6's Flex recipe and I9's
-> refresh-token contract.
+> binding, token exchange, and introspection. D6's Flex recipe is closed the
+> other way, by DEC-9: dropped rather than built.
 >
 > Phases 0 through 4 of §7 shipped in v1.0.0: PEM and JWK
 > key sources, named keys and rotation, the JWKS publisher, `jwt:key:generate`;
@@ -132,7 +136,8 @@ jwt-bundle/
 Key mechanics that shape the design:
 
 - **Registration.** `Medzuch\JwtBundle\MedzuchJwtBundle::class => ['all' => true]`
-  in `config/bundles.php`, or automatically via a Flex recipe (§3.5).
+  in `config/bundles.php` — a line Flex writes from the package type, with no
+  recipe involved. DEC-9 is why there is none.
 - **`AbstractBundle::configure()`** defines the config tree; **`loadExtension()`**
   reads the validated config and registers/parameterizes services.
 - **Config root key** `medzuch_jwt`; namespace `Medzuch\JwtBundle\`; composer
@@ -265,7 +270,7 @@ default and adds no runtime cost when unconfigured.
 | I6 | `IdTokenIssuer` for apps acting as an OIDC provider. **Landed in Phase 5** as `id_token_issuers`, a section of its own because `id_tokens` is the relying-party half and already public configuration. Hands back the library's builder, as I7 does and for the same reason — `nonce`, `auth_time`, `acr`, `amr` and the profile claims are what vary — while `sub` and the relying party's `client_id` are arguments, since OIDC Core §2 requires both and neither varies in that way. It also closed a confusion only one deployment holding both ends can reach: `IdTokenVerifier` now refuses a token typed `at+jwt` — in any spelling RFC 7515 §4.1.9 makes equivalent, which took the `medzuch/jwt-php` 1.2.1 floor to be true — or `secevent+jwt`, the pair RFC 8417 §4 is named after. No issuance events, no claim providers, no `at_hash` | `IdTokenProfile::issuer()` | T3 |
 | I7 | Security Event Token issuer (emit RISC/CAEP events to relying parties). **Landed in Phase 5** as `security_events.issuers`. Hands back the library's builder rather than an argument list, since what varies between two SETs is the events; delivery (RFC 8935 push, RFC 8936 poll) stays the application's | `SetProfile::issuer()` | T3 |
 | I8 | Encrypted/nested issuance (sign-then-encrypt). **Landed in Phase 5** as `issuers.<name>.jwe`, one key and one algorithm of each kind where the reading side takes lists — a receiver accepts what its senders still use, a sender picks. `replicated_claims` copies a claim into the outer header for an intermediary that holds no key (RFC 7519 §5.3), read back out of the signed token so the two cannot drift | `NestedJwtBuilder` | T3 |
-| I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered | bundle | T3 (see §8) |
+| I9 | Refresh-token *contract* only: `RefreshTokenStoreInterface` + an opaque-token generator, with an optional Doctrine implementation in a separate sub-package; JWT-based refresh tokens are deliberately not offered. **Landed in Phase 5** as `Refresh\RefreshTokenStoreInterface`, `RefreshToken`, `RefreshTokenRecord` and `medzuch_jwt.refresh_token_generator`. `consume()` spends a token and reports a previous spend in one call, because a `find()` and a `delete()` have a window between them and that window is where a token is used twice; a record that comes back `alreadyUsed` is the signal RFC 9700 §4.14.2 asks an application to act on, and it names two revocations rather than one — `revokeGrant()` for the lineage a replay implicates, `revokeAllFor()` for a password change or a logout everywhere. Scopes, clients and devices are not in the interface: it answers whether a presented string is a live token and whose, and a session model lives on the implementing class. No configuration section: the lifetime belongs to the flow that mints the token, and a `refresh_tokens` key would advertise persistence this package does not have | bundle | T3 (see §8) |
 
 ### 3.3 Key management
 
@@ -300,7 +305,7 @@ default and adds no runtime cost when unconfigured.
 | D3 | `jwt:key:generate` — generate HMAC secret / RSA / EC / OKP keypair in PEM or JWK, with `kid`, and print the configuration that uses it. Refuses to overwrite a key file and writes the private half 0600 | T2 |
 | D4 | `jwt:jwks:dump` — print the public JWK Set from the same `JwkSet` service K4 serves, so a document written to a file cannot drift from the one served over HTTP. `--compact` is byte for byte what the endpoint returns | T2 |
 | D5 | Test helpers shipped in `src/Test/`: `TestTokenFactory`, which mints the tokens an issuer will not — expired, not yet valid, addressed elsewhere, from another issuer — and reads no configuration, so a test cannot pass by agreeing with a mistake it shares; `AssertsBearerChallenges` for what a refusal carried. Time travel needs no helper: `clock` already takes any PSR-20 service | T2 |
-| D6 | Flex recipe: registers the bundle, writes a starter `config/packages/medzuch_jwt.yaml` and `.env` entries | T3 |
+| ~~D6~~ | ~~Flex recipe: registers the bundle, writes a starter `config/packages/medzuch_jwt.yaml` and `.env` entries~~. **Dropped — DEC-9.** Flex registers a bundle without a recipe, and the starter configuration a recipe would have frozen is better written by `jwt:key:generate` (D3) and the README quickstart (D7) | — |
 | D7 | Documentation: the README as the feature reference with a quickstart per role, `docs/cookbook.md` for the recipes that assemble several features into one task (machine tokens, two issuers on one API, tenants, an SPA on a cookie, a deploy gate), `UPGRADE.md` for what a release asks of an application already running, and `config:dump-reference` for the exhaustive tree — generated rather than hand-written, since a copy drifts. Every example is compiled into a real container and every link resolved, by the suite | T2 |
 | D8 | Compile-time configuration validation: unknown algorithm names, key/algorithm mismatch (e.g. `RS256` with an HMAC key), missing `jwks_uri` dependencies — all fail at container build, not at first request | T1 |
 
@@ -677,17 +682,19 @@ IdP issues an ID token  →  app's consumer "partner_idp"
   documented, with a BC policy.** *(Shipped in v1.0.0. There was no v0.4: the
   phase ran long enough that stamping an interim minor would have promised
   nothing the BC policy did not already say better.)*
-- **Phase 5+ — Standards-track (post-1.0).** §3.6, together with the T3 rows
-  that live elsewhere in §3 — C11's multi-tenant issuer dispatch (§3.1) and
-  D6's Flex recipe (§3.5): DPoP, mTLS binding, token exchange, introspection
-  fallback, JWE/nested tokens, SET issue/consume, discovery documents.
+- **Phase 5+ — Standards-track (post-1.0).** §3.6 — DPoP, mTLS binding, token
+  exchange, introspection fallback, JWE/nested tokens, SET issue/consume,
+  discovery documents — together with C11's multi-tenant issuer dispatch
+  (§3.1), the one T3 row left elsewhere in §3.
   *(Shipped in v1.1.0: the pairs whose library half already existed — C8/I7,
   C12/I8, I6 — and the rows that needed nothing from it: K7, K8, C11, and C15,
-  which turned out to be firewall configuration rather than code. Still open:
-  DPoP, mTLS binding, token exchange and introspection, all of which begin as
-  library work; D6, whose recipe has to be submitted to
-  `symfony/recipes-contrib` rather than landing here; and I9, which §8 keeps to
-  a contract rather than an implementation.)*
+  which turned out to be firewall configuration rather than code. I9 followed,
+  as the contract §8.1 always meant it to be rather than as storage. Still
+  open: DPoP, mTLS binding, token exchange and introspection, all of which
+  begin as library work. D6 left the phase without being built: its recipe
+  would have had to be submitted to `symfony/recipes-contrib` rather than
+  landing here, and DEC-9 records why that is worse than the commands we
+  already ship.)*
   *(K7 landed first, and the order is worth recording: what the library already
   carries decides what is a bundle-sized change. JWE and SET are whole
   implementations in `medzuch/jwt-php` already, so C12/I8 and C8/I7 are wiring;
@@ -711,6 +718,10 @@ below changes:
    app's own session/device model — that is business logic over the app's
    database, not JOSE. The bundle may ship a *contract* (I9) so app code has a
    shape to implement, but no schema, no entity, no default persistence.
+   *(Shipped in Phase 5: `RefreshTokenStoreInterface` and the generator that
+   fills it. The line held — the only executable code is `random_bytes()`, a
+   SHA-256 and a lifetime check, and the one implementation in this repository
+   is a test double.)*
 2. **A user entity, user provider, or login form.** Symfony already provides
    these; the bundle consumes them.
 3. **An OAuth 2.0 authorization-server implementation.** Consent screens,
@@ -743,8 +754,12 @@ way to configure the same handler. Everything the native block already offers
 (token extractors, `realm`, success/failure handlers, and whatever Symfony adds
 next) comes free precisely by not owning that layer; a shorthand would have to
 be re-taught each addition or quietly fall behind it. The DX gap is closed with
-documentation (D7) and a Flex recipe (D6) instead, neither of which forks the
-security configuration surface. *Reopens if* a feature cannot be expressed
+documentation (D7) instead, which does not fork the security configuration
+surface. It was also to be closed with a Flex recipe (D6); DEC-9 dropped that,
+and a recipe could not have carried the firewall block anyway — "no recipe
+should modify other bundle's configuration", and a firewall is not the "config
+collection" that rule excepts — so §4's `access_token` block would have been a
+post-install message at best. *Reopens if* a feature cannot be expressed
 through a token handler at all: DPoP (§3.6) needs a second header plus proof
 replay checks. That gets its own, explicitly named authenticator — not a
 shorthand alias for the existing one.
@@ -890,6 +905,40 @@ it belongs to one authentication request, and a value fixed at deploy is not a
 nonce. *Reopens if* a deployment appears where an ID token is the only
 credential available at an API boundary; the answer then is still not a handler
 but an explicit exchange, and the reasoning above is what it has to beat.
+
+**DEC-9 — no Flex recipe. D6 is dropped, not deferred.** The recipe was to
+register the bundle, write a starter `config/packages/medzuch_jwt.yaml` and add
+`.env` entries. The first of those is not a recipe's work: `symfony/recipes`
+says not to write one "if the only configuration in the manifest is the
+registration of the bundle for all environments, as this is done automatically".
+The third is two URLs and a secret. So the whole of D6 reduces to shipping a
+starter configuration file — and two things already write a better one than a
+recipe could. `jwt:key:generate` (D3) prints the `keys:` block for the
+algorithm actually chosen, around material actually generated; the README
+quickstart (D7) carries the rest, which is the part D3 does not print:
+`issuers`, `consumers`, `allowed_algorithms`, and the native `access_token`
+block. A recipe would have frozen a guessed `HS256` and `https://localhost`
+that both of those beat, and frozen it where nothing here can check it.
+
+What decides it is D7's rule: the reference tree is generated rather than
+hand-written, "since a copy drifts", and `ConfigurationReferenceTest` holds
+`docs/configuration-reference.md` to what `config:dump-reference` prints. A
+recipe is the one artefact that rule cannot reach. It lives in
+`symfony/recipes-contrib`, outside this repository by that project's own
+requirement, so no test here can ever compile its YAML — it would be a
+hand-maintained copy of the configuration surface, in a repository this suite
+cannot see, kept current by memory. Against that: a pull request that merges
+only once somebody who is neither the bot nor the author approves it *and*
+either the author or that reviewer is a Symfony Core Merger — and that lands,
+even then, in a repository an application has to opt into with
+`composer config extra.symfony.allow-contrib true`.
+
+*Reopens if* the bundle grows configuration that a new application genuinely
+cannot start without, with no sensible default and no place in D3's output or
+D7's quickstart — recipes-contrib's own test of a recipe worth writing, "config
+that needs to be configured but no real default value exists". Nothing in §4 is
+that today: the container boots on an empty `medzuch_jwt`, which is what
+`GenerateKeyCommandTest` relies on to reach the command at all.
 
 ---
 

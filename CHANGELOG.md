@@ -11,6 +11,51 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-03
+
+### Added
+
+- **A refresh-token contract** (I9), under a new `Refresh\` namespace:
+  `RefreshTokenStoreInterface` for your code to implement,
+  `RefreshTokenGenerator` behind `medzuch_jwt.refresh_token_generator` to mint
+  the opaque half of a session, and the `RefreshToken` / `RefreshTokenRecord`
+  pair the two hand each other. Nothing in this bundle calls the interface —
+  it is a shape so that two Symfony applications doing this spell it the same
+  way.
+
+  **Storage stays outside the package**, as §8.1 of `docs/plan.md` has said
+  since v0.4: no entity, no migration, no default implementation. Rotation,
+  device records and "log out everywhere" are questions over an application's
+  own schema. What a bundle can usefully own is the vocabulary.
+
+  **`consume()` spends a token and reports a previous spend in one call.** A
+  `find()` followed by a `delete()` has a window in it, and that window is
+  where a token gets used twice; an implementation does it as one conditional
+  write. A token the store never issued answers `null` — as does an empty
+  presentation, so a missing request parameter is an `invalid_grant` rather
+  than an exception — while one it issued and already spent comes back with
+  `alreadyUsed: true`.
+
+  **Two revocations, because RFC 9700 §4.14.2 names two occasions.**
+  `revokeGrant()` ends one lineage, which is the reaction to a replay: the
+  server "cannot determine which party submitted the invalid refresh token",
+  so it revokes rather than investigating, at the cost of that client
+  authorizing again. `revokeAllFor()` is the wider hammer the same section
+  lists separately, for a password change or a logout everywhere. A retry
+  after a lost response is indistinguishable from a theft, and the README says
+  so rather than leaving it to be discovered.
+
+  **The token is opaque and stored as a SHA-256.** `RefreshToken` carries the
+  value for the client and derives the hash for the store from it, so the two
+  halves cannot be handed in disagreeing, and `RefreshToken::hashOf()` is the
+  single home of the rule. A fast hash rather than `password_hash()` on purpose: the input is
+  256 bits from `random_bytes()`, so there is nothing to guess, and a slow hash
+  on every refresh is a lever pointed at your own login flow.
+
+  No configuration section, deliberately. The lifetime is an argument to
+  `generate()` because it belongs to the flow rather than the deployment, and a
+  `refresh_tokens:` key would advertise persistence this package does not have.
+
 ## [1.1.1] — 2026-09-01
 
 A security patch, and the whole of it is one comparison. `IdTokenVerifier`
@@ -1046,7 +1091,8 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/medzuch/jwt-bundle/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/medzuch/jwt-bundle/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/medzuch/jwt-bundle/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v1.0.0

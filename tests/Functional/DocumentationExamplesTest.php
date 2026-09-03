@@ -48,6 +48,7 @@ final class DocumentationExamplesTest extends KernelTestCase
     private const SINGLE_SEGMENT_IDS = [
         'medzuch_jwt.clock',
         'medzuch_jwt.jwks_controller',
+        'medzuch_jwt.refresh_token_generator',
         'medzuch_jwt.scope_voter',
         'medzuch_jwt.scope_expression_provider',
     ];
@@ -402,6 +403,9 @@ final class DocumentationExamplesTest extends KernelTestCase
         // and `suggest`ed rather than required.
         $ids[] = 'medzuch_jwt.clock';
         $ids[] = 'medzuch_jwt.scope_voter';
+        // Same reason: the refresh-token generator has nothing to configure,
+        // so every container has one (I9).
+        $ids[] = 'medzuch_jwt.refresh_token_generator';
 
         if (class_exists(ExpressionFunction::class)) {
             $ids[] = 'medzuch_jwt.scope_expression_provider';
