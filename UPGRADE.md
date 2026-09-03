@@ -11,6 +11,26 @@ has been additive, with new sections inert until configured, so what the notes b
 behaviour an application already running could notice rather than configuration it must
 rewrite.
 
+## 1.1.1 → 1.2.0
+
+**Nothing to do.** No configuration key is added, renamed or removed, no behaviour an
+application already running could notice has changed, and the library floor stays at
+`medzuch/jwt-php ^1.2.1`.
+
+What the release adds is a vocabulary you may choose to adopt: the `Medzuch\JwtBundle\Refresh\`
+namespace, an interface for your own refresh-token store, and
+`medzuch_jwt.refresh_token_generator` to mint the opaque half of a session. Nothing in this bundle
+calls any of it, and no service you already inject changed shape, so an application that ignores
+the namespace entirely upgrades by moving the constraint.
+
+If you do adopt it, two things are worth reading before writing the store rather than after.
+`consume()` has to spend the token and report a previous spend in **one** conditional write — a
+`SELECT` followed by an `UPDATE` has a window in it, and that window is where a token gets used
+twice. And a client retrying after a lost response is indistinguishable from a thief replaying a
+stolen token, which is why
+[RFC 9700 §4.14.2](https://www.rfc-editor.org/rfc/rfc9700.html#section-4.14.2) revokes rather than
+investigates. The README section and the interface's own docblock carry the rest.
+
 ## 1.1.0 → 1.1.1
 
 **Nothing in your configuration has to change**, and no option is added or removed. Three things
