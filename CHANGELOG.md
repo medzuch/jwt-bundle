@@ -11,6 +11,8 @@ a class or method signature would be.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-03
+
 ### Added
 
 - **A refresh-token contract** (I9), under a new `Refresh\` namespace:
@@ -1089,7 +1091,8 @@ rotation and JWKS are the next phase, and only HMAC keys exist today.
   rulesets (`main` requires a pull request and merge commits; `v*` tags cannot
   be moved or deleted).
 
-[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/medzuch/jwt-bundle/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/medzuch/jwt-bundle/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/medzuch/jwt-bundle/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/medzuch/jwt-bundle/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/medzuch/jwt-bundle/releases/tag/v1.0.0
